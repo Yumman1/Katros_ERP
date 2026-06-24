@@ -16,6 +16,9 @@
 # production
 /build
 
+# local mock persistence (booked trades, dropdowns, execution ops)
+/data/local/
+
 # misc
 .DS_Store
 *.pem
@@ -26,6 +29,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files
+.env
 .env*.local
 
 # vercel
@@ -34,3 +38,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/app/generated/prisma

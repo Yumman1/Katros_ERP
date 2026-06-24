@@ -1,0 +1,731 @@
+// Kastros CTRM — Phase 1 schema (PostgreSQL + Prisma 5)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Auth & RBAC ---
+
+enum Role {
+  ADMIN
+  TRADER
+  EXECUTION
+  RISK_MANAGER
+  FINANCE
+  READ_ONLY
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  role         Role     @default(READ_ONLY)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  commoditiesCreated         Commodity[]             @relation("CommodityCreatedBy")
+  counterpartiesCreated      Counterparty[]          @relation("CounterpartyCreatedBy")
+  locationsCreated           Location[]              @relation("LocationCreatedBy")
+  tradesCreated              Trade[]                 @relation("TradeCreatedBy")
+  marketPricesCreated        MarketPrice[]           @relation("MarketPriceCreatedBy")
+  positionsCreated           Position[]              @relation("PositionCreatedBy")
+  positionLegsCreated        PositionLeg[]           @relation("PositionLegCreatedBy")
+  mtmValuesCreated           MTMValue[]              @relation("MTMValueCreatedBy")
+  inventoriesCreated         Inventory[]             @relation("InventoryCreatedBy")
+  inventoryMovementsCreated  InventoryMovement[]     @relation("InventoryMovementCreatedBy")
+  invoicesCreated            Invoice[]               @relation("InvoiceCreatedBy")
+  paymentsCreated            Payment[]               @relation("PaymentCreatedBy")
+  cashFlowEntriesCreated     CashFlowEntry[]         @relation("CashFlowEntryCreatedBy")
+  reconciliationsCreated     Reconciliation[]        @relation("ReconciliationCreatedBy")
+  traceabilityRecordsCreated TraceabilityRecord[]    @relation("TraceabilityRecordCreatedBy")
+  traceChainEntriesCreated   TraceChainEntry[]       @relation("TraceChainEntryCreatedBy")
+  bankTransactionsCreated    BankTransaction[]       @relation("BankTransactionCreatedBy")
+  traceLinksCreated          TradeTraceabilityLink[] @relation("TradeTraceLinkCreatedBy")
+  shipmentsCreated           Shipment[]              @relation("ShipmentCreatedBy")
+}
+
+// --- Reference ---
+
+enum CommodityCategory {
+  GRAINS
+  OILSEEDS
+  SOFTS
+  VEGOIL
+  OTHER
+}
+
+model Commodity {
+  id          String            @id @default(cuid())
+  name        String
+  code        String            @unique
+  unit        String
+  exchange    String?
+  tickerCode  String?
+  category    CommodityCategory
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  createdById String
+  createdBy   User              @relation("CommodityCreatedBy", fields: [createdById], references: [id])
+
+  trades               Trade[]
+  positions            Position[]
+  inventories          Inventory[]
+  prices               MarketPrice[]
+  traceabilityRecords  TraceabilityRecord[]
+}
+
+enum CounterpartyType {
+  BUYER
+  SELLER
+  BROKER
+  BANK
+}
+
+model Counterparty {
+  id          String           @id @default(cuid())
+  name        String
+  code        String           @unique
+  type        CounterpartyType
+  country     String
+  creditLimit Decimal?         @db.Decimal(20, 4)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  createdById String
+  createdBy   User             @relation("CounterpartyCreatedBy", fields: [createdById], references: [id])
+
+  trades   Trade[]
+  invoices Invoice[]
+}
+
+enum LocationType {
+  PORT
+  WAREHOUSE
+  SILO
+  FARM
+}
+
+model Location {
+  id          String       @id @default(cuid())
+  name        String
+  type        LocationType
+  country     String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  createdById String
+  createdBy   User         @relation("LocationCreatedBy", fields: [createdById], references: [id])
+
+  inventories       Inventory[]
+  shipments         Shipment[]
+  tradesOrigin      Trade[]     @relation("TradeOrigin")
+  tradesDestination Trade[]     @relation("TradeDestination")
+}
+
+// --- Trading ---
+
+enum TradeDirection {
+  BUY
+  SELL
+}
+
+enum PriceType {
+  FIXED
+  FLOATING
+  BASIS
+}
+
+enum TradeStatus {
+  PENDING
+  LOCKED
+  CONFIRMED
+  EXECUTED
+  SETTLED
+  CANCELLED
+}
+
+model Trade {
+  id               String         @id @default(cuid())
+  tradeRef         String         @unique
+  tradeDate        DateTime
+  commodityId      String
+  commodity        Commodity      @relation(fields: [commodityId], references: [id])
+  counterpartyId   String
+  counterparty     Counterparty   @relation(fields: [counterpartyId], references: [id])
+  direction        TradeDirection
+  quantity         Decimal        @db.Decimal(20, 6)
+  price            Decimal        @db.Decimal(20, 6)
+  currency         String
+  priceType        PriceType
+  deliveryStart    DateTime
+  deliveryEnd      DateTime
+  originLocationId String?
+  originLocation   Location?      @relation("TradeOrigin", fields: [originLocationId], references: [id])
+  destLocationId   String?
+  destLocation     Location?      @relation("TradeDestination", fields: [destLocationId], references: [id])
+  paymentTerms     String
+  tradeStatus      TradeStatus
+  contractRef      String?
+  desk             String?
+  traderName       String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  createdById      String
+  createdBy        User           @relation("TradeCreatedBy", fields: [createdById], references: [id])
+
+  invoices            Invoice[]
+  shipments           Shipment[]
+  mtmValues           MTMValue[]
+  positionLegs        PositionLeg[]
+  traceabilityLinks   TradeTraceabilityLink[]
+}
+
+model MarketPrice {
+  id          String    @id @default(cuid())
+  commodityId String
+  commodity   Commodity @relation(fields: [commodityId], references: [id])
+  priceDate   DateTime
+  closePrice  Decimal   @db.Decimal(20, 6)
+  currency    String
+  source      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String
+  createdBy   User      @relation("MarketPriceCreatedBy", fields: [createdById], references: [id])
+
+  @@index([commodityId, priceDate])
+}
+
+// --- Position & MTM ---
+
+model Position {
+  id            String    @id @default(cuid())
+  commodityId   String
+  commodity     Commodity @relation(fields: [commodityId], references: [id])
+  positionDate  DateTime
+  longQty       Decimal   @default(0) @db.Decimal(20, 6)
+  shortQty      Decimal   @default(0) @db.Decimal(20, 6)
+  netQty        Decimal   @db.Decimal(20, 6)
+  avgBuyPrice   Decimal?  @db.Decimal(20, 6)
+  avgSellPrice  Decimal?  @db.Decimal(20, 6)
+  currency      String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  createdById   String
+  createdBy     User      @relation("PositionCreatedBy", fields: [createdById], references: [id])
+
+  legs PositionLeg[]
+
+  @@unique([commodityId, positionDate])
+  @@index([positionDate])
+}
+
+model PositionLeg {
+  id          String         @id @default(cuid())
+  positionId  String
+  position    Position       @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  tradeId     String
+  trade       Trade          @relation(fields: [tradeId], references: [id])
+  quantity    Decimal        @db.Decimal(20, 6)
+  direction   TradeDirection
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  createdById String
+  createdBy   User           @relation("PositionLegCreatedBy", fields: [createdById], references: [id])
+
+  @@index([tradeId])
+}
+
+model MTMValue {
+  id            String   @id @default(cuid())
+  tradeId       String
+  trade         Trade    @relation(fields: [tradeId], references: [id])
+  valuationDate DateTime
+  marketPrice   Decimal  @db.Decimal(20, 6)
+  bookPrice     Decimal  @db.Decimal(20, 6)
+  mtmPnl        Decimal  @db.Decimal(20, 4)
+  unrealizedPnl Decimal  @db.Decimal(20, 4)
+  currency      String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdById   String
+  createdBy     User     @relation("MTMValueCreatedBy", fields: [createdById], references: [id])
+
+  @@index([tradeId, valuationDate])
+}
+
+// --- Inventory ---
+
+enum InventoryStatus {
+  IN_STOCK
+  RESERVED
+  TRANSIT
+  DELIVERED
+}
+
+enum MovementType {
+  IN
+  OUT
+  TRANSFER
+  ADJUSTMENT
+}
+
+model Inventory {
+  id             String          @id @default(cuid())
+  commodityId    String
+  commodity      Commodity       @relation(fields: [commodityId], references: [id])
+  locationId     String
+  location       Location        @relation(fields: [locationId], references: [id])
+  quantity       Decimal         @db.Decimal(20, 6)
+  unit           String
+  valuationPrice Decimal         @db.Decimal(20, 6)
+  totalValue     Decimal         @db.Decimal(20, 4)
+  qualityGrade   String?
+  warehouseRef   String?
+  arrivalDate    DateTime?
+  expiryDate     DateTime?
+  status         InventoryStatus
+  reservedQty    Decimal         @default(0) @db.Decimal(20, 6)
+  inTransitQty   Decimal         @default(0) @db.Decimal(20, 6)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  createdById    String
+  createdBy      User            @relation("InventoryCreatedBy", fields: [createdById], references: [id])
+
+  movements InventoryMovement[]
+  shipments Shipment[]
+
+  @@index([commodityId, locationId])
+}
+
+model InventoryMovement {
+  id           String        @id @default(cuid())
+  inventoryId  String
+  inventory    Inventory     @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  movementType MovementType
+  quantity     Decimal       @db.Decimal(20, 6)
+  movementDate DateTime
+  reference    String?
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  createdById  String
+  createdBy    User          @relation("InventoryMovementCreatedBy", fields: [createdById], references: [id])
+
+  @@index([inventoryId, movementDate])
+}
+
+model Shipment {
+  id          String     @id @default(cuid())
+  tradeId     String?
+  trade       Trade?     @relation(fields: [tradeId], references: [id])
+  locationId  String
+  location    Location   @relation(fields: [locationId], references: [id])
+  inventoryId String?
+  inventory   Inventory? @relation(fields: [inventoryId], references: [id])
+  quantity    Decimal    @db.Decimal(20, 6)
+  shippedAt   DateTime
+  reference   String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  createdById String
+  createdBy   User       @relation("ShipmentCreatedBy", fields: [createdById], references: [id])
+}
+
+// --- Finance ---
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+}
+
+enum InvoiceType {
+  PURCHASE
+  SALES
+  PROVISIONAL
+  FINAL
+}
+
+model Invoice {
+  id             String       @id @default(cuid())
+  invoiceRef     String       @unique
+  tradeId        String
+  trade          Trade        @relation(fields: [tradeId], references: [id])
+  counterpartyId String
+  counterparty   Counterparty @relation(fields: [counterpartyId], references: [id])
+  invoiceDate    DateTime
+  dueDate        DateTime
+  amount         Decimal      @db.Decimal(20, 4)
+  quantity       Decimal?     @db.Decimal(20, 6)
+  currency       String
+  status         InvoiceStatus
+  invoiceType    InvoiceType
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  createdById    String
+  createdBy      User         @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+
+  payments Payment[]
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+  paymentDate DateTime
+  amount      Decimal  @db.Decimal(20, 4)
+  currency    String
+  method      String
+  reference   String?
+  bankRef    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String
+  createdBy   User     @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+
+  @@index([invoiceId])
+}
+
+enum CashFlowType {
+  TRADE_RECEIPT
+  TRADE_PAYMENT
+  FINANCING
+  FX
+  OVERHEAD
+  OTHER
+}
+
+model CashFlowEntry {
+  id          String       @id @default(cuid())
+  entryDate   DateTime
+  valueDate   DateTime
+  entryType   CashFlowType
+  amount      Decimal      @db.Decimal(20, 4)
+  currency    String
+  description String
+  tradeRef    String?
+  invoiceRef  String?
+  isProjected Boolean      @default(false)
+  isPaid      Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  createdById String
+  createdBy   User         @relation("CashFlowEntryCreatedBy", fields: [createdById], references: [id])
+
+  @@index([valueDate])
+}
+
+enum ReconType {
+  TRADE_VS_INVOICE
+  INVOICE_VS_PAYMENT
+  POSITION_VS_INVENTORY
+  PAYMENT_VS_BANK
+}
+
+enum ReconStatus {
+  MATCHED
+  BREAK
+  PENDING_REVIEW
+  RESOLVED
+}
+
+model Reconciliation {
+  id             String      @id @default(cuid())
+  reconDate      DateTime
+  reconType      ReconType
+  referenceA     String
+  referenceB     String
+  expectedAmount Decimal     @db.Decimal(20, 4)
+  actualAmount   Decimal     @db.Decimal(20, 4)
+  difference     Decimal     @db.Decimal(20, 4)
+  status         ReconStatus
+  notes          String?
+  resolvedAt     DateTime?
+  assignedTo     String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  createdById    String
+  createdBy      User        @relation("ReconciliationCreatedBy", fields: [createdById], references: [id])
+
+  @@index([status, reconDate])
+}
+
+model BankTransaction {
+  id          String   @id @default(cuid())
+  valueDate   DateTime
+  amount      Decimal  @db.Decimal(20, 4)
+  currency    String
+  description String
+  bankRef     String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String
+  createdBy   User      @relation("BankTransactionCreatedBy", fields: [createdById], references: [id])
+
+  @@index([valueDate])
+}
+
+// --- Traceability ---
+
+enum TraceEventType {
+  HARVEST
+  PROCESSING
+  STORAGE
+  TRANSPORT
+  SALE
+}
+
+model TraceabilityRecord {
+  id             String    @id @default(cuid())
+  batchRef       String    @unique
+  commodityId    String
+  commodity      Commodity @relation(fields: [commodityId], references: [id])
+  originFarm     String
+  farmerName     String?
+  farmLocation   String
+  harvestDate    DateTime
+  quantity       Decimal   @db.Decimal(20, 6)
+  certifications String[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  createdById    String
+  createdBy      User      @relation("TraceabilityRecordCreatedBy", fields: [createdById], references: [id])
+
+  chainOfCustody TraceChainEntry[]
+  tradeLinks     TradeTraceabilityLink[]
+}
+
+model TraceChainEntry {
+  id          String             @id @default(cuid())
+  batchId     String
+  batch       TraceabilityRecord @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  eventType   TraceEventType
+  eventDate   DateTime
+  location    String
+  actor       String
+  notes       String?
+  documents   String[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  createdById String
+  createdBy   User               @relation("TraceChainEntryCreatedBy", fields: [createdById], references: [id])
+
+  @@index([batchId, eventDate])
+}
+
+model TradeTraceabilityLink {
+  id          String             @id @default(cuid())
+  tradeId     String
+  trade       Trade              @relation(fields: [tradeId], references: [id])
+  batchId     String
+  batch       TraceabilityRecord @relation(fields: [batchId], references: [id])
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  createdById String
+  createdBy   User               @relation("TradeTraceLinkCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([tradeId, batchId])
+}
+
+// --- Execution Workflows ---
+
+enum ExecutionStage {
+  PENDING_VEHICLE_ARRIVAL
+  VEHICLE_ARRIVED
+  OFFLOADING_IN_PROGRESS
+  OFFLOADING_COMPLETED
+  QUALITY_CHECK_IN_PROGRESS
+  QUALITY_CHECK_COMPLETED
+  INVENTORY_RECORDED
+  INVOICE_RECEIVED
+  PAYMENT_PENDING
+  PAYMENT_RECEIVED
+  COMPLETED
+  REJECTED
+}
+
+enum DocumentType {
+  TRUCK_RECEIVING_NOTE
+  GOODS_RECEIVING_NOTE
+  BILTY
+  WEIGH_SLIP_SPOT
+  WEIGH_SLIP_WAREHOUSE
+  LSP_REPORT
+  DELIVERY_CHALLAN
+  BROKER_QUOTATION
+  MARKET_VISIT_REPORT
+  INVOICE
+  COMMISSION_BREAKDOWN
+  PAYMENT_PROOF
+  RELEASE_AUTHORIZATION
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+  FAILED
+}
+
+model ExecutionLog {
+  id             String          @id @default(cuid())
+  executionRef   String          @unique
+  tradeRef       String
+  executionType  String          @default("PURCHASE_DELIVERED")
+  stage          ExecutionStage  @default(PENDING_VEHICLE_ARRIVAL)
+  status         String
+  statusChanged  DateTime        @default(now())
+  actorId        String
+  actor          User            @relation(fields: [actorId], references: [id])
+  details        Json?
+  notes          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  documents             Document[]
+  inventoryReceival     InventoryReceival?
+  spotPurchase          SpotPurchase?
+  outboundDispatch      OutboundDispatch?
+  executionPayments     ExecutionPayment[]
+
+  @@index([tradeRef, stage])
+  @@index([createdAt])
+}
+
+model Document {
+  id               String        @id @default(cuid())
+  executionLogId   String
+  executionLog     ExecutionLog  @relation(fields: [executionLogId], references: [id], onDelete: Cascade)
+  documentType     DocumentType
+  originalFilename String
+  storagePath      String
+  fileSize         BigInt
+  mimeType         String
+  uploadedAt       DateTime      @default(now())
+  uploadedById     String
+  uploadedBy       User          @relation(fields: [uploadedById], references: [id])
+  notes            String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([executionLogId, documentType])
+}
+
+model InventoryReceival {
+  id                     String        @id @default(cuid())
+  executionLogId         String        @unique
+  executionLog           ExecutionLog  @relation(fields: [executionLogId], references: [id], onDelete: Cascade)
+  vehicleNumber          String
+  biltyNumber            String?
+  truckReceivingNoteRef  String?
+  offloadDate            DateTime
+  receiveQuantityMt      Decimal       @db.Decimal(20, 6)
+  damagePct              Decimal       @db.Decimal(5, 2)
+  brokenPct              Decimal       @db.Decimal(5, 2)
+  fungusPct              Decimal       @db.Decimal(5, 2)
+  foreignMatterPct       Decimal       @db.Decimal(5, 2)
+  moisturePct            Decimal       @db.Decimal(5, 2)
+  moistureDeductionPct   Decimal       @db.Decimal(5, 2)
+  totalDeductionPct      Decimal       @db.Decimal(5, 2)
+  netReceiveQuantityMt   Decimal       @db.Decimal(20, 6)
+  warehouseLocation      String
+  warehouseRef           String?
+  sourceWeighSlipQty     Decimal?      @db.Decimal(20, 6)
+  warehouseWeighSlipQty  Decimal?      @db.Decimal(20, 6)
+  financeStatus          PaymentStatus @default(PENDING)
+  financeApprovedBy      String?
+  financeApprovedAt      DateTime?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  @@index([executionLogId])
+}
+
+model SpotPurchase {
+  id                    String        @id @default(cuid())
+  executionLogId        String        @unique
+  executionLog          ExecutionLog  @relation(fields: [executionLogId], references: [id], onDelete: Cascade)
+  selectorName          String
+  marketLocation        String
+  selectorVisitDate     DateTime
+  selectionNotes        String?
+  brokerName            String
+  brokerId              String?
+  commissionPercentage  Decimal       @db.Decimal(5, 2)
+  commissionAmount      Decimal       @db.Decimal(20, 4)
+  deliveryChallanlRef   String?
+  vehicleNumber         String
+  weightAtSourceKg      Decimal       @db.Decimal(20, 3)
+  deliveredQuantityMt   Decimal       @db.Decimal(20, 6)
+  weightAtWarehouseKg   Decimal       @db.Decimal(20, 3)
+  varianceQtyMt         Decimal       @db.Decimal(20, 6)
+  damagePct             Decimal       @db.Decimal(5, 2)
+  brokenPct             Decimal       @db.Decimal(5, 2)
+  fungusPct             Decimal       @db.Decimal(5, 2)
+  foreignMatterPct      Decimal       @db.Decimal(5, 2)
+  moisturePct           Decimal       @db.Decimal(5, 2)
+  invoiceAmount         Decimal       @db.Decimal(20, 4)
+  invoiceRef            String?
+  financePaid           Boolean       @default(false)
+  financeApprovedAt     DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  @@index([executionLogId])
+}
+
+model OutboundDispatch {
+  id                     String        @id @default(cuid())
+  executionLogId         String        @unique
+  executionLog           ExecutionLog  @relation(fields: [executionLogId], references: [id], onDelete: Cascade)
+  vehicleNumber          String
+  loadedAt               DateTime
+  loadedById             String
+  loadedBy               User          @relation("OutboundDispatchLoadedBy", fields: [loadedById], references: [id])
+  weightedAt             DateTime
+  weightQuantityMt       Decimal       @db.Decimal(20, 6)
+  fifoAllocationData     Json
+  buyerPaymentReceived   Boolean       @default(false)
+  paymentReceivedAt      DateTime?
+  financeApproved        Boolean       @default(false)
+  financeApprovedBy      String?
+  financeApprovedAt      DateTime?
+  releasedAt             DateTime?
+  releasedById           String?
+  releasedBy             User?         @relation("OutboundDispatchReleasedBy", fields: [releasedById], references: [id])
+  releaseNotes           String?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  @@index([executionLogId])
+}
+
+model ExecutionPayment {
+  id             String        @id @default(cuid())
+  executionLogId String
+  executionLog   ExecutionLog  @relation(fields: [executionLogId], references: [id], onDelete: Cascade)
+  invoiceRef     String?
+  paymentAmount  Decimal       @db.Decimal(20, 4)
+  paymentDate    DateTime
+  paymentStatus  PaymentStatus @default(PENDING)
+  approvedById   String?
+  approvedBy     User?         @relation(fields: [approvedById], references: [id])
+  approvedAt     DateTime?
+  paymentMethod  String?
+  bankReference  String?
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([executionLogId, paymentStatus])
+}
+
