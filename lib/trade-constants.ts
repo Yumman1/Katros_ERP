@@ -16,13 +16,41 @@ export type QuantityUnit = (typeof QUANTITY_UNITS)[number];
 export const PRICE_BASIS_OPTIONS = ["Fixed", "Index-linked"] as const;
 export type PriceBasis = (typeof PRICE_BASIS_OPTIONS)[number];
 
-export const INCOTERMS = ["EXW", "FCA", "FOB", "CFR", "CIF", "DAP"] as const;
+/** Desk workflow terms — map to spot / delivered / ex-warehouse execution profiles. */
+export const EXECUTION_INCOTERMS = ["Spot", "Delivered", "Ex-Warehouse"] as const;
+export type ExecutionIncoterm = (typeof EXECUTION_INCOTERMS)[number];
+
+export const STANDARD_INCOTERMS = ["EXW", "FCA", "FOB", "CFR", "CIF", "DAP"] as const;
+export type StandardIncoterm = (typeof STANDARD_INCOTERMS)[number];
+
+export const INCOTERMS = [...EXECUTION_INCOTERMS, ...STANDARD_INCOTERMS] as const;
 export type Incoterm = (typeof INCOTERMS)[number];
 
-const ORIGIN_ONLY_INCOTERMS = new Set<Incoterm>(["EXW", "FCA", "FOB"]);
+const ORIGIN_ONLY_INCOTERMS = new Set<string>(["EXW", "FCA", "FOB", "Spot", "Delivered", "Ex-Warehouse"]);
+const SPOT_INCOTERMS = new Set<string>(["Spot", "EXW", "FCA", "FOB"]);
+const DELIVERED_INCOTERMS = new Set<string>(["Delivered", "CFR", "CIF", "DAP"]);
+
+export function incotermsForDirection(direction: "BUY" | "SELL"): readonly string[] {
+  if (direction === "SELL") {
+    return ["Ex-Warehouse", ...STANDARD_INCOTERMS];
+  }
+  return ["Spot", "Delivered", ...STANDARD_INCOTERMS];
+}
+
+export function defaultIncotermForDirection(direction: "BUY" | "SELL"): Incoterm {
+  return direction === "SELL" ? "Ex-Warehouse" : "Delivered";
+}
+
+export function buyingCategoryFromIncoterms(
+  incoterms: string,
+  direction: "BUY" | "SELL",
+): BuyingCategory | null {
+  if (direction === "SELL") return null;
+  return SPOT_INCOTERMS.has(incoterms) ? "Spot" : "Delivered";
+}
 
 export function isDestinationRequired(incoterms: string): boolean {
-  return !ORIGIN_ONLY_INCOTERMS.has(incoterms as Incoterm);
+  return !ORIGIN_ONLY_INCOTERMS.has(incoterms);
 }
 
 export function isOriginRequired(incoterms: string): boolean {
@@ -68,9 +96,22 @@ export function tradeScopeFromSeed(tradeRef: string): TradeScope {
 export function executionProfileFromTrade(
   direction: "BUY" | "SELL",
   buyingCategory?: BuyingCategory | null,
+  incoterms?: string | null,
 ): ExecutionProfile {
   if (direction === "SELL") return "SALE_EX_WAREHOUSE";
-  return buyingCategory === "Spot" ? "PURCHASE_SPOT" : "PURCHASE_DELIVERED";
+  const category =
+    buyingCategory ??
+    (incoterms ? buyingCategoryFromIncoterms(incoterms, direction) : "Delivered");
+  return category === "Spot" ? "PURCHASE_SPOT" : "PURCHASE_DELIVERED";
+}
+
+export function executionIncotermLabel(incoterms: string): string {
+  if (incoterms === "Spot") return "Spot (purchase at origin)";
+  if (incoterms === "Delivered") return "Delivered (gatepass inbound)";
+  if (incoterms === "Ex-Warehouse") return "Ex-Warehouse (outbound sales)";
+  if (SPOT_INCOTERMS.has(incoterms)) return `${incoterms} → Spot workflow`;
+  if (DELIVERED_INCOTERMS.has(incoterms)) return `${incoterms} → Delivered workflow`;
+  return incoterms;
 }
 
 /** Pakistan corn desk: kg per maund */

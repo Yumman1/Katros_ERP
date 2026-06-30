@@ -39,40 +39,16 @@ const sharedNav: NavItem[] = [
   },
 ];
 
-function scopeNav(scope: "local" | "international", label: string): NavItem[] {
-  const base = `/execution/${scope}`;
-  return [
-    {
-      href: `${base}/purchase-delivered`,
-      label: `${label} — Purchase Delivered`,
-      icon: (
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <path strokeLinecap="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-        </svg>
-      ),
-    },
-    {
-      href: `${base}/purchase-spot`,
-      label: `${label} — Purchase Spot`,
-      icon: (
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <circle cx="11" cy="11" r="8" /><path strokeLinecap="round" d="m21 21-4.35-4.35" />
-        </svg>
-      ),
-    },
-    {
-      href: `${base}/sales`,
-      label: `${label} — Sales`,
-      icon: (
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <path strokeLinecap="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
-        </svg>
-      ),
-    },
-  ];
-}
-
 const tailNav: NavItem[] = [
+  {
+    href: "/execution/prices",
+    label: "Daily Prices",
+    icon: (
+      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+      </svg>
+    ),
+  },
   {
     href: "/execution/inventory",
     label: "Inventory",
@@ -172,16 +148,6 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
 
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-3">
           {sharedNav.map(renderNavItem)}
-
-          <div className="px-3 pb-1 pt-3 text-[9px] font-bold uppercase tracking-widest text-zinc-600">
-            Local market
-          </div>
-          {scopeNav("local", "Local").map(renderNavItem)}
-
-          <div className="px-3 pb-1 pt-3 text-[9px] font-bold uppercase tracking-widest text-zinc-600">
-            International
-          </div>
-          {scopeNav("international", "Intl").map(renderNavItem)}
 
           <div className="px-3 pb-1 pt-3 text-[9px] font-bold uppercase tracking-widest text-zinc-600">
             Operations

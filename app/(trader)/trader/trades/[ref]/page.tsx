@@ -1,11 +1,10 @@
 "use client";
 
-import { TRADE_SCOPE_LABELS, BUYING_CATEGORIES, PAYMENT_TYPE_LABELS } from "@/lib/trade-constants";
+import { TRADE_SCOPE_LABELS, executionIncotermLabel, executionProfileFromTrade, PAYMENT_TYPE_LABELS } from "@/lib/trade-constants";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import { executionWorkspacePath } from "@/lib/execution-routes";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
-import { TradeDirection } from "@prisma/client";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -21,17 +20,13 @@ export default function TradeDetailPage() {
   const lock = trpc.trader.lockTrade.useMutation({
     onSuccess: () => invalidateTradeFlowCaches(utils, tradeRef),
   });
-  const [buyingCategory, setBuyingCategory] = useState<"Delivered" | "Spot">("Delivered");
   const [ratePerMaund, setRatePerMaund] = useState<number>(0);
   const [commission, setCommission] = useState<number>(0);
 
   useEffect(() => {
-    if (trade?.buyingCategory === "Spot" || trade?.buyingCategory === "Delivered") {
-      setBuyingCategory(trade.buyingCategory);
-    }
     if (trade?.ratePerMaund) setRatePerMaund(trade.ratePerMaund);
     if (trade?.commissionPerMaund != null) setCommission(trade.commissionPerMaund);
-  }, [trade?.buyingCategory, trade?.ratePerMaund, trade?.commissionPerMaund]);
+  }, [trade?.ratePerMaund, trade?.commissionPerMaund]);
 
   if (isLoading || (isFetching && !trade)) {
     return <div className="animate-pulse text-zinc-500">Loading trade…</div>;
@@ -88,12 +83,16 @@ export default function TradeDetailPage() {
                 ? "bg-amber-500/20 text-amber-400"
                 : trade.tradeStatus === "LOCKED"
                   ? "bg-purple-500/20 text-purple-300"
-                  : trade.tradeStatus === "EXECUTED"
-                    ? "bg-kastros-green/20 text-kastros-green"
+                  : trade.tradeStatus === "EXECUTED" || trade.tradeStatus === "SETTLED"
+                    ? "bg-zinc-500/20 text-zinc-400"
                     : "bg-blue-500/20 text-blue-400"
             }`}
           >
-            {trade.tradeStatus}
+            {trade.tradeStatus === "PENDING"
+              ? "Draft"
+              : trade.tradeStatus === "EXECUTED" || trade.tradeStatus === "SETTLED"
+                ? "Closed"
+                : trade.tradeStatus}
           </span>
         </div>
       </div>
@@ -117,9 +116,10 @@ export default function TradeDetailPage() {
             label: "Market",
             value: TRADE_SCOPE_LABELS[trade.tradeScope ?? "LOCAL"],
           },
-          ...(trade.direction === TradeDirection.BUY && trade.buyingCategory
-            ? [{ label: "Buying category", value: trade.buyingCategory }]
-            : []),
+          {
+            label: "Workflow",
+            value: executionIncotermLabel(trade.incoterms),
+          },
           { label: "Quantity", value: `${formatQty(trade.quantity)} ${unit}` },
           {
             label: `Price / ${unit}`,
@@ -147,6 +147,7 @@ export default function TradeDetailPage() {
       <div className="grid gap-4 md:grid-cols-2">
         <DetailCard title="Delivery terms (Incoterms)">
           <Row label="Incoterms" value={trade.incoterms} />
+          <Row label="Execution workflow" value={executionProfileFromTrade(trade.direction, trade.buyingCategory, trade.incoterms).replace(/_/g, " ")} />
           <Row label="Delivery start" value={trade.deliveryStart.toISOString().slice(0, 10)} />
           <Row label="Delivery end" value={trade.deliveryEnd.toISOString().slice(0, 10)} />
           <Row label="Shipment origin" value={trade.originName} />
@@ -191,27 +192,9 @@ export default function TradeDetailPage() {
         <div className="rounded-lg border border-kastros-border bg-kastros-card p-4">
           <h2 className="text-sm font-medium text-zinc-300">Lock for execution</h2>
           <p className="mt-1 text-xs text-zinc-500">
-            Execution only sees this trade after you lock it. Spot purchases appear under Purchase — Spot;
-            delivered purchases use gatepass trucks.
+            Execution only sees this trade after you lock it. Workflow is set by Incoterms:{" "}
+            <strong className="text-amber-400/90">{executionIncotermLabel(trade.incoterms)}</strong>
           </p>
-          {trade.direction === TradeDirection.BUY && trade.buyingCategory && (
-            <p className="mt-2 text-xs text-amber-400/90">
-              Booked as <strong>{trade.buyingCategory}</strong> — confirm the workflow below before locking.
-            </p>
-          )}
-          {trade.direction === TradeDirection.BUY && (
-            <select
-              value={buyingCategory}
-              onChange={(e) => setBuyingCategory(e.target.value as "Delivered" | "Spot")}
-              className="mt-3 w-full rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-white"
-            >
-              {BUYING_CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          )}
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             <input
               type="number"
@@ -234,7 +217,6 @@ export default function TradeDetailPage() {
             onClick={() =>
               lock.mutate({
                 tradeRef,
-                buyingCategory: trade.direction === TradeDirection.BUY ? buyingCategory : undefined,
                 ratePerMaund: ratePerMaund || trade.price,
                 commissionPerMaund: commission,
               })

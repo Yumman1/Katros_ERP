@@ -4,6 +4,10 @@ import { trpc } from "@/lib/trpc/client";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { summarizeQtyByUnit } from "@/lib/formatters/execution-units";
 import {
+  aggregateWarehouseStock,
+  warehouseUtilizationSummary,
+} from "@/lib/warehouse-utilization";
+import {
   ArrowDownToLine,
   ArrowUpFromLine,
   ClipboardList,
@@ -45,6 +49,7 @@ const INV_REFETCH_MS = 8000;
 
 export default function ExecutionInventoryPage() {
   const { data: contracts, isLoading: loadingContracts } = trpc.execution.lockedContracts.useQuery({});
+  const { data: warehouseLocations } = trpc.execution.warehouseLocations.useQuery();
   const { data: inbound, isLoading: loadingInbound } = trpc.execution.inboundReceipts.useQuery({});
   const { data: outbound, isLoading: loadingOutbound } = trpc.execution.outboundDispatches.useQuery({});
   const { data: pendingTrucks } = trpc.execution.pendingTrucks.useQuery(
@@ -99,6 +104,11 @@ export default function ExecutionInventoryPage() {
   const contractByRef = useMemo(
     () => new Map((contracts ?? []).map((c) => [c.tradeRef, c])),
     [contracts],
+  );
+
+  const warehouseConfigByName = useMemo(
+    () => new Map((warehouseLocations ?? []).map((w) => [w.name, w])),
+    [warehouseLocations],
   );
 
   const movements = useMemo<Movement[]>(() => {
@@ -454,7 +464,12 @@ export default function ExecutionInventoryPage() {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-white">Warehouse Balances</h2>
-          <span className="text-xs" style={{ color: "#71717a" }}>{warehouses.length} warehouse{warehouses.length === 1 ? "" : "s"}</span>
+          <div className="flex items-center gap-3">
+            <Link href="/execution/warehouses" className="text-xs font-medium text-amber-400 hover:underline">
+              Setup capacity
+            </Link>
+            <span className="text-xs" style={{ color: "#71717a" }}>{warehouses.length} warehouse{warehouses.length === 1 ? "" : "s"}</span>
+          </div>
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
           {warehouses.map((w) => (
@@ -515,6 +530,51 @@ export default function ExecutionInventoryPage() {
                     </span>
                   ))}
               </div>
+              {(() => {
+                const cfg = warehouseConfigByName.get(w.name);
+                const capSqFt = cfg?.capacitySqFt ?? 0;
+                if (!capSqFt) return null;
+                const capacity = {
+                  capacitySqFt: capSqFt,
+                  balesDivisionSqFt: cfg?.balesDivisionSqFt ?? 4.5,
+                  grainDivisionSqFt: cfg?.grainDivisionSqFt ?? 7,
+                };
+                const stock = aggregateWarehouseStock(
+                  [...w.commodities.values()].map((c) => ({
+                    commodityCode: c.code,
+                    quantityUnit: c.unit,
+                    netQty: c.qty,
+                  })),
+                );
+                const util = warehouseUtilizationSummary(stock, capacity);
+                return (
+                  <div className="mt-3 rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)" }}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-500">Sq ft utilization (shared)</span>
+                      <span className="font-semibold text-zinc-300">{(util.utilizationPct * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${Math.min(util.utilizationPct * 100, 100)}%`,
+                          background:
+                            util.utilizationPct > 0.9
+                              ? "#f87171"
+                              : util.utilizationPct > 0.75
+                                ? "#fbbf24"
+                                : "#34d399",
+                        }}
+                      />
+                    </div>
+                    <p className="mt-1.5 text-[10px] text-zinc-600">
+                      {util.consumedSqFt.toLocaleString(undefined, { maximumFractionDigits: 0 })} /{" "}
+                      {capSqFt.toLocaleString()} sq ft used · room for{" "}
+                      {util.balanceMt.toFixed(0)} MT or {util.balanceBales.toFixed(0)} bales more
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           ))}
         </div>

@@ -4,7 +4,11 @@ import { CreatableSelect } from "@/components/trader/creatable-select";
 import { trpc } from "@/lib/trpc/client";
 import {
   BUYING_CATEGORIES,
+  defaultIncotermForDirection,
+  executionIncotermLabel,
+  executionProfileFromTrade,
   INCOTERMS,
+  incotermsForDirection,
   isDestinationRequired,
   PAYMENT_TYPE_LABELS,
   PRICE_BASIS_OPTIONS,
@@ -48,7 +52,6 @@ const schema = z
     qualityTolerances: z.string().min(1, "Quality tolerances required"),
     maxMoisturePct: z.number().min(0).max(100),
     notes: z.string().optional(),
-    buyingCategory: z.enum(BUYING_CATEGORIES).optional(),
     tradeScope: z.enum(TRADE_SCOPES),
   })
   .superRefine((data, ctx) => {
@@ -146,7 +149,7 @@ export default function BookTradePage() {
       deliveryStart: defaultStart,
       deliveryEnd: defaultEnd,
       paymentType: "LC",
-      incoterms: "FOB",
+      incoterms: "Delivered",
       priceBasis: "Fixed",
       quantityUnit: "MT",
       quantity: 1000,
@@ -159,7 +162,6 @@ export default function BookTradePage() {
       destName: "",
       commodityId: "",
       counterpartyId: "",
-      buyingCategory: "Delivered",
       tradeScope: "LOCAL",
     },
   });
@@ -180,6 +182,10 @@ export default function BookTradePage() {
   const incoterms = watch("incoterms");
   const direction = watch("direction");
   const destRequired = isDestinationRequired(incoterms ?? "FOB");
+
+  useEffect(() => {
+    setValue("incoterms", defaultIncotermForDirection(direction), { shouldValidate: true });
+  }, [direction, setValue]);
 
   const commodities = refData.data?.commodities ?? [];
   const quantityUnitOptions = refData.data?.quantityUnits ?? [...QUANTITY_UNITS];
@@ -220,7 +226,6 @@ export default function BookTradePage() {
         deliveryEnd: new Date(data.deliveryEnd),
         originName: data.originName.trim(),
         destName: data.destName?.trim() || undefined,
-        buyingCategory: data.direction === TradeDirection.BUY ? data.buyingCategory : undefined,
       });
     },
     () => {
@@ -401,7 +406,7 @@ export default function BookTradePage() {
         </Section>
 
         <Section title="Quantity" description="Contract volume and unit">
-          <div className={`grid gap-4 ${direction === TradeDirection.BUY ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+          <div className="grid gap-4 sm:grid-cols-3">
             <Field label="Direction" error={errors.direction?.message}>
               <select
                 {...register("direction")}
@@ -411,23 +416,6 @@ export default function BookTradePage() {
                 <option value={TradeDirection.SELL}>SELL</option>
               </select>
             </Field>
-            {direction === TradeDirection.BUY && (
-              <Field label="Buying category" error={errors.buyingCategory?.message}>
-                <select
-                  {...register("buyingCategory")}
-                  className="w-full rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-white"
-                >
-                  {BUYING_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-1 text-xs text-zinc-600">
-                  Spot → execution Purchase — Spot. Delivered → gatepass / inbound trucks.
-                </p>
-              </Field>
-            )}
             <Field label={`Quantity (${quantityUnit})`} error={errors.quantity?.message}>
               <input
                 type="number"
@@ -498,12 +486,15 @@ export default function BookTradePage() {
                 {...register("incoterms")}
                 className="w-full rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-white"
               >
-                {(refData.data?.incoterms ?? [...INCOTERMS]).map((i) => (
+                {incotermsForDirection(direction).map((i) => (
                   <option key={i} value={i}>
-                    {i}
+                    {executionIncotermLabel(i)}
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-zinc-600">
+                Spot → purchase at origin. Delivered → gatepass inbound. Ex-Warehouse → outbound sales.
+              </p>
             </Field>
             <Field label="Delivery start" error={errors.deliveryStart?.message}>
               <input

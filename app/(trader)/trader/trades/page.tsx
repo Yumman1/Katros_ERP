@@ -8,18 +8,33 @@ import { TradeStatus } from "@prisma/client";
 import { endOfMonth, startOfMonth } from "date-fns";
 import { useState } from "react";
 
-const FILTERS: (TradeStatus | "ALL")[] = ["ALL", "PENDING", "LOCKED", "CONFIRMED", "EXECUTED", "SETTLED"];
+type TradeFilter = "ALL" | "DRAFTS" | "LOCKED" | "CONFIRMED" | "CLOSED";
+
+const FILTERS: TradeFilter[] = ["ALL", "DRAFTS", "LOCKED", "CONFIRMED", "CLOSED"];
 
 const statusStyle: Partial<Record<TradeStatus, string>> = {
   PENDING: "bg-amber-500/20 text-amber-400",
   LOCKED: "bg-purple-500/20 text-purple-300",
   CONFIRMED: "bg-blue-500/20 text-blue-400",
-  EXECUTED: "bg-kastros-green/20 text-kastros-green",
+  EXECUTED: "bg-zinc-500/20 text-zinc-400",
   SETTLED: "bg-zinc-500/20 text-zinc-400",
 };
 
+function displayStatus(status: TradeStatus): string {
+  if (status === TradeStatus.PENDING) return "Draft";
+  if (status === TradeStatus.EXECUTED || status === TradeStatus.SETTLED) return "Closed";
+  return status;
+}
+
+function filterInput(filter: TradeFilter) {
+  if (filter === "DRAFTS") return { bucket: "DRAFTS" as const };
+  if (filter === "CLOSED") return { bucket: "CLOSED" as const };
+  if (filter === "ALL") return {};
+  return { status: filter as TradeStatus };
+}
+
 export default function MyTradesPage() {
-  const [filter, setFilter] = useState<TradeStatus | "ALL">("ALL");
+  const [filter, setFilter] = useState<TradeFilter>("ALL");
   const exportCsv = trpc.trader.exportLockedTrades.useMutation({
     onSuccess: (res) => {
       const blob = new Blob([res.csv], { type: "text/csv;charset=utf-8" });
@@ -31,9 +46,7 @@ export default function MyTradesPage() {
       URL.revokeObjectURL(url);
     },
   });
-  const { data: trades, isLoading } = trpc.trader.myTrades.useQuery({
-    status: filter === "ALL" ? undefined : filter,
-  });
+  const { data: trades, isLoading } = trpc.trader.myTrades.useQuery(filterInput(filter));
 
   return (
     <div className="space-y-4">
@@ -76,7 +89,7 @@ export default function MyTradesPage() {
                 : "border-kastros-border text-zinc-400 hover:bg-white/5"
             }`}
           >
-            {f}
+            {f === "DRAFTS" ? "Drafts" : f === "CLOSED" ? "Closed" : f === "ALL" ? "All" : f}
           </button>
         ))}
       </div>
@@ -159,7 +172,7 @@ export default function MyTradesPage() {
                     </td>
                     <td className="px-2 py-2">
                       <span className={`rounded px-1.5 py-0.5 text-xs ${statusStyle[t.tradeStatus] ?? ""}`}>
-                        {t.tradeStatus}
+                        {displayStatus(t.tradeStatus)}
                       </span>
                     </td>
                   </tr>

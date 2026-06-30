@@ -1,6 +1,6 @@
 import { addDays } from "date-fns";
 import { CommodityCategory, CounterpartyType } from "@prisma/client";
-import { DEFAULT_GRADES, INCOTERMS, QUANTITY_UNITS } from "@/lib/trade-constants";
+import { DEFAULT_GRADES, INCOTERMS, incotermsForDirection, QUANTITY_UNITS } from "@/lib/trade-constants";
 import type { KycStatus } from "@/lib/trade-constants";
 import {
   isLocalPersistEnabled,
@@ -42,7 +42,19 @@ const CP_EXTRA_DEFAULT = {
   bankDetails: null,
 } as const;
 
-export type MockLocationOption = { id: string; name: string };
+export type MockLocationOption = {
+  id: string;
+  name: string;
+  code?: string | null;
+  lsp?: string | null;
+  address?: string | null;
+  city?: string | null;
+  province?: string | null;
+  capacitySqFt?: number | null;
+  costPerSqFt?: number | null;
+  balesDivisionSqFt?: number | null;
+  grainDivisionSqFt?: number | null;
+};
 
 const SEEDED_COMMODITIES: MockCommodityOption[] = [
   { id: "c1", name: "Wheat", code: "WHT", unit: "MT", exchange: "CBOT", tickerCode: "ZW", category: CommodityCategory.GRAINS },
@@ -50,6 +62,7 @@ const SEEDED_COMMODITIES: MockCommodityOption[] = [
   { id: "c3", name: "Sugar", code: "SUG", unit: "MT", exchange: "ICE", tickerCode: "SB", category: CommodityCategory.SOFTS },
   { id: "c6", name: "Soybeans", code: "SOY", unit: "MT", exchange: "CBOT", tickerCode: "ZS", category: CommodityCategory.OILSEEDS },
   { id: "c7", name: "Rice", code: "RCE", unit: "MT", exchange: "CBOT", tickerCode: "ZR", category: CommodityCategory.GRAINS },
+  { id: "c8", name: "Corn", code: "CRN", unit: "MT", exchange: "CBOT", tickerCode: "ZC", category: CommodityCategory.GRAINS },
 ];
 
 const SEEDED_COUNTERPARTIES: MockCounterpartyOption[] = [
@@ -64,13 +77,61 @@ const SEEDED_COUNTERPARTIES: MockCounterpartyOption[] = [
 ];
 
 const SEEDED_LOCATIONS: MockLocationOption[] = [
-  { id: "l1", name: "Karachi Warehouse" },
-  { id: "l2", name: "Lahore Warehouse" },
-  { id: "l3", name: "Multan Silo Cluster" },
-  { id: "l4", name: "Karachi Port" },
-  { id: "l5", name: "Port Qasim" },
-  { id: "l6", name: "Port Klang, Malaysia" },
-  { id: "l7", name: "Santos, Brazil" },
+  {
+    id: "l1",
+    name: "K001-Al Amin WH SWL",
+    code: "K001",
+    lsp: "Hellmann",
+    address: "12 KM Sahiwal Arifwala, Bahawalnagar Road Sahiwal",
+    city: "Sahiwal",
+    province: "Punjab",
+    capacitySqFt: 38680,
+    costPerSqFt: 36,
+    balesDivisionSqFt: 4.5,
+    grainDivisionSqFt: 6.0413,
+  },
+  {
+    id: "l2",
+    name: "K002-Abdullah wh",
+    code: "K002",
+    lsp: "Hellmann",
+    address: "Adullah textile mill, Chak No 85/15L vehari Road khanewal",
+    city: "Kacha Koh",
+    province: "Punjab",
+    capacitySqFt: 70000,
+    costPerSqFt: 25,
+    balesDivisionSqFt: 4,
+    grainDivisionSqFt: 10.311,
+  },
+  {
+    id: "l3",
+    name: "K003- Galaxy wh",
+    code: "K003",
+    lsp: "Hellmann",
+    address: "30km Sheikhupura Road Khuriwala FSB Punjab",
+    city: "Jhang",
+    province: "Punjab",
+    capacitySqFt: 100000,
+    costPerSqFt: 27.5,
+    balesDivisionSqFt: 4.5,
+    grainDivisionSqFt: 7.2,
+  },
+  {
+    id: "l4",
+    name: "K005-Shuja feed Wh",
+    code: "K005",
+    lsp: "Moventis",
+    address: "Shujaabad Feed, Jalalpur",
+    city: "Jalalpur",
+    province: "Punjab",
+    capacitySqFt: 53000,
+    costPerSqFt: 30,
+    balesDivisionSqFt: 4.5,
+    grainDivisionSqFt: 7.5,
+  },
+  { id: "l5", name: "Karachi Port" },
+  { id: "l6", name: "Port Qasim" },
+  { id: "l7", name: "Port Klang, Malaysia" },
   { id: "l8", name: "New Orleans, USA" },
   { id: "l9", name: "FOB Karachi" },
 ];
@@ -84,6 +145,7 @@ type MasterDataSnapshot = {
   customLocationSeq: number;
   customCounterpartySeq: number;
   customQuantityUnits?: string[];
+  warehouseOverrides?: Record<string, Partial<MockLocationOption>>;
 };
 
 type MasterRuntime = MasterDataSnapshot;
@@ -104,6 +166,7 @@ function getMasterRuntime(): MasterRuntime {
       customLocationSeq: 100,
       customCounterpartySeq: 100,
       customQuantityUnits: [],
+      warehouseOverrides: {},
     };
   }
   return g[MASTER_RUNTIME_KEY];
@@ -125,6 +188,7 @@ function syncMasterDataFromDisk() {
   rt.customLocationSeq = snap.customLocationSeq;
   rt.customCounterpartySeq = snap.customCounterpartySeq;
   rt.customQuantityUnits = snap.customQuantityUnits ?? [];
+  rt.warehouseOverrides = snap.warehouseOverrides ?? {};
 }
 
 function persistMasterData() {
@@ -138,6 +202,7 @@ function persistMasterData() {
     customLocationSeq: rt.customLocationSeq,
     customCounterpartySeq: rt.customCounterpartySeq,
     customQuantityUnits: rt.customQuantityUnits ?? [],
+    warehouseOverrides: rt.warehouseOverrides ?? {},
   } satisfies MasterDataSnapshot);
 }
 
@@ -201,13 +266,19 @@ export function getMergedLocations(): MockLocationOption[] {
   const rt = masterRt();
   const seen = new Set<string>();
   const out: MockLocationOption[] = [];
+  const overrides = rt.warehouseOverrides ?? {};
   for (const loc of [...SEEDED_LOCATIONS, ...rt.customLocations]) {
     const k = norm(loc.name);
     if (seen.has(k)) continue;
     seen.add(k);
-    out.push(loc);
+    out.push({ ...loc, ...(overrides[loc.id] ?? {}) });
   }
   return out;
+}
+
+export function getLocationByName(name: string): MockLocationOption | undefined {
+  const key = norm(name);
+  return getMergedLocations().find((l) => norm(l.name) === key);
 }
 
 export function getMergedGrades(): Record<string, string[]> {
@@ -243,6 +314,10 @@ export function getTraderReferenceData() {
     counterparties: getMergedCounterparties(),
     locations: getMergedLocations(),
     incoterms: [...INCOTERMS],
+    incotermsByDirection: {
+      BUY: [...incotermsForDirection("BUY")],
+      SELL: [...incotermsForDirection("SELL")],
+    },
     quantityUnits: mergedQuantityUnits(rt),
     grades: getMergedGrades(),
   };
@@ -298,18 +373,63 @@ export function addCustomGrade(commodityCode: string, grade: string) {
   return g;
 }
 
-export function addCustomLocation(name: string) {
+export function addCustomLocation(input: {
+  name: string;
+  code?: string;
+  lsp?: string;
+  address?: string;
+  city?: string;
+  province?: string;
+  capacitySqFt?: number;
+  costPerSqFt?: number;
+  balesDivisionSqFt?: number;
+  grainDivisionSqFt?: number;
+}) {
   const rt = getMasterRuntime();
-  const n = name.trim();
+  const n = input.name.trim();
   if (!n) throw new Error("Location name is required");
   if (getMergedLocations().some((l) => norm(l.name) === norm(n))) {
     throw new Error("Location already exists");
   }
   rt.customLocationSeq += 1;
-  const row = { id: `cl-${rt.customLocationSeq}`, name: n };
+  const row: MockLocationOption = {
+    id: `cl-${rt.customLocationSeq}`,
+    name: n,
+    code: input.code?.trim() || null,
+    lsp: input.lsp?.trim() || null,
+    address: input.address?.trim() || null,
+    city: input.city?.trim() || null,
+    province: input.province?.trim() || null,
+    capacitySqFt: input.capacitySqFt ?? null,
+    costPerSqFt: input.costPerSqFt ?? null,
+    balesDivisionSqFt: input.balesDivisionSqFt ?? 4.5,
+    grainDivisionSqFt: input.grainDivisionSqFt ?? 7,
+  };
   rt.customLocations.push(row);
   persistMasterData();
   return row;
+}
+
+export function updateWarehouseLocation(
+  id: string,
+  patch: Partial<Omit<MockLocationOption, "id">>,
+) {
+  const rt = getMasterRuntime();
+  const existing =
+    [...SEEDED_LOCATIONS, ...rt.customLocations].find((l) => l.id === id) ??
+  null;
+  if (!existing) throw new Error("Warehouse not found");
+
+  const isCustom = rt.customLocations.some((l) => l.id === id);
+  if (isCustom) {
+    const idx = rt.customLocations.findIndex((l) => l.id === id);
+    rt.customLocations[idx] = { ...rt.customLocations[idx], ...patch, id };
+  } else {
+    if (!rt.warehouseOverrides) rt.warehouseOverrides = {};
+    rt.warehouseOverrides[id] = { ...(rt.warehouseOverrides[id] ?? {}), ...patch };
+  }
+  persistMasterData();
+  return getMergedLocations().find((l) => l.id === id)!;
 }
 
 export function addCustomCounterparty(input: {

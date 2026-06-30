@@ -4,6 +4,7 @@ import {
   getMergedCounterparties,
   getMergedLocations,
 } from "@/server/trader-master-data";
+import { getDeskMarketPrice, marketTickerPayload } from "@/server/market-prices";
 import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import {
   isLocalPersistEnabled,
@@ -27,18 +28,9 @@ import {
 
 const now = () => new Date();
 
-/** SSE / ticker */
+/** SSE / ticker — execution desk CNF only */
 export function mockPriceTickerPayload() {
-  return [
-    { code: "WHT", price: 281.4, ccy: "USD", asOf: now().toISOString() },
-    { code: "CPO", price: 935.2, ccy: "USD", asOf: now().toISOString() },
-    { code: "SUG", price: 468.75, ccy: "USD", asOf: now().toISOString() },
-    { code: "CTN", price: 1825.0, ccy: "USD", asOf: now().toISOString() },
-    { code: "COF", price: 3088.0, ccy: "USD", asOf: now().toISOString() },
-    { code: "SOY", price: 441.25, ccy: "USD", asOf: now().toISOString() },
-    { code: "RCE", price: 518.0, ccy: "USD", asOf: now().toISOString() },
-    { code: "CRN", price: 201.5, ccy: "USD", asOf: now().toISOString() },
-  ];
+  return marketTickerPayload();
 }
 
 export function mockCredentialsUser(email: string) {
@@ -1391,12 +1383,14 @@ function buildTraderTrade(
     ...partial,
   };
   const marketPrice = partial.marketPrice ?? partial.price * (1 + (Math.random() - 0.45) * 0.02);
+  const desk = partial.commodity?.code ? getDeskMarketPrice(partial.commodity.code) : null;
+  const mktPrice = desk?.cnf?.amount ?? desk?.yesterday?.amount ?? marketPrice;
   const q = merged.quantity;
   const book = q * merged.price;
-  const mkt = q * marketPrice;
+  const mkt = q * mktPrice;
   const mtmPnl =
     merged.direction === TradeDirection.BUY ? mkt - book : book - mkt;
-  return { ...merged, marketPrice, mtmPnl };
+  return { ...merged, marketPrice: mktPrice, mtmPnl };
 }
 
 // ---------- Corn Execution Seed Trades ----------
@@ -1659,7 +1653,10 @@ function baseTraderTrades(traderName: string): MockTraderTrade[] {
   ];
 }
 
-export function mockTraderTrades(traderName: string, filter?: { status?: TradeStatus }) {
+export function mockTraderTrades(
+  traderName: string,
+  filter?: { status?: TradeStatus; bucket?: "DRAFTS" | "CLOSED" },
+) {
   const canonical = canonicalTraderName(traderName);
   const booked = getBookedTrades();
   const bookedRefs = new Set(booked.map((t) => t.tradeRef));
@@ -1667,8 +1664,19 @@ export function mockTraderTrades(traderName: string, filter?: { status?: TradeSt
     ...booked,
     ...baseTraderTrades(canonical).filter((t) => !bookedRefs.has(t.tradeRef)),
   ].filter((t) => traderNamesMatch(t.traderName, canonical));
-  if (!filter?.status) return all.sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime());
-  return all.filter((t) => t.tradeStatus === filter.status).sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime());
+
+  let rows = all;
+  if (filter?.bucket === "DRAFTS") {
+    rows = rows.filter((t) => t.tradeStatus === TradeStatus.PENDING);
+  } else if (filter?.bucket === "CLOSED") {
+    rows = rows.filter(
+      (t) => t.tradeStatus === TradeStatus.EXECUTED || t.tradeStatus === TradeStatus.SETTLED,
+    );
+  } else if (filter?.status) {
+    rows = rows.filter((t) => t.tradeStatus === filter.status);
+  }
+
+  return rows.sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime());
 }
 
 export function mockTraderTradeByRef(traderName: string, tradeRef: string) {
@@ -1759,10 +1767,17 @@ export function mockTraderExposure(traderName: string) {
     cur.mtm += t.mtmPnl;
     byCommodity.set(t.commodity.code, cur);
   }
-  return Array.from(byCommodity.values()).map((c) => ({
-    ...c,
-    net: c.long - c.short,
-  }));
+  return Array.from(byCommodity.values()).map((c) => {
+    const desk = getDeskMarketPrice(c.code);
+    const ref = desk?.cnf ?? desk?.yesterday;
+    return {
+      ...c,
+      net: c.long - c.short,
+      marketPrice: ref?.amount ?? c.marketPrice,
+      marketCurrency: ref?.currency,
+      marketUnit: ref?.unit,
+    };
+  });
 }
 
 export function mockTraderActionItems(traderName: string) {
@@ -1882,7 +1897,13 @@ export function mockBookTrade(input: {
       bankDetails: input.counterpartyBankDetails ?? null,
     },
     notes: input.notes,
-    buyingCategory: input.buyingCategory ?? (input.direction === TradeDirection.BUY ? "Delivered" : null),
+    buyingCategory:
+      input.buyingCategory ??
+      (input.direction === TradeDirection.BUY
+        ? (input.incoterms === "Spot" || ["EXW", "FCA", "FOB"].includes(input.incoterms)
+          ? "Spot"
+          : "Delivered")
+        : null),
     tradeScope: input.tradeScope ?? "LOCAL",
     ratePerMaund: input.ratePerMaund ?? null,
     commissionPerMaund: input.commissionPerMaund ?? null,

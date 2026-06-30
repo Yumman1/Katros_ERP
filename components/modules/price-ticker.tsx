@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatQty } from "@/lib/formatters/numbers";
 
-type Tick = { code: string; price: number; ccy: string };
+type Tick = { code: string; price: number; ccy: string; unit?: string; chgPct?: number };
 
 export function PriceTicker() {
   const [ticks, setTicks] = useState<Tick[]>([]);
@@ -27,7 +27,7 @@ export function PriceTicker() {
   if (!ticks.length) {
     return (
       <div className="animate-pulse truncate text-xs text-zinc-500">
-        Loading market snapshot…
+        Desk prices not published yet
       </div>
     );
   }
@@ -39,7 +39,15 @@ export function PriceTicker() {
           <span className="font-semibold text-white">{t.code}</span>{" "}
           <span className="text-kastros-green">
             {t.ccy} {formatQty(t.price, 2)}
+            {t.unit ? `/${t.unit}` : ""}
           </span>
+          {t.chgPct != null && (
+            <span className={t.chgPct >= 0 ? "text-kastros-green" : "text-kastros-red"}>
+              {" "}
+              ({t.chgPct >= 0 ? "+" : ""}
+              {t.chgPct.toFixed(2)}%)
+            </span>
+          )}
         </span>
       ))}
     </div>

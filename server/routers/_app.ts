@@ -13,6 +13,7 @@ import { shipmentsRouter } from "./shipments";
 import { traderRouter } from "./trader";
 import { executionRouter } from "./execution";
 import { financeRouter } from "./finance";
+import { marketRouter } from "./market";
 
 export const appRouter = router({
   positions: positionsRouter,
@@ -29,6 +30,7 @@ export const appRouter = router({
   trader: traderRouter,
   execution: executionRouter,
   finance: financeRouter,
+  market: marketRouter,
 });
 
 export type AppRouter = typeof appRouter;

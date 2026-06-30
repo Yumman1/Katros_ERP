@@ -8,7 +8,6 @@ export function getHomeForRole(role: Role): string {
       return "/execution";
     case "FINANCE":
       return "/finance/payments";
-      return "/cashflow";
     case "RISK_MANAGER":
       return "/positions";
     default:

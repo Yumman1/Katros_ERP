@@ -8,7 +8,7 @@ import { TradeScopeHeader } from "@/components/execution/trade-scope-header";
 import { summarizeQtyByUnit } from "@/lib/formatters/execution-units";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import {
-  collectCommodityOptions,
+  collectDeskCommodityOptions,
   matchesCommodityFilter,
 } from "@/lib/execution-commodity-filter";
 import { trpc } from "@/lib/trpc/client";
@@ -87,13 +87,19 @@ export function PurchaseSpotDesk({ scope }: { scope: TradeScope }) {
 
   const commodityOptions = useMemo(
     () =>
-      collectCommodityOptions([
-        ...openContracts,
-        ...(pendingTrucks ?? []),
-        ...spotPending.map((t) => ({ commodityCode: t.commodityCode, commodityName: t.commodityName })),
-      ]),
-    [openContracts, pendingTrucks, spotPending],
+      collectDeskCommodityOptions({
+        contracts: openContracts,
+        trucks: pendingTrucks ?? [],
+      }),
+    [openContracts, pendingTrucks],
   );
+
+  useEffect(() => {
+    if (commodityFilter === "ALL") return;
+    if (!commodityOptions.some((c) => c.code === commodityFilter)) {
+      setCommodityFilter("ALL");
+    }
+  }, [commodityFilter, commodityOptions]);
 
   const filteredContracts = useMemo(
     () => openContracts.filter((c) => matchesCommodityFilter(c.commodityCode, commodityFilter)),

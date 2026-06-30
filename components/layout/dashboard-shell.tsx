@@ -12,7 +12,7 @@ type NavGroup = { label: string; children: NavLink[] };
 type NavEntry = NavLink | NavGroup;
 
 const nav: NavEntry[] = [
-  { href: "/", label: "Dashboard" },
+  { href: "/overview", label: "Dashboard" },
   {
     label: "Position & P&L",
     children: [

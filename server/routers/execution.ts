@@ -35,7 +35,7 @@ import {
   syncAllLockedContracts,
   syncExecutionFromDisk,
 } from "@/server/execution-store";
-import { addCustomLocation, getMergedLocations } from "@/server/trader-master-data";
+import { addCustomLocation, getMergedLocations, updateWarehouseLocation } from "@/server/trader-master-data";
 
 const qualitySchema = z.object({
   damagePct: z.number().min(0),
@@ -61,17 +61,61 @@ export const executionRouter = router({
   warehouseLocations: roleProcedure([...execRoles]).query(() => getMergedLocations()),
 
   addWarehouseLocation: roleProcedure([...execRoles])
-    .input(z.object({ name: z.string().trim().min(1) }))
+    .input(
+      z.object({
+        name: z.string().trim().min(1),
+        code: z.string().trim().optional(),
+        lsp: z.string().trim().optional(),
+        address: z.string().trim().optional(),
+        city: z.string().trim().optional(),
+        province: z.string().trim().optional(),
+        capacitySqFt: z.number().positive().optional(),
+        costPerSqFt: z.number().nonnegative().optional(),
+        balesDivisionSqFt: z.number().positive().optional(),
+        grainDivisionSqFt: z.number().positive().optional(),
+      }),
+    )
     .mutation(({ input }) => {
       if (!isMockMode()) {
         throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Warehouse creation only in mock mode" });
       }
       try {
-        return addCustomLocation(input.name);
+        return addCustomLocation(input);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not add warehouse",
+        });
+      }
+    }),
+
+  updateWarehouseLocation: roleProcedure([...execRoles])
+    .input(
+      z.object({
+        id: z.string(),
+        name: z.string().trim().min(1).optional(),
+        code: z.string().trim().optional(),
+        lsp: z.string().trim().optional(),
+        address: z.string().trim().optional(),
+        city: z.string().trim().optional(),
+        province: z.string().trim().optional(),
+        capacitySqFt: z.number().positive().optional(),
+        costPerSqFt: z.number().nonnegative().optional(),
+        balesDivisionSqFt: z.number().positive().optional(),
+        grainDivisionSqFt: z.number().positive().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      if (!isMockMode()) {
+        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Warehouse update only in mock mode" });
+      }
+      const { id, ...patch } = input;
+      try {
+        return updateWarehouseLocation(id, patch);
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not update warehouse",
         });
       }
     }),

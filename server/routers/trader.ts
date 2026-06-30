@@ -7,7 +7,7 @@ import { isMockMode } from "@/server/mock-mode";
 import { traderDisplayName } from "@/lib/trader-display-name";
 import { canonicalTraderName } from "@/lib/trader-identity";
 import {
-  BUYING_CATEGORIES,
+  buyingCategoryFromIncoterms,
   EXECUTION_PROFILES,
   INCOTERMS,
   isDestinationRequired,
@@ -87,7 +87,6 @@ const bookTradeInputSchema = z
     qualityTolerances: z.string().min(1),
     maxMoisturePct: z.number().min(0).max(100),
     notes: z.string().optional(),
-    buyingCategory: z.enum(BUYING_CATEGORIES).optional(),
     tradeScope: z.enum(TRADE_SCOPES),
     ratePerMaund: z.number().positive().optional(),
     commissionPerMaund: z.number().min(0).optional(),
@@ -110,10 +109,17 @@ export const traderRouter = router({
   }),
 
   myTrades: protectedProcedure
-    .input(z.object({ status: z.nativeEnum(TradeStatus).optional() }).optional())
+    .input(
+      z
+        .object({
+          status: z.nativeEnum(TradeStatus).optional(),
+          bucket: z.enum(["DRAFTS", "CLOSED"]).optional(),
+        })
+        .optional(),
+    )
     .query(({ ctx, input }) => {
       const name = traderNameFromSession(ctx.session.user);
-      return mockTraderTrades(name, { status: input?.status });
+      return mockTraderTrades(name, { status: input?.status, bucket: input?.bucket });
     }),
 
   tradeByRef: protectedProcedure
@@ -187,7 +193,7 @@ export const traderRouter = router({
         throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Custom locations only in mock mode" });
       }
       try {
-        return addCustomLocation(input.name);
+        return addCustomLocation({ name: input.name });
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -294,7 +300,7 @@ export const traderRouter = router({
           counterpartyAddress: cp.address,
           counterpartyBankDetails: cp.bankDetails,
           notes: input.notes,
-          buyingCategory: input.buyingCategory,
+          buyingCategory: buyingCategoryFromIncoterms(input.incoterms, input.direction) ?? undefined,
           tradeScope: input.tradeScope,
           ratePerMaund: input.ratePerMaund,
           commissionPerMaund: input.commissionPerMaund,
@@ -309,7 +315,6 @@ export const traderRouter = router({
     .input(
       z.object({
         tradeRef: z.string(),
-        buyingCategory: z.enum(BUYING_CATEGORIES).optional(),
         ratePerMaund: z.number().positive().optional(),
         commissionPerMaund: z.number().min(0).optional(),
         qualityTolerances: z
@@ -331,7 +336,6 @@ export const traderRouter = router({
       try {
         const trade = lockTradeInStore(traderName, input.tradeRef, {
           lockedBy: ctx.session.user.name ?? traderName,
-          buyingCategory: input.buyingCategory,
           ratePerMaund: input.ratePerMaund,
           commissionPerMaund: input.commissionPerMaund,
           qualityTolerances: input.qualityTolerances as QualityTolerances | undefined,

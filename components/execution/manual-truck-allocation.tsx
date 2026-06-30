@@ -53,8 +53,10 @@ function normCp(s: string) {
 
 function counterpartyMatchesTruck(truck: PendingTruck, contract: Contract): boolean {
   const cp = normCp(contract.counterpartyName);
-  const names = [truck.counterpartyName, truck.brokerName].filter(Boolean).map((n) => normCp(n!));
-  return names.some((n) => cp === n || cp.includes(n) || n.includes(cp));
+  const truckCp = normCp(truck.counterpartyName);
+  if (cp === truckCp) return true;
+  if (truck.brokerName && normCp(truck.brokerName) === cp) return true;
+  return false;
 }
 
 function commodityMatchesTruck(truck: PendingTruck, contract: Contract): boolean {
@@ -92,6 +94,8 @@ export function ManualTruckAllocation({
       .filter((c) => counterpartyMatchesTruck(selectedTruck, c))
       .filter((c) => commodityMatchesTruck(selectedTruck, c));
   }, [openOrders, selectedTruck]);
+
+  const visibleOrders = selectedTruck ? matchingOrders : [];
 
   const fulfilledLabel = mode === "INBOUND" ? "Received" : "Dispatched";
 
@@ -141,14 +145,26 @@ export function ManualTruckAllocation({
 
       <section>
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
-          Open {mode === "INBOUND" ? "purchase" : "sale"} orders ({openOrders.length})
+          {selectedTruck
+            ? `Matching orders for ${selectedTruck.counterpartyName} (${visibleOrders.length})`
+            : `Open ${mode === "INBOUND" ? "purchase" : "sale"} orders`}
         </h3>
-        {openOrders.length === 0 ? (
+        {!selectedTruck ? (
           <div
             className="rounded-2xl p-6 text-center text-sm text-zinc-500"
             style={{ border: "1px solid rgba(255,255,255,0.06)" }}
           >
-            No open orders right now. Fully delivered contracts move off this list but stay on{" "}
+            Select a truck below to see open orders for the same counterparty and commodity.
+          </div>
+        ) : visibleOrders.length === 0 ? (
+          <div
+            className="rounded-2xl p-6 text-center text-sm text-zinc-500"
+            style={{ border: "1px solid rgba(255,255,255,0.06)" }}
+          >
+            No open orders match this truck&apos;s counterparty
+            {selectedTruck.commodityCode ? ` and commodity (${selectedTruck.commodityCode})` : ""}.
+            Lock a trade for{" "}
+            <span className="text-zinc-300">{selectedTruck.counterpartyName}</span> on{" "}
             <Link href="/execution/contracts" className="text-amber-400 hover:underline">
               Locked Contracts
             </Link>
@@ -173,7 +189,7 @@ export function ManualTruckAllocation({
                 </tr>
               </thead>
               <tbody>
-                {openOrders.map((c) => {
+                {visibleOrders.map((c) => {
                   const canAllocate = selectedTruck && orderMatchesTruck(c);
                   const unit = c.quantityUnit;
                   const openQty = c.openQtyMt;
@@ -246,9 +262,7 @@ export function ManualTruckAllocation({
                                 {isAssigning ? "…" : "Allocate"}
                               </button>
                             </div>
-                          ) : (
-                            <span className="text-xs text-zinc-600">Needs matching truck</span>
-                          )}
+                          ) : null}
                         </td>
                       )}
                     </tr>

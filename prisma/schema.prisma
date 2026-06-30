@@ -48,6 +48,11 @@ model User {
   bankTransactionsCreated    BankTransaction[]       @relation("BankTransactionCreatedBy")
   traceLinksCreated          TradeTraceabilityLink[] @relation("TradeTraceLinkCreatedBy")
   shipmentsCreated           Shipment[]              @relation("ShipmentCreatedBy")
+  executionLogsActed         ExecutionLog[]
+  documentsUploaded          Document[]
+  outboundDispatchesLoaded   OutboundDispatch[]      @relation("OutboundDispatchLoadedBy")
+  outboundDispatchesReleased OutboundDispatch[]      @relation("OutboundDispatchReleasedBy")
+  executionPaymentsApproved  ExecutionPayment[]
 }
 
 // --- Reference ---

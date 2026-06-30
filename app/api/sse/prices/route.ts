@@ -1,39 +1,19 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/server/db";
-import { isMockMode } from "@/server/mock-mode";
-import { mockPriceTickerPayload } from "@/server/dummy-data";
+import { marketTickerPayload } from "@/server/market-prices";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** SSE heartbeat + latest snapshot of headline commodity prices for ticker UI. */
+/** SSE heartbeat — execution desk CNF prices only (no external feeds). */
 export async function GET() {
   const stream = new ReadableStream({
-    async start(controller) {
+    start(controller) {
       const enc = new TextEncoder();
-      const send = async () => {
-        const payload = isMockMode()
-          ? mockPriceTickerPayload()
-          : await (async () => {
-              const commodities = await prisma.commodity.findMany({ orderBy: { code: "asc" } });
-              return Promise.all(
-                commodities.map(async (c) => {
-                  const p = await prisma.marketPrice.findFirst({
-                    where: { commodityId: c.id },
-                    orderBy: { priceDate: "desc" },
-                  });
-                  return {
-                    code: c.code,
-                    price: p ? Number(p.closePrice) : 0,
-                    ccy: p?.currency ?? "USD",
-                    asOf: p?.priceDate.toISOString() ?? new Date().toISOString(),
-                  };
-                }),
-              );
-            })();
+      const send = () => {
+        const payload = marketTickerPayload();
         controller.enqueue(enc.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
-      await send();
+      send();
       setInterval(send, 30_000);
     },
   });

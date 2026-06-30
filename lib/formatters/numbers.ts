@@ -1,8 +1,16 @@
 export function formatCurrency(value: number, currency = "USD"): string {
+  const code =
+    currency === "PKR"
+      ? "PKR"
+      : currency === "EUR"
+        ? "EUR"
+        : currency === "MYR"
+          ? "MYR"
+          : "USD";
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: currency === "PKR" ? "PKR" : currency === "EUR" ? "EUR" : "USD",
+      currency: code,
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(value);

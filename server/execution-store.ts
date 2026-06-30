@@ -1,5 +1,6 @@
 import { TradeDirection, TradeStatus } from "@prisma/client";
 import {
+  buyingCategoryFromIncoterms,
   DEFAULT_QUALITY_TOLERANCES,
   executionProfileFromTrade,
   KG_PER_MAUND,
@@ -300,7 +301,8 @@ function persistExecutionState() {
 
 function contractFromTrade(trade: MockTraderTrade): ExecutionContract | null {
   if (trade.tradeStatus !== TradeStatus.LOCKED || !trade.lockedAt) return null;
-  const profile = (trade.executionProfile ?? executionProfileFromTrade(trade.direction, trade.buyingCategory)) as ExecutionProfile;
+  const profile = (trade.executionProfile ??
+    executionProfileFromTrade(trade.direction, trade.buyingCategory, trade.incoterms)) as ExecutionProfile;
   const fulfilled = getFulfilledQtyForTrade(trade.tradeRef, trade.direction);
   const open = Math.max(0, trade.quantity - fulfilled);
   return {
@@ -453,8 +455,11 @@ export function lockTradeInStore(
   const buyingCategory =
     trade.direction === TradeDirection.SELL
       ? null
-      : (input.buyingCategory ?? trade.buyingCategory ?? "Delivered");
-  const profile = executionProfileFromTrade(trade.direction, buyingCategory);
+      : (input.buyingCategory ??
+        trade.buyingCategory ??
+        buyingCategoryFromIncoterms(trade.incoterms, trade.direction) ??
+        "Delivered");
+  const profile = executionProfileFromTrade(trade.direction, buyingCategory, trade.incoterms);
   const ratePerMaund = input.ratePerMaund ?? trade.ratePerMaund ?? trade.price;
   const ratePerKg = ratePerMaund / KG_PER_MAUND;
 
@@ -534,7 +539,7 @@ export function getPendingTradesForExecution() {
       buyingCategory: t.buyingCategory,
       tradeScope: t.tradeScope ?? tradeScopeFromSeed(t.tradeRef),
       executionProfile: t.executionProfile ?? null,
-      expectedProfile: executionProfileFromTrade(t.direction, t.buyingCategory),
+      expectedProfile: executionProfileFromTrade(t.direction, t.buyingCategory, t.incoterms),
     }));
 }
 
