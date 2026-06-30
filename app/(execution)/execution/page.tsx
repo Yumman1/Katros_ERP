@@ -1,7 +1,8 @@
 "use client";
 
-import { trpc } from "@/lib/trpc/client";
+import { TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
+import { trpc } from "@/lib/trpc/client";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 
@@ -30,10 +31,10 @@ export default function ExecutionDeskPage() {
       ),
     },
     {
-      label: "Purchase (Delivered) Open",
-      value: summary?.purchaseDeliveredOpen ?? 0,
-      sub: "Awaiting inbound",
-      href: "/execution/purchase-delivered",
+      label: "Local — Purchase Delivered",
+      value: summary?.localPurchaseDeliveredOpen ?? 0,
+      sub: `${summary?.localOpen ?? 0} local open total`,
+      href: "/execution/local/purchase-delivered",
       color: "#34d399",
       bg: "rgba(52,211,153,0.08)",
       border: "rgba(52,211,153,0.15)",
@@ -44,10 +45,24 @@ export default function ExecutionDeskPage() {
       ),
     },
     {
-      label: "Purchase (Spot) Open",
-      value: summary?.purchaseSpotOpen ?? 0,
+      label: "Intl — Purchase Delivered",
+      value: summary?.internationalPurchaseDeliveredOpen ?? 0,
+      sub: `${summary?.internationalOpen ?? 0} intl open total`,
+      href: "/execution/international/purchase-delivered",
+      color: "#2dd4bf",
+      bg: "rgba(45,212,191,0.08)",
+      border: "rgba(45,212,191,0.15)",
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+        </svg>
+      ),
+    },
+    {
+      label: "Local — Purchase Spot",
+      value: summary?.localPurchaseSpotOpen ?? 0,
       sub: "In pipeline",
-      href: "/execution/purchase-spot",
+      href: "/execution/local/purchase-spot",
       color: "#60a5fa",
       bg: "rgba(96,165,250,0.08)",
       border: "rgba(96,165,250,0.15)",
@@ -58,13 +73,41 @@ export default function ExecutionDeskPage() {
       ),
     },
     {
-      label: "Sales Open",
-      value: summary?.saleOpen ?? 0,
+      label: "Intl — Purchase Spot",
+      value: summary?.internationalPurchaseSpotOpen ?? 0,
+      sub: "In pipeline",
+      href: "/execution/international/purchase-spot",
+      color: "#818cf8",
+      bg: "rgba(129,140,248,0.08)",
+      border: "rgba(129,140,248,0.15)",
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <circle cx="11" cy="11" r="8" /><path strokeLinecap="round" d="m21 21-4.35-4.35" />
+        </svg>
+      ),
+    },
+    {
+      label: "Local — Sales",
+      value: summary?.localSaleOpen ?? 0,
       sub: "Ex-warehouse",
-      href: "/execution/sales",
+      href: "/execution/local/sales",
       color: "#a78bfa",
       bg: "rgba(167,139,250,0.08)",
       border: "rgba(167,139,250,0.15)",
+      icon: (
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+        </svg>
+      ),
+    },
+    {
+      label: "Intl — Sales",
+      value: summary?.internationalSaleOpen ?? 0,
+      sub: "Ex-warehouse",
+      href: "/execution/international/sales",
+      color: "#c084fc",
+      bg: "rgba(192,132,252,0.08)",
+      border: "rgba(192,132,252,0.15)",
       icon: (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
           <path strokeLinecap="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
@@ -218,7 +261,7 @@ export default function ExecutionDeskPage() {
           <table className="w-full text-xs">
             <thead>
               <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                {["Contract No.", "Type", "Counterparty", "Contractual Qty", "Received", "Open", "Status"].map((h) => (
+                {["Contract No.", "Market", "Type", "Counterparty", "Contractual Qty", "Received", "Open", "Status"].map((h) => (
                   <th key={h} className="px-5 py-2.5 text-left font-medium uppercase tracking-wider" style={{ color: "#52525b" }}>{h}</th>
                 ))}
               </tr>
@@ -243,6 +286,15 @@ export default function ExecutionDeskPage() {
                         className="font-mono font-semibold text-amber-400 hover:underline">
                         {c.tradeRef}
                       </Link>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
+                        style={{
+                          background: c.tradeScope === "LOCAL" ? "rgba(52,211,153,0.12)" : "rgba(96,165,250,0.12)",
+                          color: c.tradeScope === "LOCAL" ? "#34d399" : "#60a5fa",
+                        }}>
+                        {TRADE_SCOPE_LABELS[c.tradeScope]}
+                      </span>
                     </td>
                     <td className="px-5 py-3">
                       <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{ background: `${profileColor}18`, color: profileColor }}>

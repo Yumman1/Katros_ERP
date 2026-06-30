@@ -1229,7 +1229,7 @@ export type PaymentType = "DP" | "LC" | "CAD" | "ADVANCE_100" | "CREDIT_30";
 export type { KycStatus } from "@/lib/trade-constants";
 import type { KycStatus } from "@/lib/trade-constants";
 
-import { PAYMENT_TYPE_LABELS } from "@/lib/trade-constants";
+import { PAYMENT_TYPE_LABELS, tradeScopeFromSeed } from "@/lib/trade-constants";
 
 export type MockTraderTrade = {
   id: string;
@@ -1272,6 +1272,7 @@ export type MockTraderTrade = {
   mtmPnl: number;
   notes?: string;
   buyingCategory?: "Delivered" | "Spot" | null;
+  tradeScope?: "LOCAL" | "INTERNATIONAL";
   executionProfile?: string | null;
   ratePerMaund?: number | null;
   ratePerKg?: number | null;
@@ -1316,8 +1317,16 @@ export function syncBookedTradesFromDisk(): void {
   if (!snap) return;
   const rt = getBookedRuntime();
   rt.trades.length = 0;
-  rt.trades.push(...snap.bookedTrades);
+  let backfilled = false;
+  for (const raw of snap.bookedTrades) {
+    if (!raw.tradeScope) {
+      raw.tradeScope = tradeScopeFromSeed(raw.tradeRef);
+      backfilled = true;
+    }
+    rt.trades.push(raw);
+  }
   if (snap.mockTradeSeq > rt.mockTradeSeq) rt.mockTradeSeq = snap.mockTradeSeq;
+  if (backfilled) persistBookedTrades();
 }
 
 function getBookedTrades(): MockTraderTrade[] {
@@ -1378,6 +1387,7 @@ function buildTraderTrade(
     counterpartyKycStatus: "VERIFIED",
     counterpartyKycRef: "KYC-2025-001",
     notes: undefined,
+    tradeScope: partial.tradeScope ?? tradeScopeFromSeed(partial.tradeRef),
     ...partial,
   };
   const marketPrice = partial.marketPrice ?? partial.price * (1 + (Math.random() - 0.45) * 0.02);
@@ -1414,8 +1424,10 @@ function buildCornTrade(
   warehouse: string,
   buyingCategory: "Delivered" | "Spot" | null,
   status: TradeStatus,
+  tradeScope?: "LOCAL" | "INTERNATIONAL",
 ): MockTraderTrade {
   const ratePerKg = ratePerMaund / 37.324; // 1 maund = 37.324 kg
+  const scope = tradeScope ?? tradeScopeFromSeed(tradeRef);
   return buildTraderTrade({
     id,
     tradeRef,
@@ -1446,6 +1458,7 @@ function buildCornTrade(
     commodity: CORN_COMMODITY,
     counterparty: { id: counterpartyCode, name: counterpartyName, code: counterpartyCode, ntn },
     buyingCategory: direction === TradeDirection.SELL ? null : buyingCategory,
+    tradeScope: scope,
     ratePerMaund,
     ratePerKg,
     commissionPerMaund: 0,
@@ -1465,32 +1478,33 @@ function buildCornTrade(
 }
 
 export function baseCornTrades(): MockTraderTrade[] {
-  return [
+  const rows = [
     // === SALE CONTRACTS (ex-warehouse) ===
-    buildCornTrade("corn-sal-01", "KAS-COR26-SAL-0001", 68, TradeDirection.SELL, 100, 3130, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED),
-    buildCornTrade("corn-sal-02", "KAS-COR26-SAL-0002", 65, TradeDirection.SELL, 200, 3200, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED),
-    buildCornTrade("corn-sal-03", "KAS-COR26-SAL-0003", 63, TradeDirection.SELL, 200, 3250, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED),
-    buildCornTrade("corn-sal-04", "KAS-COR26-SAL-0004", 62, TradeDirection.SELL, 200, 3300, "Asaaf Commission Agent", "ACA", "5893705-1", "K005-Shuja feed Wh", null, TradeStatus.LOCKED),
-    buildCornTrade("corn-sal-05", "KAS-COR26-SAL-0007", 55, TradeDirection.SELL, 300, 3340, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED),
-    buildCornTrade("corn-sal-06", "KAS-COR26-SAL-0008", 48, TradeDirection.SELL, 200, 3350, "Ishaq & Sons Commission Shop", "ISC", "3821447-4", "GodamTech - Silos", null, TradeStatus.LOCKED),
-    buildCornTrade("corn-sal-07", "KAS-COR26-SAL-0010", 40, TradeDirection.SELL, 150, 3370, "Rashid Iqbal Commission Shop", "RIC", "6504630-6", "GodamTech - Silos", null, TradeStatus.LOCKED),
-    buildCornTrade("corn-sal-08", "KAS-COR26-SAL-0012", 30, TradeDirection.SELL, 100, 3390, "M Ijaz Commission Shop", "MIC", "8190131-5", "K005-Shuja feed Wh", null, TradeStatus.LOCKED),
-    buildCornTrade("corn-sal-09", "KAS-COR26-SAL-0015", 18, TradeDirection.SELL, 250, 3400, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED),
-    buildCornTrade("corn-sal-10", "KAS-COR26-SAL-0018", 10, TradeDirection.SELL, 180, 3420, "Asaaf Commission Agent", "ACA", "5893705-1", "GodamTech - Silos", null, TradeStatus.LOCKED),
+    buildCornTrade("corn-sal-01", "KAS-COR26-SAL-0001", 68, TradeDirection.SELL, 100, 3130, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED, "LOCAL"),
+    buildCornTrade("corn-sal-02", "KAS-COR26-SAL-0002", 65, TradeDirection.SELL, 200, 3200, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED, "INTERNATIONAL"),
+    buildCornTrade("corn-sal-03", "KAS-COR26-SAL-0003", 63, TradeDirection.SELL, 200, 3250, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED, "LOCAL"),
+    buildCornTrade("corn-sal-04", "KAS-COR26-SAL-0004", 62, TradeDirection.SELL, 200, 3300, "Asaaf Commission Agent", "ACA", "5893705-1", "K005-Shuja feed Wh", null, TradeStatus.LOCKED, "INTERNATIONAL"),
+    buildCornTrade("corn-sal-05", "KAS-COR26-SAL-0007", 55, TradeDirection.SELL, 300, 3340, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED, "LOCAL"),
+    buildCornTrade("corn-sal-06", "KAS-COR26-SAL-0008", 48, TradeDirection.SELL, 200, 3350, "Ishaq & Sons Commission Shop", "ISC", "3821447-4", "GodamTech - Silos", null, TradeStatus.LOCKED, "INTERNATIONAL"),
+    buildCornTrade("corn-sal-07", "KAS-COR26-SAL-0010", 40, TradeDirection.SELL, 150, 3370, "Rashid Iqbal Commission Shop", "RIC", "6504630-6", "GodamTech - Silos", null, TradeStatus.LOCKED, "LOCAL"),
+    buildCornTrade("corn-sal-08", "KAS-COR26-SAL-0012", 30, TradeDirection.SELL, 100, 3390, "M Ijaz Commission Shop", "MIC", "8190131-5", "K005-Shuja feed Wh", null, TradeStatus.LOCKED, "INTERNATIONAL"),
+    buildCornTrade("corn-sal-09", "KAS-COR26-SAL-0015", 18, TradeDirection.SELL, 250, 3400, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", null, TradeStatus.LOCKED, "LOCAL"),
+    buildCornTrade("corn-sal-10", "KAS-COR26-SAL-0018", 10, TradeDirection.SELL, 180, 3420, "Asaaf Commission Agent", "ACA", "5893705-1", "GodamTech - Silos", null, TradeStatus.LOCKED, "INTERNATIONAL"),
     // === PURCHASE DELIVERED CONTRACTS ===
-    buildCornTrade("corn-pur-01", "KAS-COR26-PUR-0001", 72, TradeDirection.BUY, 200, 3050, "Faiz Ahmed", "FAI", "4230420-2", "K005-Shuja feed Wh", "Delivered", TradeStatus.LOCKED),
-    buildCornTrade("corn-pur-02", "KAS-COR26-PUR-0002", 65, TradeDirection.BUY, 150, 3080, "Al Noor Commission Shop", "ANC", "3767592-3", "GodamTech - Silos", "Delivered", TradeStatus.LOCKED),
-    buildCornTrade("corn-pur-03", "KAS-COR26-PUR-0003", 55, TradeDirection.BUY, 300, 3100, "Ammar Industries", "AMI", "7579904-5", "K005-Shuja feed Wh", "Delivered", TradeStatus.LOCKED),
-    buildCornTrade("corn-pur-04", "KAS-COR26-PUR-0004", 42, TradeDirection.BUY, 100, 3120, "Faiz Ahmed", "FAI", "4230420-2", "GodamTech - Silos", "Delivered", TradeStatus.LOCKED),
-    buildCornTrade("corn-pur-05", "KAS-COR26-PUR-0005", 28, TradeDirection.BUY, 200, 3140, "Al Noor Commission Shop", "ANC", "3767592-3", "K005-Shuja feed Wh", "Delivered", TradeStatus.LOCKED),
+    buildCornTrade("corn-pur-01", "KAS-COR26-PUR-0001", 72, TradeDirection.BUY, 200, 3050, "Faiz Ahmed", "FAI", "4230420-2", "K005-Shuja feed Wh", "Delivered", TradeStatus.LOCKED, "LOCAL"),
+    buildCornTrade("corn-pur-02", "KAS-COR26-PUR-0002", 65, TradeDirection.BUY, 150, 3080, "Al Noor Commission Shop", "ANC", "3767592-3", "GodamTech - Silos", "Delivered", TradeStatus.LOCKED, "INTERNATIONAL"),
+    buildCornTrade("corn-pur-03", "KAS-COR26-PUR-0003", 55, TradeDirection.BUY, 300, 3100, "Ammar Industries", "AMI", "7579904-5", "K005-Shuja feed Wh", "Delivered", TradeStatus.LOCKED, "LOCAL"),
+    buildCornTrade("corn-pur-04", "KAS-COR26-PUR-0004", 42, TradeDirection.BUY, 100, 3120, "Faiz Ahmed", "FAI", "4230420-2", "GodamTech - Silos", "Delivered", TradeStatus.LOCKED, "INTERNATIONAL"),
+    buildCornTrade("corn-pur-05", "KAS-COR26-PUR-0005", 28, TradeDirection.BUY, 200, 3140, "Al Noor Commission Shop", "ANC", "3767592-3", "K005-Shuja feed Wh", "Delivered", TradeStatus.LOCKED, "LOCAL"),
     // === PURCHASE SPOT CONTRACTS ===
-    buildCornTrade("corn-spot-01", "KAS-COR26-SPT-0001", 60, TradeDirection.BUY, 50, 3060, "Ishaq & Sons Commission Shop", "ISC", "3821447-4", "K005-Shuja feed Wh", "Spot", TradeStatus.LOCKED),
-    buildCornTrade("corn-spot-02", "KAS-COR26-SPT-0002", 45, TradeDirection.BUY, 75, 3090, "M Ijaz Commission Shop", "MIC", "8190131-5", "GodamTech - Silos", "Spot", TradeStatus.LOCKED),
-    buildCornTrade("corn-spot-03", "KAS-COR26-SPT-0003", 20, TradeDirection.BUY, 100, 3110, "Rashid Iqbal Commission Shop", "RIC", "6504630-6", "K005-Shuja feed Wh", "Spot", TradeStatus.LOCKED),
+    buildCornTrade("corn-spot-01", "KAS-COR26-SPT-0001", 60, TradeDirection.BUY, 50, 3060, "Ishaq & Sons Commission Shop", "ISC", "3821447-4", "K005-Shuja feed Wh", "Spot", TradeStatus.LOCKED, "INTERNATIONAL"),
+    buildCornTrade("corn-spot-02", "KAS-COR26-SPT-0002", 45, TradeDirection.BUY, 75, 3090, "M Ijaz Commission Shop", "MIC", "8190131-5", "GodamTech - Silos", "Spot", TradeStatus.LOCKED, "LOCAL"),
+    buildCornTrade("corn-spot-03", "KAS-COR26-SPT-0003", 20, TradeDirection.BUY, 100, 3110, "Rashid Iqbal Commission Shop", "RIC", "6504630-6", "K005-Shuja feed Wh", "Spot", TradeStatus.LOCKED, "INTERNATIONAL"),
     // === PENDING (not yet locked) ===
-    buildCornTrade("corn-pend-01", "KAS-COR26-PUR-0006", 3, TradeDirection.BUY, 120, 3160, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", "Delivered", TradeStatus.PENDING),
-    buildCornTrade("corn-pend-02", "KAS-COR26-SAL-0020", 1, TradeDirection.SELL, 200, 3430, "Asaaf Commission Agent", "ACA", "5893705-1", "K005-Shuja feed Wh", null, TradeStatus.PENDING),
+    buildCornTrade("corn-pend-01", "KAS-COR26-PUR-0006", 3, TradeDirection.BUY, 120, 3160, "Ghullam Yaseen Enterprises", "GYE", "4486067-8", "K005-Shuja feed Wh", "Delivered", TradeStatus.PENDING, "LOCAL"),
+    buildCornTrade("corn-pend-02", "KAS-COR26-SAL-0020", 1, TradeDirection.SELL, 200, 3430, "Asaaf Commission Agent", "ACA", "5893705-1", "K005-Shuja feed Wh", null, TradeStatus.PENDING, "INTERNATIONAL"),
   ];
+  return rows;
 }
 
 function baseTraderTrades(traderName: string): MockTraderTrade[] {
@@ -1817,6 +1831,7 @@ export function mockBookTrade(input: {
   counterpartyBankDetails?: string | null;
   notes?: string;
   buyingCategory?: "Delivered" | "Spot";
+  tradeScope?: "LOCAL" | "INTERNATIONAL";
   ratePerMaund?: number;
   commissionPerMaund?: number;
 }): MockTraderTrade {
@@ -1868,6 +1883,7 @@ export function mockBookTrade(input: {
     },
     notes: input.notes,
     buyingCategory: input.buyingCategory ?? (input.direction === TradeDirection.BUY ? "Delivered" : null),
+    tradeScope: input.tradeScope ?? "LOCAL",
     ratePerMaund: input.ratePerMaund ?? null,
     commissionPerMaund: input.commissionPerMaund ?? null,
     qualityTolerancesDetail: {

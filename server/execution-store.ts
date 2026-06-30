@@ -3,9 +3,11 @@ import {
   DEFAULT_QUALITY_TOLERANCES,
   executionProfileFromTrade,
   KG_PER_MAUND,
+  tradeScopeFromSeed,
   type BuyingCategory,
   type ExecutionProfile,
   type QualityTolerances,
+  type TradeScope,
 } from "@/lib/trade-constants";
 import { suggestFifoAllocation } from "@/lib/fifo-allocation";
 import { kgToQuantityUnit, quantityUnitToKg, openQtyEpsilon, isOpenQty } from "@/lib/unit-conversion";
@@ -64,6 +66,7 @@ export type ExecutionContract = {
   contractDate: Date;
   direction: TradeDirection;
   executionProfile: ExecutionProfile;
+  tradeScope: TradeScope;
   buyingCategory: BuyingCategory | null;
   commodityCode: string;
   commodityName: string;
@@ -306,6 +309,7 @@ function contractFromTrade(trade: MockTraderTrade): ExecutionContract | null {
     contractDate: trade.tradeDate,
     direction: trade.direction,
     executionProfile: profile,
+    tradeScope: trade.tradeScope ?? tradeScopeFromSeed(trade.tradeRef),
     buyingCategory: trade.buyingCategory ?? (profile === "PURCHASE_SPOT" ? "Spot" : profile === "PURCHASE_DELIVERED" ? "Delivered" : null),
     commodityCode: trade.commodity.code,
     commodityName: trade.commodity.name,
@@ -388,6 +392,9 @@ function fifoSortContracts(contracts: ExecutionContract[]): ExecutionContract[] 
 function normalizeContract(c: ExecutionContract): ExecutionContract {
   if (!(c as Partial<ExecutionContract>).quantityUnit) {
     c.quantityUnit = "MT";
+  }
+  if (!(c as Partial<ExecutionContract>).tradeScope) {
+    c.tradeScope = tradeScopeFromSeed(c.tradeRef);
   }
   return c;
 }
@@ -490,6 +497,7 @@ export function lockTradeInStore(
 
 export function getLockedContracts(filter?: {
   profile?: ExecutionProfile;
+  tradeScope?: TradeScope;
   openOnly?: boolean;
   from?: Date;
   to?: Date;
@@ -497,6 +505,7 @@ export function getLockedContracts(filter?: {
   syncAllLockedContracts();
   let list = [...ex().contracts.values()].map(normalizeContract);
   if (filter?.profile) list = list.filter((c) => c.executionProfile === filter.profile);
+  if (filter?.tradeScope) list = list.filter((c) => c.tradeScope === filter.tradeScope);
   if (filter?.openOnly) list = list.filter((c) => c.contractStatus === "Open");
   if (filter?.from) list = list.filter((c) => c.lockedAt >= filter.from!);
   if (filter?.to) list = list.filter((c) => c.lockedAt <= filter.to!);
@@ -523,6 +532,7 @@ export function getPendingTradesForExecution() {
       quantityUnit: t.quantityUnit ?? t.commodity.unit,
       counterpartyName: t.counterparty.name,
       buyingCategory: t.buyingCategory,
+      tradeScope: t.tradeScope ?? tradeScopeFromSeed(t.tradeRef),
       executionProfile: t.executionProfile ?? null,
       expectedProfile: executionProfileFromTrade(t.direction, t.buyingCategory),
     }));
@@ -624,6 +634,26 @@ export function getDeskSummary() {
     purchaseDeliveredOpen: open.filter((c) => c.executionProfile === "PURCHASE_DELIVERED").length,
     purchaseSpotOpen: open.filter((c) => c.executionProfile === "PURCHASE_SPOT").length,
     saleOpen: open.filter((c) => c.executionProfile === "SALE_EX_WAREHOUSE").length,
+    localOpen: open.filter((c) => c.tradeScope === "LOCAL").length,
+    internationalOpen: open.filter((c) => c.tradeScope === "INTERNATIONAL").length,
+    localPurchaseDeliveredOpen: open.filter(
+      (c) => c.executionProfile === "PURCHASE_DELIVERED" && c.tradeScope === "LOCAL",
+    ).length,
+    internationalPurchaseDeliveredOpen: open.filter(
+      (c) => c.executionProfile === "PURCHASE_DELIVERED" && c.tradeScope === "INTERNATIONAL",
+    ).length,
+    localPurchaseSpotOpen: open.filter(
+      (c) => c.executionProfile === "PURCHASE_SPOT" && c.tradeScope === "LOCAL",
+    ).length,
+    internationalPurchaseSpotOpen: open.filter(
+      (c) => c.executionProfile === "PURCHASE_SPOT" && c.tradeScope === "INTERNATIONAL",
+    ).length,
+    localSaleOpen: open.filter(
+      (c) => c.executionProfile === "SALE_EX_WAREHOUSE" && c.tradeScope === "LOCAL",
+    ).length,
+    internationalSaleOpen: open.filter(
+      (c) => c.executionProfile === "SALE_EX_WAREHOUSE" && c.tradeScope === "INTERNATIONAL",
+    ).length,
   };
 }
 
@@ -811,6 +841,23 @@ export function releaseOutbound(dispatchId: string, doRef: string) {
 
 export function getSpotEvent(tradeRef: string) {
   return ex().spotEvents.get(tradeRef) ?? null;
+}
+
+/** Spot pipeline rows for a profile (open contracts + current spot state). */
+export function listSpotPipeline(profile: ExecutionProfile = "PURCHASE_SPOT") {
+  syncExecutionFromDisk();
+  const rt = getExecutionRuntime();
+  return [...rt.contracts.values()]
+    .filter((c) => c.executionProfile === profile)
+    .map((c) => {
+      const ev = rt.spotEvents.get(c.tradeRef);
+      return {
+        tradeRef: c.tradeRef,
+        state: ev?.state ?? ("CONTRACT" as SpotPurchaseState),
+        brokerName: ev?.brokerName ?? null,
+        truckNo: ev?.truckNo ?? null,
+      };
+    });
 }
 
 export function advanceSpotState(
@@ -1053,8 +1100,12 @@ export function assignTruckToTrade(
     const contractRaw = rt.contracts.get(tradeRef);
     if (!contractRaw) throw new Error("Locked contract not found: " + tradeRef);
     const contract = normalizeContract(contractRaw);
-  if (truck.movementType === "INBOUND" && contract.executionProfile !== "PURCHASE_DELIVERED") {
-    throw new Error("Inbound trucks can only be assigned to Purchase Delivered contracts");
+  if (
+    truck.movementType === "INBOUND" &&
+    contract.executionProfile !== "PURCHASE_DELIVERED" &&
+    contract.executionProfile !== "PURCHASE_SPOT"
+  ) {
+    throw new Error("Inbound trucks can only be assigned to Purchase Delivered or Purchase Spot contracts");
   }
   if (truck.movementType === "OUTBOUND" && contract.executionProfile !== "SALE_EX_WAREHOUSE") {
     throw new Error("Outbound trucks can only be assigned to Sale Ex-Warehouse contracts");

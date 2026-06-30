@@ -39,6 +39,32 @@ export type ExecutionProfile = (typeof EXECUTION_PROFILES)[number];
 export const BUYING_CATEGORIES = ["Delivered", "Spot"] as const;
 export type BuyingCategory = (typeof BUYING_CATEGORIES)[number];
 
+export const TRADE_SCOPES = ["LOCAL", "INTERNATIONAL"] as const;
+export type TradeScope = (typeof TRADE_SCOPES)[number];
+
+export const TRADE_SCOPE_LABELS: Record<TradeScope, string> = {
+  LOCAL: "Local",
+  INTERNATIONAL: "International",
+};
+
+/** URL segment for execution desks (`local` | `international`). */
+export function tradeScopeToPathSegment(scope: TradeScope): "local" | "international" {
+  return scope === "LOCAL" ? "local" : "international";
+}
+
+export function tradeScopeFromPathSegment(segment: string): TradeScope | null {
+  if (segment === "local") return "LOCAL";
+  if (segment === "international") return "INTERNATIONAL";
+  return null;
+}
+
+/** Stable pseudo-random scope for demo / backfill from trade ref. */
+export function tradeScopeFromSeed(tradeRef: string): TradeScope {
+  let hash = 0;
+  for (const ch of tradeRef) hash = (hash + ch.charCodeAt(0)) % 100;
+  return hash % 2 === 0 ? "LOCAL" : "INTERNATIONAL";
+}
+
 export function executionProfileFromTrade(
   direction: "BUY" | "SELL",
   buyingCategory?: BuyingCategory | null,

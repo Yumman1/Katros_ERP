@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { Role } from "@prisma/client";
-import { EXECUTION_PROFILES } from "@/lib/trade-constants";
+import { EXECUTION_PROFILES, TRADE_SCOPES } from "@/lib/trade-constants";
 import { roleProcedure, router } from "@/server/trpc/trpc";
 import { isMockMode } from "@/server/mock-mode";
 import {
@@ -23,6 +23,7 @@ import {
   getPendingTrucks,
   getOutboundDispatches,
   getSpotEvent,
+  listSpotPipeline,
   releaseOutbound,
   rejectPayment,
   requestOutboundRelease,
@@ -80,6 +81,7 @@ export const executionRouter = router({
       z
         .object({
           profile: z.enum(EXECUTION_PROFILES).optional(),
+          tradeScope: z.enum(TRADE_SCOPES).optional(),
           openOnly: z.boolean().optional(),
           from: z.coerce.date().optional(),
           to: z.coerce.date().optional(),
@@ -243,6 +245,13 @@ export const executionRouter = router({
   spotEvent: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string() }))
     .query(({ input }) => getSpotEvent(input.tradeRef)),
+
+  spotPipeline: roleProcedure([...execRoles])
+    .input(z.object({ profile: z.enum(["PURCHASE_SPOT"]).optional() }).optional())
+    .query(({ input }) => {
+      if (isMockMode()) seedExecutionDemoIfEmpty();
+      return listSpotPipeline(input?.profile ?? "PURCHASE_SPOT");
+    }),
 
   advanceSpot: roleProcedure([...execRoles])
     .input(

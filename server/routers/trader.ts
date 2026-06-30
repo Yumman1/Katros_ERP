@@ -13,6 +13,7 @@ import {
   isDestinationRequired,
   isOriginRequired,
   PRICE_BASIS_OPTIONS,
+  TRADE_SCOPES,
   type QualityTolerances,
 } from "@/lib/trade-constants";
 import { lockTradeInStore, exportLockedContractsCsv } from "@/server/execution-store";
@@ -87,6 +88,7 @@ const bookTradeInputSchema = z
     maxMoisturePct: z.number().min(0).max(100),
     notes: z.string().optional(),
     buyingCategory: z.enum(BUYING_CATEGORIES).optional(),
+    tradeScope: z.enum(TRADE_SCOPES),
     ratePerMaund: z.number().positive().optional(),
     commissionPerMaund: z.number().min(0).optional(),
   })
@@ -293,6 +295,7 @@ export const traderRouter = router({
           counterpartyBankDetails: cp.bankDetails,
           notes: input.notes,
           buyingCategory: input.buyingCategory,
+          tradeScope: input.tradeScope,
           ratePerMaund: input.ratePerMaund,
           commissionPerMaund: input.commissionPerMaund,
         });

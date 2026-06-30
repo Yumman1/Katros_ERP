@@ -1,4 +1,5 @@
 import type { ExecutionProfile } from "@/lib/trade-constants";
+import { tradeScopeToPathSegment, type TradeScope } from "@/lib/trade-constants";
 
 export function executionWorkspacePath(
   tradeRef: string,
@@ -14,6 +15,21 @@ export function executionWorkspacePath(
       return `/execution/sales/${ref}`;
     default:
       return `/execution/contracts`;
+  }
+}
+
+export function executionListPath(
+  profile: ExecutionProfile,
+  scope: TradeScope,
+): string {
+  const seg = tradeScopeToPathSegment(scope);
+  switch (profile) {
+    case "PURCHASE_DELIVERED":
+      return `/execution/${seg}/purchase-delivered`;
+    case "PURCHASE_SPOT":
+      return `/execution/${seg}/purchase-spot`;
+    case "SALE_EX_WAREHOUSE":
+      return `/execution/${seg}/sales`;
   }
 }
 

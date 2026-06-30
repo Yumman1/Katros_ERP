@@ -1,10 +1,10 @@
 "use client";
 
-import { trpc } from "@/lib/trpc/client";
+import { TRADE_SCOPE_LABELS, BUYING_CATEGORIES, PAYMENT_TYPE_LABELS } from "@/lib/trade-constants";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import { executionWorkspacePath } from "@/lib/execution-routes";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
-import { BUYING_CATEGORIES, PAYMENT_TYPE_LABELS } from "@/lib/trade-constants";
+import { trpc } from "@/lib/trpc/client";
 import { TradeDirection } from "@prisma/client";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -112,6 +112,10 @@ export default function TradeDetailPage() {
             label: "Direction",
             value: trade.direction,
             tone: trade.direction === "BUY" ? "text-kastros-green" : "text-kastros-red",
+          },
+          {
+            label: "Market",
+            value: TRADE_SCOPE_LABELS[trade.tradeScope ?? "LOCAL"],
           },
           ...(trade.direction === TradeDirection.BUY && trade.buyingCategory
             ? [{ label: "Buying category", value: trade.buyingCategory }]

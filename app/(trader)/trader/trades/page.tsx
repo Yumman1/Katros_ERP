@@ -1,5 +1,6 @@
 "use client";
 
+import { TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import Link from "next/link";
@@ -91,6 +92,7 @@ export default function MyTradesPage() {
                   {[
                     "Trade ref",
                     "Date",
+                    "Market",
                     "Side",
                     "Commodity",
                     "Qty (MT)",
@@ -121,6 +123,17 @@ export default function MyTradesPage() {
                       </Link>
                     </td>
                     <td className="px-2 py-2 text-xs text-zinc-500">{t.tradeDate.toISOString().slice(0, 10)}</td>
+                    <td className="px-2 py-2">
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                          (t.tradeScope ?? "LOCAL") === "LOCAL"
+                            ? "bg-emerald-500/15 text-emerald-400"
+                            : "bg-sky-500/15 text-sky-400"
+                        }`}
+                      >
+                        {TRADE_SCOPE_LABELS[t.tradeScope ?? "LOCAL"]}
+                      </span>
+                    </td>
                     <td className={`px-2 py-2 text-xs font-medium ${t.direction === "BUY" ? "text-kastros-green" : "text-kastros-red"}`}>
                       {t.direction}
                     </td>

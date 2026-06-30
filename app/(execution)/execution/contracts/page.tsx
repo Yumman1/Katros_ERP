@@ -5,7 +5,7 @@ import { executionWorkspacePath } from "@/lib/execution-routes";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import Link from "next/link";
 import { useState } from "react";
-import { EXECUTION_PROFILES } from "@/lib/trade-constants";
+import { EXECUTION_PROFILES, TRADE_SCOPES, TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
 
 const PROFILE_LABELS: Record<string, string> = {
   PURCHASE_DELIVERED: "Purchase — Delivered",
@@ -21,6 +21,7 @@ const PROFILE_COLORS: Record<string, string> = {
 
 export default function LockedContractsPage() {
   const [profile, setProfile] = useState<string>("");
+  const [scopeFilter, setScopeFilter] = useState<string>("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "Open" | "Close">("all");
 
@@ -28,6 +29,7 @@ export default function LockedContractsPage() {
   const { data: contracts } = trpc.execution.lockedContracts.useQuery({
     openOnly: false,
     profile: profile ? (profile as (typeof EXECUTION_PROFILES)[number]) : undefined,
+    tradeScope: scopeFilter ? (scopeFilter as (typeof TRADE_SCOPES)[number]) : undefined,
   });
 
   const filtered = (contracts ?? []).filter((c) => {
@@ -117,6 +119,12 @@ export default function LockedContractsPage() {
           <option value="">All Types</option>
           {EXECUTION_PROFILES.map((p) => <option key={p} value={p}>{PROFILE_LABELS[p] ?? p}</option>)}
         </select>
+        <select value={scopeFilter} onChange={(e) => setScopeFilter(e.target.value)}
+          className="rounded-xl px-4 py-2.5 text-sm text-white outline-none"
+          style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <option value="">All Markets</option>
+          {TRADE_SCOPES.map((s) => <option key={s} value={s}>{TRADE_SCOPE_LABELS[s]}</option>)}
+        </select>
         <div className="flex rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
           {(["all", "Open", "Close"] as const).map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
@@ -134,7 +142,7 @@ export default function LockedContractsPage() {
           <table className="w-full text-xs">
             <thead>
               <tr style={{ background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                {["Contract No.", "Type", "Counterparty", "Contract Qty", "Received", "Open", "Progress", "Status", ""].map((h) => (
+                {["Contract No.", "Market", "Type", "Counterparty", "Contract Qty", "Received", "Open", "Progress", "Status", ""].map((h) => (
                   <th key={h} className="px-4 py-3 text-left font-medium uppercase tracking-wider" style={{ color: "#52525b" }}>{h}</th>
                 ))}
               </tr>
@@ -147,6 +155,15 @@ export default function LockedContractsPage() {
                   <tr key={c.tradeRef} className="hover:bg-white/[0.02] transition-colors"
                     style={{ borderBottom: i < filtered.length - 1 ? "1px solid rgba(255,255,255,0.04)" : undefined }}>
                     <td className="px-4 py-3 font-mono font-bold" style={{ color }}>{c.tradeRef}</td>
+                    <td className="px-4 py-3">
+                      <span className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase"
+                        style={{
+                          background: c.tradeScope === "LOCAL" ? "rgba(52,211,153,0.12)" : "rgba(96,165,250,0.12)",
+                          color: c.tradeScope === "LOCAL" ? "#34d399" : "#60a5fa",
+                        }}>
+                        {TRADE_SCOPE_LABELS[c.tradeScope]}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">
                       <span className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: `${color}15`, color }}>
                         {PROFILE_LABELS[c.executionProfile]?.split("—")[1]?.trim() ?? c.executionProfile}
@@ -180,7 +197,7 @@ export default function LockedContractsPage() {
                 );
               })}
               {filtered.length === 0 && (
-                <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-zinc-500">No contracts match your filter.</td></tr>
+                <tr><td colSpan={10} className="px-4 py-12 text-center text-sm text-zinc-500">No contracts match your filter.</td></tr>
               )}
             </tbody>
           </table>

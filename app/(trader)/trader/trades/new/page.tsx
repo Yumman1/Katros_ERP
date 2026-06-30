@@ -9,6 +9,8 @@ import {
   PAYMENT_TYPE_LABELS,
   PRICE_BASIS_OPTIONS,
   QUANTITY_UNITS,
+  TRADE_SCOPES,
+  TRADE_SCOPE_LABELS,
 } from "@/lib/trade-constants";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { traderDisplayName } from "@/lib/trader-display-name";
@@ -47,6 +49,7 @@ const schema = z
     maxMoisturePct: z.number().min(0).max(100),
     notes: z.string().optional(),
     buyingCategory: z.enum(BUYING_CATEGORIES).optional(),
+    tradeScope: z.enum(TRADE_SCOPES),
   })
   .superRefine((data, ctx) => {
     if (!(data.originName ?? "").trim()) {
@@ -157,6 +160,7 @@ export default function BookTradePage() {
       commodityId: "",
       counterpartyId: "",
       buyingCategory: "Delivered",
+      tradeScope: "LOCAL",
     },
   });
 
@@ -365,6 +369,34 @@ export default function BookTradePage() {
               {...register("qualityTolerances")}
               className="w-full rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-white"
             />
+          </Field>
+        </Section>
+
+        <Section title="Market" description="Local domestic desk vs international cross-border">
+          <Field label="Trade market" error={errors.tradeScope?.message}>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {TRADE_SCOPES.map((scope) => (
+                <label
+                  key={scope}
+                  className="flex cursor-pointer items-start gap-3 rounded-lg border border-kastros-border px-3 py-3 has-[:checked]:border-kastros-green has-[:checked]:bg-kastros-green/5"
+                >
+                  <input
+                    type="radio"
+                    value={scope}
+                    {...register("tradeScope")}
+                    className="mt-1"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-white">{TRADE_SCOPE_LABELS[scope]}</div>
+                    <div className="text-xs text-zinc-500">
+                      {scope === "LOCAL"
+                        ? "Domestic Pakistan desk — local execution workflows"
+                        : "Cross-border / import-export — international execution desk"}
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
           </Field>
         </Section>
 
