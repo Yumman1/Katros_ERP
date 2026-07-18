@@ -6,7 +6,6 @@ import {
   isAllowedGatepassCommodity,
   isAllowedGatepassCounterparty,
   previewNextGatepassNo,
-  seedExecutionDemoIfEmpty,
   updatePendingTruck,
 } from "@/server/execution-store";
 import { saveGatepassDocuments } from "@/server/gatepass-documents";
@@ -48,35 +47,32 @@ async function parseGatepassRequest(request: Request) {
 }
 
 export async function GET(request: Request) {
-  seedExecutionDemoIfEmpty();
   const url = new URL(request.url);
   const warehouse = url.searchParams.get("warehouse")?.trim() || undefined;
   const movementType = url.searchParams.get("movementType");
   const movement =
     movementType === "INBOUND" || movementType === "OUTBOUND" ? movementType : undefined;
 
-  const companyNames = new Set(getCompanyWarehouses().map((w) => w.name));
+  const companyNames = new Set((await getCompanyWarehouses()).map((w) => w.name));
   const warehouseSet = new Set<string>();
-  for (const loc of getMergedLocations()) {
+  for (const loc of await getMergedLocations()) {
     if (companyNames.has(loc.name)) warehouseSet.add(loc.name);
   }
 
   // Always return both lists so the form can explain when the selected movement
   // type has no trades but the opposite direction does (e.g. sale ex-warehouse → Gate Out).
-  const inboundCounterparties = getLiveCounterpartiesForGatepass("INBOUND", warehouse);
-  const outboundCounterparties = getLiveCounterpartiesForGatepass("OUTBOUND", warehouse);
+  const inboundCounterparties = await getLiveCounterpartiesForGatepass("INBOUND", warehouse);
+  const outboundCounterparties = await getLiveCounterpartiesForGatepass("OUTBOUND", warehouse);
 
   return NextResponse.json({
     warehouses: Array.from(warehouseSet).sort((a, b) => a.localeCompare(b)),
     inboundCounterparties,
     outboundCounterparties,
-    nextGatepassNo: movement ? previewNextGatepassNo(movement) : undefined,
+    nextGatepassNo: movement ? await previewNextGatepassNo(movement) : undefined,
   });
 }
 
 export async function POST(request: Request) {
-  seedExecutionDemoIfEmpty();
-
   const parsed = await parseGatepassRequest(request);
   if ("error" in parsed) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
@@ -85,7 +81,7 @@ export async function POST(request: Request) {
   const input = parsed.data;
   const weightKg = input.weightAsPerBuiltyKg;
 
-  if (!isAllowedGatepassCounterparty(input.movementType, input.counterpartyName, input.warehouseName)) {
+  if (!(await isAllowedGatepassCounterparty(input.movementType, input.counterpartyName, input.warehouseName))) {
     return NextResponse.json(
       {
         error:
@@ -98,12 +94,12 @@ export async function POST(request: Request) {
   }
 
   if (
-    !isAllowedGatepassCommodity(
+    !(await isAllowedGatepassCommodity(
       input.movementType,
       input.counterpartyName,
       input.commodityCode,
       input.warehouseName,
-    )
+    ))
   ) {
     return NextResponse.json(
       { error: "Select a commodity from the counterparty's open trades at this warehouse" },
@@ -112,7 +108,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const truck = createPendingTruck({
+    const truck = await createPendingTruck({
       counterpartyName: input.counterpartyName,
       movementType: input.movementType,
       warehouseName: input.warehouseName,
@@ -137,7 +133,7 @@ export async function POST(request: Request) {
 
     if (parsed.files.length) {
       const uploaded = await saveGatepassDocuments(parsed.files, truck.gatepassNo);
-      updatePendingTruck(truck.id, {
+      await updatePendingTruck(truck.id, {
         documentRefs: [...(truck.documentRefs ?? []), ...uploaded],
       });
     }

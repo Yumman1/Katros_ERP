@@ -1,25 +1,29 @@
+import { Prisma, TradeDirection } from "@prisma/client";
 import { KG_PER_MAUND, type QualityTolerances } from "@/lib/trade-constants";
 import { kgToQuantityUnit, quantityUnitToKg } from "@/lib/unit-conversion";
-import { TradeDirection } from "@prisma/client";
-import { filterUploadedGatepassDocuments } from "@/lib/gatepass-documents";
+import {
+  filterUploadedGatepassDocuments,
+  gatepassDocumentDisplayName,
+} from "@/lib/gatepass-documents";
 import {
   contractHasWarehouseAllocation,
   contractMatchesWarehouse,
   normWarehouseName,
   resolveWarehouseAllocations,
 } from "@/lib/warehouse-allocation";
+import { prisma } from "@/server/db";
+import { COUNTER, nextRef } from "@/server/db/counters";
 import {
-  type ExecutionContract,
-  type ExecutionRuntime,
+  CONTRACT_INCLUDE,
+  TRUCK_INCLUDE,
+  contractRowToRuntime,
+  inboundRowToRuntime,
+  outboundRowToRuntime,
+  truckRowToRuntime,
   type InboundReceipt,
   type OutboundDispatch,
   type PendingTruck,
   type PendingTruckStatus,
-  syncExecutionFromDisk,
-  getExecutionRuntime,
-  ex,
-  persistExecutionState,
-  setBatchRefreshingContracts,
 } from "./runtime";
 import {
   assertWithinDeliveryWindow,
@@ -27,12 +31,12 @@ import {
   contractRequiresWarehouse,
   counterpartyMatchesTruck,
   fifoSortContracts,
-  getFulfilledQtyForTradeAtWarehouse,
+  fulfilledQtyForTradeAtWarehouseDb,
   getLockedContracts,
-  getWarehouseAllocationProgress,
   normalizeContract,
   refreshContract,
   syncAllLockedContracts,
+  type ExecutionContractView,
 } from "./contracts";
 import {
   assertSufficientOutboundStock,
@@ -69,17 +73,19 @@ function pushGatepassCommodity(
 }
 
 /** Counterparties on open locked trades at a warehouse — used for warehouse gate in/out. */
-export function getLiveCounterpartiesForGatepass(
+export async function getLiveCounterpartiesForGatepass(
   movementType: "INBOUND" | "OUTBOUND",
   warehouseName?: string,
-): GatepassCounterpartyOption[] {
-  syncAllLockedContracts();
-  let contracts = getLockedContracts({ openOnly: true, warehouseAllocated: true }).filter((c) => {
-    if (movementType === "INBOUND") {
-      return c.direction === TradeDirection.BUY && c.executionProfile === "PURCHASE_DELIVERED";
-    }
-    return c.direction === TradeDirection.SELL && c.executionProfile === "SALE_EX_WAREHOUSE";
-  });
+): Promise<GatepassCounterpartyOption[]> {
+  await syncAllLockedContracts();
+  let contracts = (await getLockedContracts({ openOnly: true, warehouseAllocated: true })).filter(
+    (c) => {
+      if (movementType === "INBOUND") {
+        return c.direction === TradeDirection.BUY && c.executionProfile === "PURCHASE_DELIVERED";
+      }
+      return c.direction === TradeDirection.SELL && c.executionProfile === "SALE_EX_WAREHOUSE";
+    },
+  );
 
   if (warehouseName?.trim()) {
     contracts = contracts.filter((c) => contractMatchesWarehouse(c, warehouseName));
@@ -107,28 +113,58 @@ export function getLiveCounterpartiesForGatepass(
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function isAllowedGatepassCommodity(
+export async function isAllowedGatepassCommodity(
   movementType: "INBOUND" | "OUTBOUND",
   counterpartyName: string,
   commodityCode: string,
   warehouseName?: string,
-): boolean {
-  const cp = getLiveCounterpartiesForGatepass(movementType, warehouseName).find(
+): Promise<boolean> {
+  const cp = (await getLiveCounterpartiesForGatepass(movementType, warehouseName)).find(
     (c) => c.name === counterpartyName,
   );
   return cp?.commodities.some((c) => c.code === commodityCode) ?? false;
 }
 
-export function isAllowedGatepassCounterparty(
+export async function isAllowedGatepassCounterparty(
   movementType: "INBOUND" | "OUTBOUND",
   counterpartyName: string,
   warehouseName?: string,
-): boolean {
+): Promise<boolean> {
   const name = counterpartyName.trim();
-  return getLiveCounterpartiesForGatepass(movementType, warehouseName).some((c) => c.name === name);
+  return (await getLiveCounterpartiesForGatepass(movementType, warehouseName)).some(
+    (c) => c.name === name,
+  );
 }
 
-export function updatePendingTruck(
+/** Reconcile the GatepassDocument rows for a gate entry with a documentRefs list. */
+async function writeGatepassDocumentRefs(gatepassNo: string, refs: string[]): Promise<void> {
+  const clean = [...new Set(refs.map((r) => r.trim()).filter(Boolean))];
+  const existing = await prisma.gatepassDocument.findMany({
+    where: { gatepassNo },
+    select: { id: true, storagePath: true },
+  });
+  const keep = new Set(clean);
+  const removeIds = existing.filter((d) => !keep.has(d.storagePath)).map((d) => d.id);
+  if (removeIds.length) {
+    await prisma.gatepassDocument.deleteMany({ where: { id: { in: removeIds } } });
+  }
+  const have = new Set(existing.map((d) => d.storagePath));
+  const toCreate = clean.filter((ref) => !have.has(ref));
+  if (toCreate.length) {
+    await prisma.gatepassDocument.createMany({
+      data: toCreate.map((ref) => ({
+        gatepassNo,
+        fileName: gatepassDocumentDisplayName(ref),
+        storagePath: ref,
+        mimeType: "application/octet-stream",
+        fileSize: 0,
+      })),
+      skipDuplicates: true,
+    });
+  }
+}
+
+export async function updatePendingTruck(
   id: string,
   patch: Partial<{
     truckNo: string;
@@ -151,77 +187,93 @@ export function updatePendingTruck(
     commodityCode: string;
     commodityName: string;
   }>,
-): PendingTruck {
-  syncExecutionFromDisk();
-  const rt = getExecutionRuntime();
-  const truck = rt.pendingTrucks.find((t) => t.id === id);
-  if (!truck) throw new Error("Gate entry not found");
-  if (truck.status === "ASSIGNED") {
+): Promise<PendingTruck> {
+  const row = await prisma.pendingTruck.findUnique({ where: { id }, include: TRUCK_INCLUDE });
+  if (!row) throw new Error("Gate entry not found");
+  if (row.status === "ASSIGNED") {
     throw new Error("Cannot edit an assigned gate entry — unassign or request head review");
   }
 
-  if (patch.truckNo != null) truck.truckNo = patch.truckNo.trim().toUpperCase();
-  if (patch.counterpartyName != null) truck.counterpartyName = patch.counterpartyName.trim();
-  if (patch.warehouseName != null) truck.warehouseName = patch.warehouseName.trim();
-  if (patch.transporterName !== undefined) truck.transporterName = patch.transporterName?.trim() || null;
-  if (patch.transporterPhone !== undefined) truck.transporterPhone = patch.transporterPhone?.trim() || null;
-  if (patch.builtyDetails != null) truck.builtyDetails = patch.builtyDetails.trim();
-  if (patch.quantityAsPerBuilty !== undefined) truck.quantityAsPerBuilty = patch.quantityAsPerBuilty?.trim() || null;
-  if (patch.weighBridgeName !== undefined) truck.weighBridgeName = patch.weighBridgeName?.trim() || null;
-  if (patch.warehouseWeightKg !== undefined) truck.warehouseWeightKg = patch.warehouseWeightKg;
-  if (patch.qualitySpecs !== undefined) truck.qualitySpecs = patch.qualitySpecs;
-  if (patch.totalDeductionsKg !== undefined) truck.totalDeductionsKg = patch.totalDeductionsKg;
-  if (patch.documentRefs !== undefined) truck.documentRefs = patch.documentRefs;
-  if (patch.remarks !== undefined) truck.remarks = patch.remarks?.trim() || null;
-  if (patch.bags !== undefined) truck.bags = patch.bags;
-  if (patch.quantityBagsBales !== undefined) truck.quantityBagsBales = patch.quantityBagsBales;
-  if (patch.commodityCode != null) truck.commodityCode = patch.commodityCode.trim();
-  if (patch.commodityName != null) truck.commodityName = patch.commodityName.trim();
+  const data: Prisma.PendingTruckUpdateInput = {};
+  if (patch.truckNo != null) data.truckNo = patch.truckNo.trim().toUpperCase();
+  if (patch.counterpartyName != null) data.counterpartyName = patch.counterpartyName.trim();
+  if (patch.warehouseName != null) data.warehouseName = patch.warehouseName.trim();
+  if (patch.transporterName !== undefined)
+    data.transporterName = patch.transporterName?.trim() || null;
+  if (patch.transporterPhone !== undefined)
+    data.transporterPhone = patch.transporterPhone?.trim() || null;
+  if (patch.builtyDetails != null) data.builtyDetails = patch.builtyDetails.trim();
+  if (patch.quantityAsPerBuilty !== undefined)
+    data.quantityAsPerBuilty = patch.quantityAsPerBuilty?.trim() || null;
+  if (patch.weighBridgeName !== undefined)
+    data.weighBridgeName = patch.weighBridgeName?.trim() || null;
+  if (patch.warehouseWeightKg !== undefined) data.warehouseWeightKg = patch.warehouseWeightKg;
+  if (patch.qualitySpecs !== undefined)
+    data.qualitySpecs = (patch.qualitySpecs ?? Prisma.JsonNull) as Prisma.InputJsonValue;
+  if (patch.totalDeductionsKg !== undefined) data.totalDeductionsKg = patch.totalDeductionsKg;
+  if (patch.remarks !== undefined) data.remarks = patch.remarks?.trim() || null;
+  if (patch.bags !== undefined) data.quantityBagsBales = patch.bags;
+  if (patch.quantityBagsBales !== undefined) data.quantityBagsBales = patch.quantityBagsBales;
+  if (patch.commodityCode != null) data.commodityCode = patch.commodityCode.trim();
+  if (patch.commodityName != null) data.commodityName = patch.commodityName.trim();
 
+  let weightKgPatch = patch.weightKg;
   if (patch.weightAsPerBuiltyKg !== undefined) {
     if (patch.weightAsPerBuiltyKg != null && patch.weightAsPerBuiltyKg <= 0) {
       throw new Error("Weight as per builty must be positive");
     }
-    truck.weightAsPerBuiltyKg = patch.weightAsPerBuiltyKg;
+    data.weightAsPerBuiltyKg = patch.weightAsPerBuiltyKg;
     if (patch.weightAsPerBuiltyKg != null) {
-      patch.weightKg = patch.weightAsPerBuiltyKg;
+      weightKgPatch = patch.weightAsPerBuiltyKg;
     }
   }
 
-  if (patch.weightKg != null) {
-    if (patch.weightKg <= 0) throw new Error("Weight must be positive");
-    if (truck.movementType === "OUTBOUND") {
-      const qtyMt = kgToQuantityUnit(patch.weightKg, "MT");
-      assertSufficientOutboundStock(truck.warehouseName, truck.commodityCode ?? "", qtyMt, {
-        truckId: id,
-      });
+  const effectiveWarehouse =
+    patch.warehouseName != null ? patch.warehouseName.trim() : row.warehouseName;
+  if (weightKgPatch != null) {
+    if (weightKgPatch <= 0) throw new Error("Weight must be positive");
+    if (row.movementType === "OUTBOUND") {
+      const qtyMt = kgToQuantityUnit(weightKgPatch, "MT");
+      await assertSufficientOutboundStock(
+        effectiveWarehouse,
+        (patch.commodityCode != null ? patch.commodityCode.trim() : row.commodityCode) ?? "",
+        qtyMt,
+        { truckId: id },
+      );
     }
-    truck.weightKg = patch.weightKg;
-    truck.remainingKg = patch.weightKg;
+    data.weightKg = weightKgPatch;
+    data.remainingKg = weightKgPatch;
   }
 
-  if (patch.warehouseName != null || patch.truckNo != null || patch.transporterName !== undefined || patch.transporterPhone !== undefined) {
-    syncLinkedMovementsFromGatepass(rt, truck.gatepassNo, truck.truckNo, {
-      warehouseName: patch.warehouseName != null ? truck.warehouseName : undefined,
-      truckNo: patch.truckNo != null ? truck.truckNo : undefined,
-      transporterName: patch.transporterName !== undefined ? truck.transporterName : undefined,
-      transporterPhone: patch.transporterPhone !== undefined ? truck.transporterPhone : undefined,
-      counterpartyName: patch.counterpartyName != null ? truck.counterpartyName : undefined,
-      builtyDetails: patch.builtyDetails != null ? truck.builtyDetails ?? undefined : undefined,
+  const updated = await prisma.pendingTruck.update({ where: { id }, data });
+
+  if (patch.documentRefs !== undefined) {
+    await writeGatepassDocumentRefs(updated.gatepassNo, patch.documentRefs);
+  }
+
+  if (
+    patch.warehouseName != null ||
+    patch.truckNo != null ||
+    patch.transporterName !== undefined ||
+    patch.transporterPhone !== undefined
+  ) {
+    await syncLinkedMovementsFromGatepass(updated.gatepassNo, updated.truckNo, {
+      warehouseName: patch.warehouseName != null ? updated.warehouseName : undefined,
+      truckNo: patch.truckNo != null ? updated.truckNo : undefined,
+      transporterName: patch.transporterName !== undefined ? updated.transporterName : undefined,
+      transporterPhone: patch.transporterPhone !== undefined ? updated.transporterPhone : undefined,
+      counterpartyName: patch.counterpartyName != null ? updated.counterpartyName : undefined,
+      builtyDetails: patch.builtyDetails != null ? updated.builtyDetails ?? undefined : undefined,
     });
   }
 
-  persistExecutionState();
-  return truck;
+  const fresh = await prisma.pendingTruck.findUnique({ where: { id }, include: TRUCK_INCLUDE });
+  return truckRowToRuntime(fresh!);
 }
 
-export function deletePendingTruck(id: string): { ok: true } {
-  syncExecutionFromDisk();
-  const rt = getExecutionRuntime();
-  const before = rt.pendingTrucks.length;
-  rt.pendingTrucks = rt.pendingTrucks.filter((t) => t.id !== id);
-  if (rt.pendingTrucks.length === before) throw new Error("Gate entry not found");
-  persistExecutionState();
+export async function deletePendingTruck(id: string): Promise<{ ok: true }> {
+  const deleted = await prisma.pendingTruck.deleteMany({ where: { id } });
+  if (deleted.count === 0) throw new Error("Gate entry not found");
   return { ok: true };
 }
 
@@ -237,6 +289,10 @@ function formatGateInvoiceNo(seq: number): string {
   return `INV-GIN-${seq.toString().padStart(5, "0")}`;
 }
 
+function truckCounterName(movementType: "INBOUND" | "OUTBOUND"): string {
+  return movementType === "INBOUND" ? COUNTER.TRUCK_INBOUND : COUNTER.TRUCK_OUTBOUND;
+}
+
 export function inboundNetInvoiceWeightKg(
   warehouseWeightKg: number | null | undefined,
   totalDeductionsKg: number | null | undefined,
@@ -246,67 +302,40 @@ export function inboundNetInvoiceWeightKg(
   return Math.max(0, Math.round((warehouseWeightKg - deductions) * 100) / 100);
 }
 
-function clearInboundGateInvoice(truck: PendingTruck) {
-  truck.gateInvoiceNo = null;
-  truck.gateInvoiceWeightKg = null;
-  truck.gateInvoiceQtyMt = null;
-  truck.gateInvoiceAmount = null;
-  truck.gateInvoiceCurrency = null;
-  truck.gateInvoiceRatePerKg = null;
-  truck.gateInvoiceTradeRef = null;
-}
-
 /** Remove provisional invoices on trucks that have not been assigned to a trade yet. */
-function sanitizeUnassignedGateInvoices(rt: ExecutionRuntime): void {
-  let changed = false;
-  for (const truck of rt.pendingTrucks) {
-    if (truck.movementType !== "INBOUND") continue;
-    if (truck.status === "PENDING" && !truck.assignedTradeRef && truck.gateInvoiceNo) {
-      clearInboundGateInvoice(truck);
-      changed = true;
-    }
-  }
-  if (changed) persistExecutionState();
-}
-
-/** Generate gate invoice when an inbound truck is assigned — rate from the assigned trade only. */
-function generateInboundGateInvoiceOnAssign(
-  truck: PendingTruck,
-  contract: ExecutionContract,
-  rt: ExecutionRuntime,
-): void {
-  if (truck.movementType !== "INBOUND") return;
-  if (truck.gateInvoiceNo && truck.gateInvoiceTradeRef === contract.tradeRef) return;
-
-  const netKg = inboundNetInvoiceWeightKg(truck.warehouseWeightKg, truck.totalDeductionsKg);
-  if (netKg == null) {
-    throw new Error(
-      "Enter warehouse weight on the gatepass before assignment — invoice uses warehouse weight minus deductions",
-    );
-  }
-
-  if (!truck.gateInvoiceNo) {
-    rt.gateInvoiceSeq += 1;
-    truck.gateInvoiceNo = formatGateInvoiceNo(rt.gateInvoiceSeq);
-  }
-
-  const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
-  truck.gateInvoiceWeightKg = netKg;
-  truck.gateInvoiceQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
-  truck.gateInvoiceAmount = Math.round(netKg * rateKg * 100) / 100;
-  truck.gateInvoiceCurrency = contract.currency;
-  truck.gateInvoiceRatePerKg = rateKg;
-  truck.gateInvoiceTradeRef = contract.tradeRef;
+async function sanitizeUnassignedGateInvoices(): Promise<void> {
+  await prisma.pendingTruck.updateMany({
+    where: {
+      movementType: "INBOUND",
+      status: "PENDING",
+      assignedTradeRef: null,
+      gateInvoiceNo: { not: null },
+    },
+    data: {
+      gateInvoiceNo: null,
+      gateInvoiceWeightKg: null,
+      gateInvoiceQtyMt: null,
+      gateInvoiceAmount: null,
+      gateInvoiceCurrency: null,
+      gateInvoiceRatePerKg: null,
+      gateInvoiceTradeRef: null,
+    },
+  });
 }
 
 /** Next gatepass number that will be assigned (does not consume the sequence). */
-export function previewNextGatepassNo(movementType: "INBOUND" | "OUTBOUND"): string {
-  syncExecutionFromDisk();
-  const rt = getExecutionRuntime();
-  return formatGatepassNo(movementType, rt.truckSeq + 1);
+export async function previewNextGatepassNo(
+  movementType: "INBOUND" | "OUTBOUND",
+): Promise<string> {
+  const name = truckCounterName(movementType);
+  const rows = await prisma.$queryRaw<Array<{ value: bigint }>>`
+    SELECT "value" FROM "RefCounter" WHERE "name" = ${name}
+  `;
+  const next = (rows.length ? Number(rows[0]!.value) : 0) + 1;
+  return formatGatepassNo(movementType, next);
 }
 
-export function createPendingTruck(input: {
+export async function createPendingTruck(input: {
   counterpartyName: string;
   movementType: "INBOUND" | "OUTBOUND";
   warehouseName: string;
@@ -330,65 +359,79 @@ export function createPendingTruck(input: {
   remarks?: string | null;
   gatepassNo?: string | null;
   arrivalDate?: Date;
-}): PendingTruck {
-  syncExecutionFromDisk();
+}): Promise<PendingTruck> {
   if (input.movementType === "OUTBOUND") {
     const qtyMt = kgToQuantityUnit(input.weightKg, "MT");
-    assertSufficientOutboundStock(input.warehouseName, input.commodityCode, qtyMt);
+    await assertSufficientOutboundStock(input.warehouseName, input.commodityCode, qtyMt);
   }
-  const rt = getExecutionRuntime();
-  rt.truckSeq += 1;
-  const id = `truck-${rt.truckSeq}`;
-  const gatepassNo =
-    input.gatepassNo?.trim() || formatGatepassNo(input.movementType, rt.truckSeq);
-  const truck: PendingTruck = {
-    id,
-    gatepassNo,
-    arrivalDate: input.arrivalDate ?? new Date(),
-    counterpartyName: input.counterpartyName.trim(),
-    brokerName: null,
-    movementType: input.movementType,
-    warehouseName: input.warehouseName.trim(),
-    truckNo: input.truckNo.trim().toUpperCase(),
-    transporterName: input.transporterName?.trim() || null,
-    transporterPhone: input.transporterPhone?.trim() || null,
-    builtyDetails: input.builtyDetails.trim(),
-    commodityCode: input.commodityCode.trim(),
-    commodityName: input.commodityName.trim(),
-    recordedByName: input.recordedByName.trim(),
-    quantityAsPerBuilty: input.quantityAsPerBuilty?.trim() || null,
-    weightAsPerBuiltyKg: input.weightAsPerBuiltyKg ?? input.weightKg,
-    weighBridgeName: input.weighBridgeName?.trim() || null,
-    documentRefs: input.documentRefs?.length ? [...input.documentRefs] : [],
-    warehouseWeightKg: input.warehouseWeightKg ?? null,
-    qualitySpecs: input.qualitySpecs ?? null,
-    quantityBagsBales: input.quantityBagsBales ?? input.bags ?? null,
-    totalDeductionsKg: input.totalDeductionsKg ?? null,
-    weightKg: input.weightKg,
-    bags: input.quantityBagsBales ?? input.bags ?? null,
-    remarks: input.remarks || null,
-    status: "PENDING",
-    assignedTradeRef: null,
-    assignedAt: null,
-    remainingKg: input.weightKg,
-  };
-  rt.pendingTrucks.unshift(truck);
-  persistExecutionState();
-  return truck;
+  const seq = await nextRef(truckCounterName(input.movementType));
+  const gatepassNo = input.gatepassNo?.trim() || formatGatepassNo(input.movementType, seq);
+  const row = await prisma.pendingTruck.create({
+    data: {
+      gatepassNo,
+      arrivalDate: input.arrivalDate ?? new Date(),
+      counterpartyName: input.counterpartyName.trim(),
+      movementType: input.movementType,
+      warehouseName: input.warehouseName.trim(),
+      truckNo: input.truckNo.trim().toUpperCase(),
+      transporterName: input.transporterName?.trim() || null,
+      transporterPhone: input.transporterPhone?.trim() || null,
+      builtyDetails: input.builtyDetails.trim(),
+      commodityCode: input.commodityCode.trim(),
+      commodityName: input.commodityName.trim(),
+      recordedByName: input.recordedByName.trim(),
+      quantityAsPerBuilty: input.quantityAsPerBuilty?.trim() || null,
+      weightAsPerBuiltyKg: input.weightAsPerBuiltyKg ?? input.weightKg,
+      weighBridgeName: input.weighBridgeName?.trim() || null,
+      warehouseWeightKg: input.warehouseWeightKg ?? null,
+      qualitySpecs: (input.qualitySpecs ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+      quantityBagsBales: input.quantityBagsBales ?? input.bags ?? null,
+      totalDeductionsKg: input.totalDeductionsKg ?? null,
+      weightKg: input.weightKg,
+      remarks: input.remarks || null,
+      status: "PENDING",
+      assignedTradeRef: null,
+      assignedAt: null,
+      remainingKg: input.weightKg,
+    },
+  });
+  if (input.documentRefs?.length) {
+    await writeGatepassDocumentRefs(gatepassNo, input.documentRefs);
+  }
+  const fresh = await prisma.pendingTruck.findUnique({
+    where: { id: row.id },
+    include: TRUCK_INCLUDE,
+  });
+  return truckRowToRuntime(fresh!);
 }
 
-export function getPendingTrucks(filter?: {
+export async function getPendingTrucks(filter?: {
   counterpartyName?: string;
   warehouseName?: string;
   movementType?: "INBOUND" | "OUTBOUND";
   status?: PendingTruckStatus;
   from?: Date;
   to?: Date;
-}): PendingTruck[] {
-  syncExecutionFromDisk();
-  const rt = getExecutionRuntime();
-  sanitizeUnassignedGateInvoices(rt);
-  let list = [...rt.pendingTrucks];
+}): Promise<PendingTruck[]> {
+  await sanitizeUnassignedGateInvoices();
+  const where: Prisma.PendingTruckWhereInput = {};
+  if (filter?.warehouseName && filter.warehouseName !== "ALL") {
+    where.warehouseName = filter.warehouseName;
+  }
+  if (filter?.movementType) where.movementType = filter.movementType;
+  if (filter?.status) where.status = filter.status;
+  if (filter?.from || filter?.to) {
+    where.arrivalDate = {
+      ...(filter?.from ? { gte: filter.from } : {}),
+      ...(filter?.to ? { lte: filter.to } : {}),
+    };
+  }
+  const rows = await prisma.pendingTruck.findMany({
+    where,
+    include: TRUCK_INCLUDE,
+    orderBy: { arrivalDate: "desc" },
+  });
+  let list = rows.map(truckRowToRuntime);
   if (filter?.counterpartyName) {
     const q = filter.counterpartyName.toLowerCase();
     list = list.filter(
@@ -398,189 +441,243 @@ export function getPendingTrucks(filter?: {
         (truckTransporterName(t)?.toLowerCase().includes(q) ?? false),
     );
   }
-  if (filter?.warehouseName && filter.warehouseName !== "ALL")
-    list = list.filter((t) => t.warehouseName === filter.warehouseName);
-  if (filter?.movementType) list = list.filter((t) => t.movementType === filter.movementType);
-  if (filter?.status) list = list.filter((t) => t.status === filter.status);
-  if (filter?.from) list = list.filter((t) => new Date(t.arrivalDate) >= filter.from!);
-  if (filter?.to) list = list.filter((t) => new Date(t.arrivalDate) <= filter.to!);
-  return list.sort(
-    (a, b) => new Date(b.arrivalDate).getTime() - new Date(a.arrivalDate).getTime(),
-  );
+  return list;
 }
 
-export function assignTruckToTrade(
+export async function assignTruckToTrade(
   truckId: string,
   tradeRef: string,
   overrideWeightKg?: number,
   allowOutsideWindow = false,
-): { truck: PendingTruck; receipt?: InboundReceipt; dispatch?: OutboundDispatch; splitRemainingKg: number } {
-  syncExecutionFromDisk();
-  setBatchRefreshingContracts(true);
-  try {
-    const rt = getExecutionRuntime();
-    const truck = rt.pendingTrucks.find((t) => t.id === truckId);
-    if (!truck) throw new Error("Pending truck not found");
-    if (truck.status === "ASSIGNED") throw new Error("Truck already fully assigned");
-    if (!rt.contracts.has(tradeRef)) refreshContract(tradeRef);
-    const contractRaw = rt.contracts.get(tradeRef);
-    if (!contractRaw) throw new Error("Locked contract not found: " + tradeRef);
-    const contract = normalizeContract(contractRaw);
-    assertWithinDeliveryWindow(contract, truck.arrivalDate ?? new Date(), allowOutsideWindow);
-  if (
-    truck.movementType === "INBOUND" &&
-    contract.executionProfile !== "PURCHASE_DELIVERED" &&
-    contract.executionProfile !== "PURCHASE_SPOT"
-  ) {
-    throw new Error("Inbound trucks can only be assigned to Purchase Delivered or Purchase Spot contracts");
-  }
-  if (truck.movementType === "OUTBOUND" && contract.executionProfile !== "SALE_EX_WAREHOUSE") {
-    throw new Error("Outbound trucks can only be assigned to Sale Ex-Warehouse contracts");
-  }
-  if (!counterpartyMatchesTruck(truck, contract)) {
-    throw new Error(
-      `Counterparty mismatch: truck is for "${truck.counterpartyName}" but contract is "${contract.counterpartyName}"`,
-    );
-  }
-  if (!commodityMatchesTruck(truck, contract)) {
-    throw new Error(
-      `Commodity mismatch: gatepass is "${truck.commodityName ?? truck.commodityCode}" but contract is "${contract.commodityName}"`,
-    );
-  }
-  if (contractRequiresWarehouse(contract)) {
-    if (!contractHasWarehouseAllocation(contract)) {
-      throw new Error(
-        `Trade ${tradeRef} has no warehouse allocated — execution head must assign a warehouse before fulfilment`,
-      );
-    }
-    if (!contractMatchesWarehouse(contract, truck.warehouseName)) {
-      throw new Error(
-        `Gatepass warehouse "${truck.warehouseName}" is not in the allocated split for ${tradeRef}`,
-      );
-    }
-  }
-  const whAllocatedQty = contractRequiresWarehouse(contract)
-    ? resolveWarehouseAllocations(contract)
-        .filter((a) => normWarehouse(a.warehouseName) === normWarehouse(truck.warehouseName))
-        .reduce((s, a) => s + a.qtyMt, 0)
-    : contract.contractualQtyMt;
-  const whFulfilledQty = contractRequiresWarehouse(contract)
-    ? getFulfilledQtyForTradeAtWarehouse(tradeRef, truck.warehouseName, contract.direction)
-    : contract.receivedQtyMt;
-  const whOpenQty = Math.max(0, whAllocatedQty - whFulfilledQty);
-  const tradeOpenKg = quantityUnitToKg(whOpenQty, contract.quantityUnit);
-  const requestedKg = overrideWeightKg ?? truck.remainingKg;
-  const allocateKg = Math.min(
-    requestedKg,
-    truck.remainingKg,
-    Math.max(tradeOpenKg, 0),
-  );
-  if (allocateKg <= 0) {
-    throw new Error("Nothing to allocate — check truck remaining weight and order open quantity");
-  }
-  const splitRemainingKg = truck.remainingKg - allocateKg;
-  const unit = contract.quantityUnit;
+): Promise<{
+  truck: PendingTruck;
+  receipt?: InboundReceipt;
+  dispatch?: OutboundDispatch;
+  splitRemainingKg: number;
+}> {
+  const result = await prisma.$transaction(async (tx) => {
+    // Row locks — two operators cannot double-assign the same truck or race the
+    // same contract's open quantity.
+    await tx.$queryRaw`SELECT "id" FROM "PendingTruck" WHERE "id" = ${truckId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "ExecutionContract" WHERE "tradeRef" = ${tradeRef} FOR UPDATE`;
 
-  if (truck.movementType === "INBOUND") {
-    generateInboundGateInvoiceOnAssign(truck, contract, rt);
-    rt.inboundSeq += 1;
-    const netKg = allocateKg;
-    const invoiceWeightKg = truck.gateInvoiceWeightKg ?? netKg;
-    const allocatedQtyMt =
-      truck.gateInvoiceQtyMt ?? kgToQuantityUnit(invoiceWeightKg, contract.quantityUnit);
-    const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
-    const receipt: InboundReceipt = {
-      id: `kcs-${rt.inboundSeq}`,
-      gatepassNo: truck.gatepassNo,
-      kcsNo: `KCS-${rt.inboundSeq}`,
-      receiveDate: truck.arrivalDate,
-      truckNo: truck.truckNo,
-      driverName: truckTransporterName(truck),
-      driverCnic: truck.driverCnic ?? null,
-      driverPhone: truckTransporterPhone(truck),
-      biltyNo: truck.builtyDetails || "-",
-      trnNo: "-",
-      warehouseName: truck.warehouseName,
-      sellerName: truck.counterpartyName,
-      tradeRef,
-      billNo: truck.gateInvoiceNo ?? null,
-      bags: truck.quantityBagsBales ?? truck.bags ?? null,
-      weightSpotKg: truck.weightAsPerBuiltyKg ?? allocateKg,
-      weightWarehouseKg: truck.warehouseWeightKg ?? allocateKg,
-      weightDiffKg: truck.totalDeductionsKg ?? 0,
-      qualityReadings: truck.qualitySpecs ?? contract.qualityTolerances,
-      deductionPct: 0,
-      allocatedQtyMt,
-      fifoOverrideReason: null,
-      amountDue: truck.gateInvoiceAmount ?? invoiceWeightKg * rateKg,
-      status: "ALLOCATED",
-      paymentRequestId: null,
-      documentRefs: filterUploadedGatepassDocuments(truck.documentRefs),
-      remarks: [
-        truck.remarks,
-        truck.commodityName ? `Commodity: ${truck.commodityName}` : null,
-        truck.weighBridgeName ? `Weigh bridge: ${truck.weighBridgeName}` : null,
-        truck.quantityAsPerBuilty ? `Qty per builty: ${truck.quantityAsPerBuilty}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ") || null,
-    };
-    rt.inboundReceipts.unshift(receipt);
-    truck.remainingKg = splitRemainingKg;
-    truck.status = splitRemainingKg > 0.5 ? "PARTIAL" : "ASSIGNED";
-    truck.assignedTradeRef = tradeRef;
-    truck.assignedAt = new Date();
-    refreshContract(tradeRef);
-    persistExecutionState();
-    return { truck, receipt, splitRemainingKg };
-  } else {
-    rt.outboundSeq += 1;
-    const allocatedQtyMt = kgToQuantityUnit(allocateKg, unit);
-    assertSufficientOutboundStock(
-      truck.warehouseName,
-      contract.commodityCode,
-      allocatedQtyMt,
-      { truckId: truck.id },
-    );
-    const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
-    const dispatch: OutboundDispatch = {
-      id: `out-${rt.outboundSeq}`,
-      gatepassNo: truck.gatepassNo,
-      dispatchDate: truck.arrivalDate,
-      liftedBy: truckTransporterName(truck) || truck.counterpartyName,
-      buyerName: truck.counterpartyName,
-      tradeRef,
-      warehouseName: truck.warehouseName,
-      truckNo: truck.truckNo,
-      driverName: truckTransporterName(truck),
-      driverCnic: truck.driverCnic ?? null,
-      driverPhone: truckTransporterPhone(truck),
-      dispatchWeightKg: allocateKg,
-      invoiceWeightKg: allocateKg,
-      fungusPct: 0,
-      doRef: truck.gatepassNo,
-      fifoOverrideReason: null,
-      allocatedQtyMt,
-      amountDue: allocateKg * rateKg,
-      status: "WEIGHED",
-      paymentRequestId: null,
-      documentRefs: filterUploadedGatepassDocuments(truck.documentRefs),
-      remarks: [truck.remarks, truck.commodityName ? `Commodity: ${truck.commodityName}` : null]
-        .filter(Boolean)
-        .join(" · ") || null,
-    };
-    rt.outboundDispatches.unshift(dispatch);
-    truck.remainingKg = splitRemainingKg;
-    truck.status = splitRemainingKg > 0.5 ? "PARTIAL" : "ASSIGNED";
-    truck.assignedTradeRef = tradeRef;
-    truck.assignedAt = new Date();
-    refreshContract(tradeRef);
-    persistExecutionState();
-    return { truck, dispatch, splitRemainingKg };
-  }
-  } finally {
-    setBatchRefreshingContracts(false);
-  }
+    const truckRow = await tx.pendingTruck.findUnique({
+      where: { id: truckId },
+      include: TRUCK_INCLUDE,
+    });
+    if (!truckRow) throw new Error("Pending truck not found");
+    const truck = truckRowToRuntime(truckRow);
+    if (truck.status === "ASSIGNED") throw new Error("Truck already fully assigned");
+
+    const contractRow = await tx.executionContract.findUnique({
+      where: { tradeRef },
+      include: CONTRACT_INCLUDE,
+    });
+    if (!contractRow) throw new Error("Locked contract not found: " + tradeRef);
+    const contract = normalizeContract(contractRowToRuntime(contractRow));
+    assertWithinDeliveryWindow(contract, truck.arrivalDate ?? new Date(), allowOutsideWindow);
+    if (
+      truck.movementType === "INBOUND" &&
+      contract.executionProfile !== "PURCHASE_DELIVERED" &&
+      contract.executionProfile !== "PURCHASE_SPOT"
+    ) {
+      throw new Error(
+        "Inbound trucks can only be assigned to Purchase Delivered or Purchase Spot contracts",
+      );
+    }
+    if (truck.movementType === "OUTBOUND" && contract.executionProfile !== "SALE_EX_WAREHOUSE") {
+      throw new Error("Outbound trucks can only be assigned to Sale Ex-Warehouse contracts");
+    }
+    if (!counterpartyMatchesTruck(truck, contract)) {
+      throw new Error(
+        `Counterparty mismatch: truck is for "${truck.counterpartyName}" but contract is "${contract.counterpartyName}"`,
+      );
+    }
+    if (!commodityMatchesTruck(truck, contract)) {
+      throw new Error(
+        `Commodity mismatch: gatepass is "${truck.commodityName ?? truck.commodityCode}" but contract is "${contract.commodityName}"`,
+      );
+    }
+    if (contractRequiresWarehouse(contract)) {
+      if (!contractHasWarehouseAllocation(contract)) {
+        throw new Error(
+          `Trade ${tradeRef} has no warehouse allocated — execution head must assign a warehouse before fulfilment`,
+        );
+      }
+      if (!contractMatchesWarehouse(contract, truck.warehouseName)) {
+        throw new Error(
+          `Gatepass warehouse "${truck.warehouseName}" is not in the allocated split for ${tradeRef}`,
+        );
+      }
+    }
+    const whAllocatedQty = contractRequiresWarehouse(contract)
+      ? resolveWarehouseAllocations(contract)
+          .filter((a) => normWarehouse(a.warehouseName) === normWarehouse(truck.warehouseName))
+          .reduce((s, a) => s + a.qtyMt, 0)
+      : contract.contractualQtyMt;
+    const whFulfilledQty = contractRequiresWarehouse(contract)
+      ? await fulfilledQtyForTradeAtWarehouseDb(tx, tradeRef, truck.warehouseName, contract.direction)
+      : contract.receivedQtyMt;
+    const whOpenQty = Math.max(0, whAllocatedQty - whFulfilledQty);
+    const tradeOpenKg = quantityUnitToKg(whOpenQty, contract.quantityUnit);
+    const requestedKg = overrideWeightKg ?? truck.remainingKg;
+    const allocateKg = Math.min(requestedKg, truck.remainingKg, Math.max(tradeOpenKg, 0));
+    if (allocateKg <= 0) {
+      throw new Error("Nothing to allocate — check truck remaining weight and order open quantity");
+    }
+    const splitRemainingKg = truck.remainingKg - allocateKg;
+    const unit = contract.quantityUnit;
+    const truckStatus: PendingTruckStatus = splitRemainingKg > 0.5 ? "PARTIAL" : "ASSIGNED";
+    const assignedAt = new Date();
+
+    if (truck.movementType === "INBOUND") {
+      // Generate gate invoice on assignment — rate comes from the assigned trade only.
+      if (!(truck.gateInvoiceNo && truck.gateInvoiceTradeRef === contract.tradeRef)) {
+        const netKg = inboundNetInvoiceWeightKg(truck.warehouseWeightKg, truck.totalDeductionsKg);
+        if (netKg == null) {
+          throw new Error(
+            "Enter warehouse weight on the gatepass before assignment — invoice uses warehouse weight minus deductions",
+          );
+        }
+        if (!truck.gateInvoiceNo) {
+          const invoiceSeq = await nextRef(COUNTER.GATE_INVOICE, tx);
+          truck.gateInvoiceNo = formatGateInvoiceNo(invoiceSeq);
+        }
+        const invoiceRateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
+        truck.gateInvoiceWeightKg = netKg;
+        truck.gateInvoiceQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
+        truck.gateInvoiceAmount = Math.round(netKg * invoiceRateKg * 100) / 100;
+        truck.gateInvoiceCurrency = contract.currency;
+        truck.gateInvoiceRatePerKg = invoiceRateKg;
+        truck.gateInvoiceTradeRef = contract.tradeRef;
+      }
+
+      const seq = await nextRef(COUNTER.INBOUND, tx);
+      const netKg = allocateKg;
+      const invoiceWeightKg = truck.gateInvoiceWeightKg ?? netKg;
+      const allocatedQtyMt =
+        truck.gateInvoiceQtyMt ?? kgToQuantityUnit(invoiceWeightKg, contract.quantityUnit);
+      const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
+      const receiptRow = await tx.inboundReceipt.create({
+        data: {
+          kcsNo: `KCS-${seq}`,
+          gatepassNo: truck.gatepassNo,
+          tradeRef,
+          receiveDate: truck.arrivalDate,
+          truckNo: truck.truckNo,
+          driverName: truckTransporterName(truck),
+          driverCnic: truck.driverCnic ?? null,
+          driverPhone: truckTransporterPhone(truck),
+          biltyNo: truck.builtyDetails || "-",
+          trnNo: "-",
+          warehouseName: truck.warehouseName,
+          sellerName: truck.counterpartyName,
+          billNo: truck.gateInvoiceNo ?? null,
+          bags: truck.quantityBagsBales ?? truck.bags ?? null,
+          weightSpotKg: truck.weightAsPerBuiltyKg ?? allocateKg,
+          weightWarehouseKg: truck.warehouseWeightKg ?? allocateKg,
+          weightDiffKg: truck.totalDeductionsKg ?? 0,
+          damagePct: (truck.qualitySpecs ?? contract.qualityTolerances).damagePct,
+          brokenPct: (truck.qualitySpecs ?? contract.qualityTolerances).brokenPct,
+          fungusPct: (truck.qualitySpecs ?? contract.qualityTolerances).fungusPct,
+          foreignMatterPct: (truck.qualitySpecs ?? contract.qualityTolerances).foreignMatterPct,
+          moisturePct: (truck.qualitySpecs ?? contract.qualityTolerances).moisturePct,
+          deductionPct: 0,
+          allocatedQtyMt,
+          fifoOverrideReason: null,
+          amountDue: truck.gateInvoiceAmount ?? invoiceWeightKg * rateKg,
+          status: "ALLOCATED",
+          documentRefs: filterUploadedGatepassDocuments(truck.documentRefs),
+          remarks:
+            [
+              truck.remarks,
+              truck.commodityName ? `Commodity: ${truck.commodityName}` : null,
+              truck.weighBridgeName ? `Weigh bridge: ${truck.weighBridgeName}` : null,
+              truck.quantityAsPerBuilty ? `Qty per builty: ${truck.quantityAsPerBuilty}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || null,
+        },
+        include: { paymentRequest: { select: { requestRef: true } } },
+      });
+
+      const updatedTruck = await tx.pendingTruck.update({
+        where: { id: truckId },
+        data: {
+          remainingKg: splitRemainingKg,
+          status: truckStatus,
+          assignedTradeRef: tradeRef,
+          assignedAt,
+          gateInvoiceNo: truck.gateInvoiceNo,
+          gateInvoiceWeightKg: truck.gateInvoiceWeightKg,
+          gateInvoiceQtyMt: truck.gateInvoiceQtyMt,
+          gateInvoiceAmount: truck.gateInvoiceAmount,
+          gateInvoiceCurrency: truck.gateInvoiceCurrency,
+          gateInvoiceRatePerKg: truck.gateInvoiceRatePerKg,
+          gateInvoiceTradeRef: truck.gateInvoiceTradeRef,
+        },
+        include: TRUCK_INCLUDE,
+      });
+      return {
+        truck: truckRowToRuntime(updatedTruck),
+        receipt: inboundRowToRuntime(receiptRow),
+        splitRemainingKg,
+      };
+    } else {
+      const allocatedQtyMt = kgToQuantityUnit(allocateKg, unit);
+      await assertSufficientOutboundStock(truck.warehouseName, contract.commodityCode, allocatedQtyMt, {
+        truckId: truck.id,
+      });
+      const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
+      const dispatchRow = await tx.outboundDispatch.create({
+        data: {
+          gatepassNo: truck.gatepassNo,
+          tradeRef,
+          dispatchDate: truck.arrivalDate,
+          liftedBy: truckTransporterName(truck) || truck.counterpartyName,
+          buyerName: truck.counterpartyName,
+          warehouseName: truck.warehouseName,
+          truckNo: truck.truckNo,
+          driverName: truckTransporterName(truck),
+          driverCnic: truck.driverCnic ?? null,
+          driverPhone: truckTransporterPhone(truck),
+          dispatchWeightKg: allocateKg,
+          invoiceWeightKg: allocateKg,
+          fungusPct: 0,
+          doRef: truck.gatepassNo,
+          fifoOverrideReason: null,
+          allocatedQtyMt,
+          amountDue: allocateKg * rateKg,
+          status: "WEIGHED",
+          documentRefs: filterUploadedGatepassDocuments(truck.documentRefs),
+          remarks:
+            [truck.remarks, truck.commodityName ? `Commodity: ${truck.commodityName}` : null]
+              .filter(Boolean)
+              .join(" · ") || null,
+        },
+        include: { paymentRequest: { select: { requestRef: true } } },
+      });
+
+      const updatedTruck = await tx.pendingTruck.update({
+        where: { id: truckId },
+        data: {
+          remainingKg: splitRemainingKg,
+          status: truckStatus,
+          assignedTradeRef: tradeRef,
+          assignedAt,
+        },
+        include: TRUCK_INCLUDE,
+      });
+      return {
+        truck: truckRowToRuntime(updatedTruck),
+        dispatch: outboundRowToRuntime(dispatchRow),
+        splitRemainingKg,
+      };
+    }
+  });
+
+  await refreshContract(tradeRef);
+  return result;
 }
 
 export type TruckFifoAllocation = {
@@ -591,35 +688,40 @@ export type TruckFifoAllocation = {
 };
 
 /** Assign truck weight across open FIFO trades for the same counterparty (auto-split overflow). */
-export function assignTruckFifoAuto(truckId: string): {
+export async function assignTruckFifoAuto(truckId: string): Promise<{
   truck: PendingTruck;
   allocations: TruckFifoAllocation[];
-} {
-  const rt = ex();
-  let truck = rt.pendingTrucks.find((t) => t.id === truckId);
-  if (!truck) throw new Error("Pending truck not found");
+}> {
+  const truckRow = await prisma.pendingTruck.findUnique({
+    where: { id: truckId },
+    include: TRUCK_INCLUDE,
+  });
+  if (!truckRow) throw new Error("Pending truck not found");
+  let truck = truckRowToRuntime(truckRow);
   if (truck.status === "ASSIGNED") throw new Error("Truck already fully assigned");
 
   const profile =
-    truck.movementType === "INBOUND" ? ("PURCHASE_DELIVERED" as const) : ("SALE_EX_WAREHOUSE" as const);
+    truck.movementType === "INBOUND"
+      ? ("PURCHASE_DELIVERED" as const)
+      : ("SALE_EX_WAREHOUSE" as const);
   const allocations: TruckFifoAllocation[] = [];
   let guard = 0;
 
   while (truck.remainingKg > 0.5 && truck.status !== "ASSIGNED" && guard < 25) {
     guard += 1;
-    syncAllLockedContracts();
-    const queue = fifoSortContracts(
-      getLockedContracts({
+    const candidates = (
+      await getLockedContracts({
         openOnly: true,
         profile,
-        warehouseName: truck!.warehouseName,
-      }).filter(
-        (c) => counterpartyMatchesTruck(truck!, c) && commodityMatchesTruck(truck!, c),
-      ),
-    );
+        warehouseName: truck.warehouseName,
+      })
+    ).filter((c) => counterpartyMatchesTruck(truck, c) && commodityMatchesTruck(truck, c));
+    // fifoSortContracts copies the array but keeps the element references, so the
+    // sorted contracts retain their warehouseAllocationProgress views.
+    const queue = fifoSortContracts(candidates) as ExecutionContractView[];
     const next = queue.find((c) => {
-      const wh = normWarehouse(truck!.warehouseName);
-      const line = getWarehouseAllocationProgress(c).find(
+      const wh = normWarehouse(truck.warehouseName);
+      const line = c.warehouseAllocationProgress.find(
         (p) => normWarehouse(p.warehouseName) === wh,
       );
       const whOpen = line?.openQtyMt ?? c.openQtyMt;
@@ -629,7 +731,7 @@ export function assignTruckFifoAuto(truckId: string): {
 
     const beforeKg = truck.remainingKg;
     // Auto-FIFO is an explicit desk action; allow it to fill overdue windows too.
-    const result = assignTruckToTrade(truckId, next.tradeRef, undefined, true);
+    const result = await assignTruckToTrade(truckId, next.tradeRef, undefined, true);
     truck = result.truck;
     const allocatedKg = Math.max(0, beforeKg - result.splitRemainingKg);
     if (allocatedKg < 0.5) break;

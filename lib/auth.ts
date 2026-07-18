@@ -16,27 +16,40 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        const email = credentials?.email?.trim();
+        const email = credentials?.email?.trim().toLowerCase();
         const password = credentials?.password;
         if (!email || !password) return null;
 
+        // Primary path: validate against the database user table.
+        let user: Awaited<ReturnType<typeof prisma.user.findUnique>> = null;
+        try {
+          user = await prisma.user.findUnique({ where: { email } });
+        } catch (err) {
+          // DB unreachable — only tolerated in mock mode (dev without a DB).
+          if (!isMockMode()) throw err;
+        }
+
+        if (user) {
+          const ok = await bcrypt.compare(password, user.passwordHash);
+          if (!ok) return null;
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name ?? undefined,
+            role: user.role,
+            isHead: user.isHead,
+          };
+        }
+
+        // Dev fallback: MOCK_MODE=true and the email has no DB row —
+        // derive a demo identity from the email pattern.
         if (isMockMode()) {
           const demoOk = password === "demo" || password === "Kastros123!";
           if (!demoOk) return null;
           return mockCredentialsUser(email);
         }
 
-        const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-        if (!user) return null;
-        const ok = await bcrypt.compare(password, user.passwordHash);
-        if (!ok) return null;
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name ?? undefined,
-          role: user.role,
-          isHead: user.role === "ADMIN" || user.role === "CEO",
-        };
+        return null;
       },
     }),
   ],

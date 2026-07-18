@@ -24,26 +24,26 @@ import {
 } from "@/server/trader-master-data";
 import { commodityCreateInputSchema } from "@/lib/commodity-registration";
 
-export function applyChangeRequestDeletion(
+export async function applyChangeRequestDeletion(
   department: Department,
   entityType: string,
   entityRef: string,
-): boolean {
+): Promise<boolean> {
   try {
     if (department === "EXECUTION") {
-      if (entityType === "GATE_ENTRY") return deletePendingTruck(entityRef).ok;
-      if (entityType === "INBOUND") return deleteInboundReceipt(entityRef).ok;
-      if (entityType === "OUTBOUND") return deleteOutboundDispatch(entityRef).ok;
+      if (entityType === "GATE_ENTRY") return (await deletePendingTruck(entityRef)).ok;
+      if (entityType === "INBOUND") return (await deleteInboundReceipt(entityRef)).ok;
+      if (entityType === "OUTBOUND") return (await deleteOutboundDispatch(entityRef)).ok;
       if (entityType === "WAREHOUSE") {
-        deleteWarehouseLocation(entityRef);
+        await deleteWarehouseLocation(entityRef);
         return true;
       }
     }
     if (department === "FINANCE" && entityType === "PAYMENT") {
-      return deletePaymentRequest(entityRef).ok;
+      return (await deletePaymentRequest(entityRef)).ok;
     }
     if (department === "TRADING" && entityType === "TRADE") {
-      return deleteBookedTrade(entityRef).ok;
+      return (await deleteBookedTrade(entityRef)).ok;
     }
   } catch {
     return false;
@@ -51,20 +51,20 @@ export function applyChangeRequestDeletion(
   return false;
 }
 
-export function applyChangeRequestCreation(req: {
+export async function applyChangeRequestCreation(req: {
   department: Department;
   entityType: string;
   payload?: Record<string, unknown> | null;
-}): boolean {
+}): Promise<boolean> {
   try {
     if (req.department === "EXECUTION" && req.entityType === "WAREHOUSE" && req.payload) {
-      addCustomLocation(req.payload as Parameters<typeof addCustomLocation>[0]);
+      await addCustomLocation(req.payload as Parameters<typeof addCustomLocation>[0]);
       return true;
     }
     if (req.department === "TRADING" && req.entityType === "COMMODITY" && req.payload) {
       const parsed = commodityCreateInputSchema.safeParse(req.payload);
       if (!parsed.success) return false;
-      addCustomCommodity(parsed.data);
+      await addCustomCommodity(parsed.data);
       return true;
     }
   } catch {
@@ -73,7 +73,7 @@ export function applyChangeRequestCreation(req: {
   return false;
 }
 
-export function applyChangeRequestEdit(
+export async function applyChangeRequestEdit(
   req: {
     department: Department;
     entityType: string;
@@ -82,47 +82,56 @@ export function applyChangeRequestEdit(
     action: string;
   },
   editedBy: string,
-): boolean {
+): Promise<boolean> {
   try {
     if (req.department === "EXECUTION" && req.entityType === "WAREHOUSE" && req.payload) {
-      updateWarehouseLocation(req.entityRef, req.payload as Parameters<typeof updateWarehouseLocation>[1]);
+      await updateWarehouseLocation(
+        req.entityRef,
+        req.payload as Parameters<typeof updateWarehouseLocation>[1],
+      );
       return true;
     }
     if (req.department === "EXECUTION" && req.entityType === "GATE_ENTRY" && req.payload) {
-      updatePendingTruck(req.entityRef, req.payload as Parameters<typeof updatePendingTruck>[1]);
+      await updatePendingTruck(req.entityRef, req.payload as Parameters<typeof updatePendingTruck>[1]);
       return true;
     }
     if (req.department === "EXECUTION" && req.entityType === "INBOUND" && req.payload) {
-      updateInboundReceipt(req.entityRef, req.payload as Parameters<typeof updateInboundReceipt>[1]);
+      await updateInboundReceipt(
+        req.entityRef,
+        req.payload as Parameters<typeof updateInboundReceipt>[1],
+      );
       return true;
     }
     if (req.department === "EXECUTION" && req.entityType === "OUTBOUND" && req.payload) {
-      updateOutboundDispatch(req.entityRef, req.payload as Parameters<typeof updateOutboundDispatch>[1]);
+      await updateOutboundDispatch(
+        req.entityRef,
+        req.payload as Parameters<typeof updateOutboundDispatch>[1],
+      );
       return true;
     }
     if (req.department === "EXECUTION" && req.entityType === "TRADE" && req.payload) {
       const { _editedBy: _ignored, ...patch } = req.payload;
-      applyExecutionTradeEditFromPayload(req.entityRef, patch, editedBy);
+      await applyExecutionTradeEditFromPayload(req.entityRef, patch, editedBy);
       return true;
     }
     if (req.department === "EXECUTION" && req.entityType === "OPEN_TRADE_WAREHOUSE" && req.payload) {
       const split = req.payload.warehouseSplit as { warehouseName: string; openQtyMt: number }[] | undefined;
       if (!split?.length) return false;
-      applyOpenTradeWarehouseSplit(req.entityRef, split, editedBy, true);
+      await applyOpenTradeWarehouseSplit(req.entityRef, split, editedBy, true);
       return true;
     }
     if (req.department === "EXECUTION" && req.entityType === "LOCKED_CONTRACT_WAREHOUSE" && req.payload) {
       const split = req.payload.warehouseSplit as { warehouseName: string; openQtyMt: number }[] | undefined;
       if (!split?.length) return false;
-      allocateContractWarehousesSplit(req.entityRef, split);
+      await allocateContractWarehousesSplit(req.entityRef, split);
       return true;
     }
     if (req.department === "TRADING" && req.entityType === "TRADE" && req.payload) {
-      applyTraderTradeEditFromPayload(req.entityRef, req.payload, editedBy);
+      await applyTraderTradeEditFromPayload(req.entityRef, req.payload, editedBy);
       return true;
     }
     if (req.entityType === "TRADE" && req.action === "CLOSE") {
-      closeLockedContract(req.entityRef, editedBy);
+      await closeLockedContract(req.entityRef, editedBy);
       return true;
     }
   } catch {
@@ -131,7 +140,7 @@ export function applyChangeRequestEdit(
   return false;
 }
 
-export function applyApprovedChangeRequest(
+export async function applyApprovedChangeRequest(
   req: {
     department: Department;
     entityType: string;
@@ -140,9 +149,11 @@ export function applyApprovedChangeRequest(
     payload?: Record<string, unknown> | null;
   },
   actor: string,
-): boolean {
+): Promise<boolean> {
   if (req.action === "CREATE") return applyChangeRequestCreation(req);
-  if (req.action === "DELETE") return applyChangeRequestDeletion(req.department, req.entityType, req.entityRef);
+  if (req.action === "DELETE") {
+    return applyChangeRequestDeletion(req.department, req.entityType, req.entityRef);
+  }
   if (req.action === "EDIT") return applyChangeRequestEdit(req, actor);
   if (req.action === "CLOSE") return applyChangeRequestEdit(req, actor);
   return false;

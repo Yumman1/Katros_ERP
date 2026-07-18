@@ -1,5 +1,8 @@
 # 01 — Architecture
 
+> **Update (Supabase migration):** the mock JSON/`globalThis` runtime described below has been fully replaced by Supabase PostgreSQL via Prisma — every store in `server/` now reads/writes relational tables (see [12-supabase-vercel-deployment.md](./12-supabase-vercel-deployment.md) and `prisma/schema.prisma`). This document is kept for domain reference; ignore its persistence mechanics.
+
+
 ---
 
 ## System diagram

@@ -24,7 +24,7 @@ import { recordTradeChangeRequested, recordTradeChangeResolved } from "@/server/
 import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import { commodityCreateInputSchema, commodityEntityRef } from "@/lib/commodity-registration";
 import { getMergedCommodities } from "@/server/trader-master-data";
-import { mockTradeByRefGlobal, syncBookedTradesFromDisk } from "@/server/dummy-data";
+import { mockTradeByRefGlobal } from "@/server/dummy-data";
 import { TradeStatus } from "@prisma/client";
 
 function actorName(user: { name?: string | null; email?: string | null }) {
@@ -55,7 +55,7 @@ export const teamRouter = router({
         payload: z.record(z.string(), z.unknown()).optional(),
       }),
     )
-    .mutation(({ ctx, input }) => {
+    .mutation(async ({ ctx, input }) => {
       const role = ctx.session.user.role;
       const department = input.department ?? departmentForRole(role);
       if (!department) {
@@ -69,7 +69,7 @@ export const teamRouter = router({
         if (input.entityType !== "TRADE") {
           throw new TRPCError({ code: "BAD_REQUEST", message: "CLOSE is only supported for trades" });
         }
-        const contract = getContractByRef(input.entityRef.trim());
+        const contract = await getContractByRef(input.entityRef.trim());
         if (!contract) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Locked contract not found" });
         }
@@ -86,7 +86,7 @@ export const teamRouter = router({
         ) {
           throw new TRPCError({ code: "FORBIDDEN", message: "You can only close your own trades" });
         }
-        if (hasOpenChangeRequest({ entityRef: input.entityRef, entityType: "TRADE", action: "CLOSE" })) {
+        if (await hasOpenChangeRequest({ entityRef: input.entityRef, entityType: "TRADE", action: "CLOSE" })) {
           throw new TRPCError({ code: "CONFLICT", message: "A close request is already pending approval" });
         }
       }
@@ -97,11 +97,11 @@ export const teamRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid commodity details" });
         }
         const code = parsed.data.code.trim().toUpperCase();
-        if (getMergedCommodities().some((c) => c.code.toUpperCase() === code)) {
+        if ((await getMergedCommodities()).some((c) => c.code.toUpperCase() === code)) {
           throw new TRPCError({ code: "CONFLICT", message: `Commodity code ${code} already exists` });
         }
         if (
-          hasOpenChangeRequest({
+          await hasOpenChangeRequest({
             entityRef: commodityEntityRef(code),
             entityType: "COMMODITY",
             action: "CREATE",
@@ -119,8 +119,7 @@ export const teamRouter = router({
         input.entityType === "TRADE" &&
         (input.action === "EDIT" || input.action === "DELETE")
       ) {
-        syncBookedTradesFromDisk();
-        const trade = mockTradeByRefGlobal(input.entityRef.trim());
+        const trade = await mockTradeByRefGlobal(input.entityRef.trim());
         if (!trade) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Trade not found" });
         }
@@ -152,7 +151,7 @@ export const teamRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "Edit request must include proposed changes" });
         }
         if (
-          hasOpenChangeRequest({
+          await hasOpenChangeRequest({
             entityRef: input.entityRef,
             entityType: "TRADE",
             action: input.action,
@@ -186,7 +185,7 @@ export const teamRouter = router({
         }
       }
 
-      const req = createChangeRequest({
+      const req = await createChangeRequest({
         department,
         entityType: input.entityType,
         entityRef: input.entityRef,
@@ -204,13 +203,13 @@ export const teamRouter = router({
         input.action === "EDIT"
       ) {
         try {
-          markOpenTradeWarehousePendingApproval(input.entityRef);
+          await markOpenTradeWarehousePendingApproval(input.entityRef);
         } catch {
           // Best-effort flag only.
         }
       }
       if (input.entityType === "TRADE" && (input.action === "EDIT" || input.action === "DELETE")) {
-        recordTradeChangeRequested(req);
+        await recordTradeChangeRequested(req);
       }
       return req;
     }),
@@ -240,8 +239,8 @@ export const teamRouter = router({
         note: z.string().trim().optional(),
       }),
     )
-    .mutation(({ ctx, input }) => {
-      const req = getChangeRequest(input.id);
+    .mutation(async ({ ctx, input }) => {
+      const req = await getChangeRequest(input.id);
       if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Change request not found" });
       const { role, isHead } = ctx.session.user;
       if (!canActOnDepartment(role, isHead, req.department)) {
@@ -257,9 +256,9 @@ export const teamRouter = router({
         ) {
           return advanceChangeRequestToCeo(input.id, actorName(ctx.session.user), input.note);
         }
-        applied = applyApprovedChangeRequest(req, actorName(ctx.session.user));
+        applied = await applyApprovedChangeRequest(req, actorName(ctx.session.user));
       }
-      const resolved = resolveChangeRequest(
+      const resolved = await resolveChangeRequest(
         input.id,
         input.decision,
         actorName(ctx.session.user),
@@ -267,18 +266,18 @@ export const teamRouter = router({
         applied,
       );
       if (req.entityType === "TRADE" && (input.decision === "REJECTED" || req.action === "DELETE")) {
-        recordTradeChangeResolved(resolved, input.decision, actorName(ctx.session.user));
+        await recordTradeChangeResolved(resolved, input.decision, actorName(ctx.session.user));
       }
       return resolved;
     }),
 
   pendingApprovals: headProcedure()
     .input(z.object({ department: z.enum(DEPARTMENTS) }))
-    .query(({ ctx, input }) => {
+    .query(async ({ ctx, input }) => {
       const { role, isHead } = ctx.session.user;
       if (!canActOnDepartment(role, isHead, input.department)) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Not the head of this department" });
       }
-      return listChangeRequests({ department: input.department, status: "PENDING" }).length;
+      return (await listChangeRequests({ department: input.department, status: "PENDING" })).length;
     }),
 });

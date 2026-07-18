@@ -13,7 +13,6 @@ import {
   PRICE_CURRENCIES,
   PRICE_CURRENCY_LABELS,
   priceUnitLabel,
-  quotedCurrencyLabel,
   type PriceCurrency,
 } from "@/lib/price-units";
 import {
@@ -25,7 +24,6 @@ import {
   isCornCommodity,
   paymentTypeLabel,
   paymentTypesForBooking,
-  priceBasisOptionsForCommodity,
   type QualityTolerances,
 } from "@/lib/trade-constants";
 import type { TradeParamValues } from "@/lib/trade-parameters";
@@ -111,11 +109,6 @@ export function OpenTradeDetail({
   const bookingIncoterms = useMemo(
     () => (trade ? incotermsForBooking(trade.direction, tradeScope, trade.commodity.code) : []),
     [trade, tradeScope],
-  );
-
-  const priceBasisOptions = useMemo(
-    () => priceBasisOptionsForCommodity(trade?.commodity.code),
-    [trade?.commodity.code],
   );
 
   const visiblePaymentTypes = useMemo(

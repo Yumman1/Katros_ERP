@@ -1,0 +1,180 @@
+import type { Prisma, Trade, Commodity, Counterparty, TradeActivity } from "@prisma/client";
+import type { QualityTolerances } from "@/lib/trade-constants";
+import type { PriceCurrency } from "@/lib/price-units";
+import type { MockTraderTrade } from "@/server/dummy-data";
+import type { TradeActivityEntry } from "@/server/trade-activity";
+import { json, num, numOrNull } from "@/server/db/convert";
+
+export type TradeRowWithRelations = Trade & {
+  commodity: Commodity;
+  counterparty: Counterparty;
+  activityLog?: TradeActivity[];
+};
+
+export const TRADE_INCLUDE = {
+  commodity: true,
+  counterparty: true,
+  activityLog: { orderBy: { at: "asc" as const } },
+} satisfies Prisma.TradeInclude;
+
+function activityRowToEntry(row: TradeActivity): TradeActivityEntry {
+  return {
+    id: row.id,
+    at: row.at,
+    actorName: row.actorName,
+    actorSide: row.actorSide,
+    kind: row.kind as TradeActivityEntry["kind"],
+    requiresApproval: row.requiresApproval,
+    summary: row.summary,
+    note: row.note,
+    changeCount: row.changeCount ?? undefined,
+    changeRequestId: row.changeRequestId ?? undefined,
+    payload: json<Record<string, unknown>>(row.payload),
+  };
+}
+
+/** DB row (with relations) → the domain trade shape used across the app. */
+export function tradeRowToMock(row: TradeRowWithRelations): MockTraderTrade {
+  return {
+    id: row.id,
+    tradeRef: row.tradeRef,
+    tradeDate: row.tradeDate,
+    traderName: row.traderName,
+    desk: row.desk,
+    direction: row.direction,
+    quantity: num(row.quantity),
+    quantityUnit: row.quantityUnit,
+    quantityEntered: numOrNull(row.quantityEntered),
+    quantityEnteredUnit: row.quantityEnteredUnit,
+    price: num(row.price),
+    currency: row.currency,
+    priceBasis: row.priceBasis,
+    tradeStatus: row.tradeStatus,
+    deliveryStart: row.deliveryStart,
+    deliveryEnd: row.deliveryEnd,
+    originName: row.originName,
+    destName: row.destName,
+    incoterms: row.incoterms,
+    paymentType: row.paymentType,
+    paymentTerms: row.paymentTerms,
+    grade: row.grade,
+    productOrigin: row.productOrigin,
+    qualityTolerances: row.qualityTolerances,
+    maxMoisturePct: numOrNull(row.maxMoisturePct),
+    counterpartyKycStatus: row.counterpartyKycStatus,
+    counterpartyKycRef: row.counterpartyKycRef,
+    contractRef: row.contractRef,
+    commodity: {
+      id: row.commodity.id,
+      code: row.commodity.code,
+      name: row.commodity.name,
+      unit: row.commodity.unit,
+    },
+    counterparty: {
+      id: row.counterparty.id,
+      name: row.counterparty.name,
+      code: row.counterparty.code,
+      companyNameNtn: row.counterparty.companyNameNtn,
+      ntn: row.counterparty.ntn,
+      address: row.counterparty.address,
+      bankDetails: row.counterparty.bankDetails,
+    },
+    marketPrice: num(row.marketPrice),
+    mtmPnl: num(row.mtmPnl),
+    notes: row.notes ?? undefined,
+    buyingCategory: row.buyingCategory,
+    tradeScope: row.tradeScope,
+    executionProfile: row.executionProfile,
+    ratePerMaund: numOrNull(row.ratePerMaund),
+    ratePerKg: numOrNull(row.ratePerKg),
+    commissionPerMaund: numOrNull(row.commissionPerMaund),
+    priceCurrency: (row.priceCurrency as PriceCurrency | null) ?? null,
+    priceWeightUnit: row.priceWeightUnit,
+    priceKgPerUnit: numOrNull(row.priceKgPerUnit),
+    pricePerCanonicalQty: numOrNull(row.pricePerCanonicalQty),
+    commissionAmount: numOrNull(row.commissionAmount),
+    commissionPerUnit: numOrNull(row.commissionPerUnit),
+    commissionPerCanonicalQty: numOrNull(row.commissionPerCanonicalQty),
+    tradeParams: json<Record<string, string | number | null>>(row.tradeParams),
+    lockedAt: row.lockedAt,
+    lockedBy: row.lockedBy,
+    submittedToExecution: row.submittedToExecution,
+    submittedToExecutionAt: row.submittedToExecutionAt,
+    pendingTraderReview: row.pendingTraderReview,
+    pendingTraderPrice: row.pendingTraderPrice,
+    executionEditNote: row.executionEditNote,
+    executionLastEditedBy: row.executionLastEditedBy,
+    executionLastEditedAt: row.executionLastEditedAt,
+    warehouseSplitApproved: row.warehouseSplitApproved,
+    warehouseSplitApprovedAt: row.warehouseSplitApprovedAt,
+    warehouseSplitApprovedBy: row.warehouseSplitApprovedBy,
+    pendingWarehouseApproval: row.pendingWarehouseApproval,
+    qualityTolerancesDetail: json<QualityTolerances>(row.qualityTolerancesDetail),
+    activityLog: (row.activityLog ?? []).map(activityRowToEntry),
+  } as MockTraderTrade;
+}
+
+/** Domain trade → scalar column values for update/create (relations excluded). */
+export function mockTradeToColumns(t: MockTraderTrade) {
+  return {
+    tradeDate: t.tradeDate,
+    desk: t.desk,
+    traderName: t.traderName,
+    direction: t.direction,
+    tradeScope: t.tradeScope ?? "LOCAL",
+    counterpartyKycStatus: t.counterpartyKycStatus,
+    counterpartyKycRef: t.counterpartyKycRef,
+    quantity: t.quantity,
+    quantityUnit: t.quantityUnit,
+    quantityEntered: t.quantityEntered ?? null,
+    quantityEnteredUnit: t.quantityEnteredUnit ?? null,
+    price: t.price,
+    currency: t.currency,
+    priceBasis: t.priceBasis,
+    priceCurrency: t.priceCurrency ?? null,
+    priceWeightUnit: t.priceWeightUnit ?? null,
+    priceKgPerUnit: t.priceKgPerUnit ?? null,
+    pricePerCanonicalQty: t.pricePerCanonicalQty ?? null,
+    ratePerMaund: t.ratePerMaund ?? null,
+    ratePerKg: t.ratePerKg ?? null,
+    commissionAmount: t.commissionAmount ?? null,
+    commissionPerUnit: t.commissionPerUnit ?? null,
+    commissionPerMaund: t.commissionPerMaund ?? null,
+    commissionPerCanonicalQty: t.commissionPerCanonicalQty ?? null,
+    deliveryStart: t.deliveryStart,
+    deliveryEnd: t.deliveryEnd,
+    originName: t.originName,
+    destName: t.destName,
+    incoterms: t.incoterms,
+    buyingCategory: t.buyingCategory ?? null,
+    paymentType: t.paymentType,
+    paymentTerms: t.paymentTerms,
+    grade: t.grade,
+    productOrigin: t.productOrigin,
+    qualityTolerances: t.qualityTolerances,
+    qualityTolerancesDetail: (t.qualityTolerancesDetail ?? null) as Prisma.InputJsonValue,
+    maxMoisturePct: t.maxMoisturePct ?? null,
+    tradeParams: (t.tradeParams ?? null) as Prisma.InputJsonValue,
+    marketPrice: t.marketPrice,
+    mtmPnl: t.mtmPnl,
+    notes: t.notes ?? null,
+    contractRef: t.contractRef,
+    tradeStatus: t.tradeStatus,
+    executionProfile:
+      (t.executionProfile as "PURCHASE_DELIVERED" | "PURCHASE_SPOT" | "SALE_EX_WAREHOUSE" | null) ??
+      null,
+    submittedToExecution: t.submittedToExecution === true,
+    submittedToExecutionAt: t.submittedToExecutionAt ?? null,
+    pendingTraderReview: t.pendingTraderReview === true,
+    pendingTraderPrice: t.pendingTraderPrice === true,
+    executionEditNote: t.executionEditNote ?? null,
+    executionLastEditedBy: t.executionLastEditedBy ?? null,
+    executionLastEditedAt: t.executionLastEditedAt ?? null,
+    warehouseSplitApproved: t.warehouseSplitApproved === true,
+    warehouseSplitApprovedAt: t.warehouseSplitApprovedAt ?? null,
+    warehouseSplitApprovedBy: t.warehouseSplitApprovedBy ?? null,
+    pendingWarehouseApproval: t.pendingWarehouseApproval === true,
+    lockedAt: t.lockedAt ?? null,
+    lockedBy: t.lockedBy ?? null,
+  };
+}

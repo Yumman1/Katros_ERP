@@ -3,7 +3,6 @@ import { TRPCError } from "@trpc/server";
 import { CommodityCategory, CounterpartyType, TradeDirection, TradeStatus } from "@prisma/client";
 import type { Session } from "next-auth";
 import { headProcedure, protectedProcedure, roleProcedure, router } from "@/server/trpc/trpc";
-import { isMockMode } from "@/server/mock-mode";
 import { traderDisplayName } from "@/lib/trader-display-name";
 import { canonicalTraderName } from "@/lib/trader-identity";
 import {
@@ -24,8 +23,6 @@ import {
   getLockedContracts,
   lockTradeInStore,
   exportLockedContractsCsv,
-  syncAllLockedContracts,
-  syncExecutionFromDisk,
 } from "@/server/execution-store";
 import { exportTradeFileCsv } from "@/server/trade-file-export";
 import { computePositionLedger } from "@/server/position-ledger";
@@ -52,7 +49,6 @@ import {
   mockTraderExposure,
   mockTraderTradeByRef,
   mockTraderTrades,
-  syncBookedTradesFromDisk,
   type KycStatus,
   type PaymentType,
 } from "@/server/dummy-data";
@@ -206,13 +202,13 @@ export const traderRouter = router({
         })
         .optional(),
     )
-    .query(({ ctx, input }) => {
+    .query(async ({ ctx, input }) => {
       const name = traderNameFromSession(ctx.session.user);
-      const all = mockTraderTrades(name);
+      const all = await mockTraderTrades(name);
 
       // A locked trade whose execution contract is fully fulfilled counts as Closed.
       const closedRefs = new Set(
-        getLockedContracts({ openOnly: false })
+        (await getLockedContracts({ openOnly: false }))
           .filter((c) => c.contractStatus !== "Open")
           .map((c) => c.tradeRef),
       );
@@ -241,17 +237,15 @@ export const traderRouter = router({
   tradeByRef: protectedProcedure
     .input(z.object({ tradeRef: z.string() }))
     .query(({ ctx, input }) => {
-      syncBookedTradesFromDisk();
       const name = traderNameFromSession(ctx.session.user);
       return mockTraderTradeByRef(name, input.tradeRef.trim());
     }),
 
   tradeTimeline: protectedProcedure
     .input(z.object({ tradeRef: z.string() }))
-    .query(({ ctx, input }) => {
-      syncBookedTradesFromDisk();
+    .query(async ({ ctx, input }) => {
       const name = traderNameFromSession(ctx.session.user);
-      const trade = mockTraderTradeByRef(name, input.tradeRef.trim());
+      const trade = await mockTraderTradeByRef(name, input.tradeRef.trim());
       if (!trade) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Trade not found" });
       }
@@ -265,14 +259,11 @@ export const traderRouter = router({
         patch: z.record(z.string(), z.unknown()),
       }),
     )
-    .mutation(({ ctx, input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Draft edits only in mock mode" });
-      }
+    .mutation(async ({ ctx, input }) => {
       try {
         const traderName = traderNameFromSession(ctx.session.user);
         const editedBy = ctx.session.user.name ?? ctx.session.user.email ?? traderName;
-        const trade = updateTraderDraftTrade(
+        const trade = await updateTraderDraftTrade(
           traderName,
           input.tradeRef.trim(),
           input.patch,
@@ -301,19 +292,18 @@ export const traderRouter = router({
 
   warehouseAvailability: protectedProcedure
     .input(z.object({ commodityId: z.string().optional() }).optional())
-    .query(({ input }) => {
-    syncExecutionFromDisk();
-    const locations = getCompanyWarehouses();
-    const contracts = getLockedContracts({ openOnly: false }).map((c) => ({
+    .query(async ({ input }) => {
+    const locations = await getCompanyWarehouses();
+    const contracts = (await getLockedContracts({ openOnly: false })).map((c) => ({
       tradeRef: c.tradeRef,
       commodityCode: c.commodityCode,
       quantityUnit: c.quantityUnit,
     }));
-    const commodity = input?.commodityId ? getCommodityById(input.commodityId) : null;
+    const commodity = input?.commodityId ? await getCommodityById(input.commodityId) : null;
     return computeWarehouseAvailability(
       locations,
-      getInboundReceipts(),
-      getOutboundDispatches(),
+      await getInboundReceipts(),
+      await getOutboundDispatches(),
       contracts,
       null,
       commodity
@@ -324,12 +314,9 @@ export const traderRouter = router({
 
   addCommodity: roleProcedure(["CEO", "ADMIN"])
     .input(commodityCreateInputSchema)
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Custom commodities only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       try {
-        return addCustomCommodity(input);
+        return await addCustomCommodity(input);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -340,12 +327,9 @@ export const traderRouter = router({
 
   addGrade: roleProcedure(["TRADER", "ADMIN"])
     .input(z.object({ commodityCode: z.string().min(1), grade: z.string().min(1) }))
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Custom grades only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       try {
-        return { grade: addCustomGrade(input.commodityCode, input.grade) };
+        return { grade: await addCustomGrade(input.commodityCode, input.grade) };
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -356,12 +340,9 @@ export const traderRouter = router({
 
   addLocation: roleProcedure(["TRADER", "ADMIN"])
     .input(z.object({ name: z.string().min(1) }))
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Custom locations only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       try {
-        return addCustomLocation({ name: input.name });
+        return await addCustomLocation({ name: input.name });
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -385,12 +366,9 @@ export const traderRouter = router({
         bankDetails: z.string().optional(),
       }),
     )
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Custom counterparties only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       try {
-        return addCustomCounterparty({
+        return await addCustomCounterparty({
           name: input.name,
           type: input.type,
           country: input.country,
@@ -418,12 +396,9 @@ export const traderRouter = router({
         label: z.string().optional(),
       }),
     )
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Custom units only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       try {
-        return registerCustomUnit(input);
+        return await registerCustomUnit(input);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -439,22 +414,20 @@ export const traderRouter = router({
         traderNameFromSession(ctx.session.user) || input.traderName.trim(),
       );
 
-      const cp = getCounterpartyById(input.counterpartyId);
+      const cp = await getCounterpartyById(input.counterpartyId);
       if (!cp) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid counterparty" });
       }
 
-      const c = getCommodityById(input.commodityId);
+      const c = await getCommodityById(input.commodityId);
       if (!c) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid commodity" });
       }
 
-      if (isMockMode()) {
-        syncBookedTradesFromDisk();
-
+      {
         // Resolve the quoted price metric: use what the form sent, else the commodity's
         // configured per-scope basis. The price is then mapped to the canonical qty unit.
-        const configuredBasis = getCommodityPriceBasis(c.id, input.tradeScope);
+        const configuredBasis = await getCommodityPriceBasis(c.id, input.tradeScope);
         const priceCurrency = input.priceCurrency ?? configuredBasis.currency;
         const priceWeightUnit = input.priceWeightUnit ?? configuredBasis.weightUnit;
         const priceKgPerUnit = input.priceKgPerUnit ?? configuredBasis.kgPerUnit;
@@ -479,8 +452,9 @@ export const traderRouter = router({
         const qtyEntered = input.quantityEntered ?? input.quantity;
         const qtyEnteredUnit = input.quantityEnteredUnit ?? input.quantityUnit;
 
-        const trade = mockBookTrade({
+        const trade = await mockBookTrade({
           traderName,
+          actorId: ctx.session.user.id,
           commodityId: c.id,
           commodityCode: c.code,
           commodityName: c.name,
@@ -531,8 +505,6 @@ export const traderRouter = router({
 
         return { ok: true as const, tradeRef: trade.tradeRef, trade };
       }
-
-      return { ok: true as const, tradeRef: "KAS-2026-PENDING", trade: null };
     }),
 
   lockTrade: roleProcedure(["TRADER", "ADMIN"])
@@ -552,15 +524,12 @@ export const traderRouter = router({
           .optional(),
       }),
     )
-    .mutation(({ ctx, input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Lock trade only in mock mode" });
-      }
+    .mutation(async ({ ctx, input }) => {
       const traderName = traderNameFromSession(ctx.session.user);
       try {
-        const existing = mockTraderTradeByRef(traderName, input.tradeRef);
+        const existing = await mockTraderTradeByRef(traderName, input.tradeRef);
         if (existing?.submittedToExecution && existing.pendingTraderReview) {
-          const trade = lockOpenTradeAfterTraderReview(traderName, input.tradeRef, {
+          const trade = await lockOpenTradeAfterTraderReview(traderName, input.tradeRef, {
             lockedBy: ctx.session.user.name ?? traderName,
             ratePerMaund: input.ratePerMaund,
             commissionPerMaund: input.commissionPerMaund,
@@ -568,7 +537,7 @@ export const traderRouter = router({
           });
           return { ok: true as const, trade };
         }
-        const trade = lockTradeInStore(traderName, input.tradeRef, {
+        const trade = await lockTradeInStore(traderName, input.tradeRef, {
           lockedBy: ctx.session.user.name ?? traderName,
           ratePerMaund: input.ratePerMaund,
           commissionPerMaund: input.commissionPerMaund,
@@ -585,12 +554,9 @@ export const traderRouter = router({
 
   submitTradeToExecution: roleProcedure(["TRADER", "ADMIN"])
     .input(z.object({ tradeRef: z.string() }))
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Submit trade only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       try {
-        const trade = submitTradeToExecution(input.tradeRef.trim());
+        const trade = await submitTradeToExecution(input.tradeRef.trim());
         return { ok: true as const, trade };
       } catch (e) {
         throw new TRPCError({
@@ -611,17 +577,14 @@ export const traderRouter = router({
         priceKgPerUnit: z.number().positive().optional(),
       }),
     )
-    .mutation(({ ctx, input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Complete price only in mock mode" });
-      }
+    .mutation(async ({ ctx, input }) => {
       const traderName = traderNameFromSession(ctx.session.user);
-      const existing = mockTraderTradeByRef(traderName, input.tradeRef.trim());
+      const existing = await mockTraderTradeByRef(traderName, input.tradeRef.trim());
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Trade not found" });
       }
       try {
-        const trade = completeTraderTradePrice(traderName, input.tradeRef.trim(), {
+        const trade = await completeTraderTradePrice(traderName, input.tradeRef.trim(), {
           price: input.price,
           commissionPerUnit: input.commissionPerUnit,
           priceCurrency: input.priceCurrency,
@@ -655,11 +618,8 @@ export const traderRouter = router({
         executionProfile: z.enum(EXECUTION_PROFILES).optional(),
       }),
     )
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED" });
-      }
-      const csv = exportLockedContractsCsv(input.from, input.to, input.executionProfile);
+    .mutation(async ({ input }) => {
+      const csv = await exportLockedContractsCsv(input.from, input.to, input.executionProfile);
       return { csv, filename: `locked-trades-${input.from.toISOString().slice(0, 10)}-${input.to.toISOString().slice(0, 10)}.csv` };
     }),
 
@@ -680,11 +640,8 @@ export const traderRouter = router({
         })
         .optional(),
     )
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED" });
-      }
-      const csv = exportTradeFileCsv(input ?? undefined);
+    .mutation(async ({ input }) => {
+      const csv = await exportTradeFileCsv(input ?? undefined);
       const stamp = new Date().toISOString().slice(0, 10);
       return { csv, filename: `trade-file-${stamp}.csv` };
     }),
@@ -695,10 +652,9 @@ export const traderRouter = router({
   }),
 
   /** Locked trades with fulfillment progress for the signed-in trader. */
-  tradeFulfillment: protectedProcedure.query(({ ctx }) => {
+  tradeFulfillment: protectedProcedure.query(async ({ ctx }) => {
     const traderName = traderNameFromSession(ctx.session.user);
-    syncAllLockedContracts();
-    return getLockedContracts({})
+    return (await getLockedContracts({}))
       .filter((c) => c.traderName === traderName)
       .map((c) => ({
         tradeRef: c.tradeRef,
@@ -726,4 +682,4 @@ export const traderRouter = router({
   }),
 });
 
-export type TraderTrade = ReturnType<typeof mockTraderTrades>[number];
+export type TraderTrade = Awaited<ReturnType<typeof mockTraderTrades>>[number];

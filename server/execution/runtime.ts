@@ -1,18 +1,24 @@
-import type { TradeDirection } from "@prisma/client";
 import type {
-  BuyingCategory,
-  ExecutionProfile,
-  QualityTolerances,
-  TradeScope,
+  Prisma,
+  TradeDirection,
+  PendingTruck as PendingTruckRow,
+  GatepassDocument as GatepassDocumentRow,
+  ExecutionContract as ExecutionContractRow,
+  ContractWarehouseAllocation as ContractWarehouseAllocationRow,
+  InboundReceipt as InboundReceiptRow,
+  OutboundDispatch as OutboundDispatchRow,
+  SpotPurchaseEvent as SpotPurchaseEventRow,
+  PaymentRequest as PaymentRequestRow,
+} from "@prisma/client";
+import {
+  DEFAULT_QUALITY_TOLERANCES,
+  type BuyingCategory,
+  type ExecutionProfile,
+  type QualityTolerances,
+  type TradeScope,
 } from "@/lib/trade-constants";
 import type { WarehouseAllocationLine } from "@/lib/warehouse-allocation";
-import {
-  EXECUTION_FILE,
-  isLocalPersistEnabled,
-  persistedFileMtime,
-  readPersisted,
-  writePersisted,
-} from "@/server/local-persist";
+import { json, num, numOrNull } from "@/server/db/convert";
 
 // ─── Pending Truck (Gatepass) Types ───────────────────────────────────────────
 export type PendingTruckStatus = "PENDING" | "ASSIGNED" | "PARTIAL";
@@ -223,134 +229,245 @@ export type PaymentRequest = {
   createdAt: Date;
 };
 
-export type ExecutionSnapshot = {
-  contracts: [string, ExecutionContract][];
-  inboundReceipts: InboundReceipt[];
-  outboundDispatches: OutboundDispatch[];
-  spotEvents: [string, SpotPurchaseEvent][];
-  paymentRequests: PaymentRequest[];
-  pendingTrucks: PendingTruck[];
-  inboundSeq: number;
-  outboundSeq: number;
-  paymentSeq: number;
-  truckSeq: number;
-  gateInvoiceSeq: number;
+// ─── Prisma row ↔ runtime type mappers ────────────────────────────────────────
+//
+// The execution runtime now lives in Postgres. The exported types above are the
+// wire shapes the whole app consumes (plain numbers, Date objects); the mappers
+// below convert Prisma rows (Decimal columns, relation rows) at the boundary.
+
+/** Standard include for pending-truck reads (uploaded gatepass documents). */
+export const TRUCK_INCLUDE = {
+  documents: { orderBy: { uploadedAt: "asc" as const } },
+} satisfies Prisma.PendingTruckInclude;
+
+export type PendingTruckRowWithDocs = PendingTruckRow & {
+  documents?: GatepassDocumentRow[];
 };
 
-export type ExecutionRuntime = {
-  contracts: Map<string, ExecutionContract>;
-  inboundReceipts: InboundReceipt[];
-  outboundDispatches: OutboundDispatch[];
-  spotEvents: Map<string, SpotPurchaseEvent>;
-  paymentRequests: PaymentRequest[];
-  pendingTrucks: PendingTruck[];
-  inboundSeq: number;
-  outboundSeq: number;
-  paymentSeq: number;
-  truckSeq: number;
-  gateInvoiceSeq: number;
+export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
+  return {
+    id: row.id,
+    gatepassNo: row.gatepassNo,
+    arrivalDate: row.arrivalDate,
+    counterpartyName: row.counterpartyName,
+    brokerName: null,
+    movementType: row.movementType,
+    warehouseName: row.warehouseName,
+    truckNo: row.truckNo,
+    transporterName: row.transporterName,
+    transporterPhone: row.transporterPhone,
+    driverName: null,
+    driverPhone: null,
+    builtyDetails: row.builtyDetails,
+    commodityCode: row.commodityCode,
+    commodityName: row.commodityName,
+    recordedByName: row.recordedByName,
+    quantityAsPerBuilty: row.quantityAsPerBuilty,
+    weightAsPerBuiltyKg: numOrNull(row.weightAsPerBuiltyKg),
+    weighBridgeName: row.weighBridgeName,
+    documentRefs: (row.documents ?? []).map((d) => d.storagePath),
+    warehouseWeightKg: numOrNull(row.warehouseWeightKg),
+    qualitySpecs: json<QualityTolerances>(row.qualitySpecs),
+    quantityBagsBales: row.quantityBagsBales,
+    totalDeductionsKg: numOrNull(row.totalDeductionsKg),
+    weightKg: num(row.weightKg),
+    bags: row.quantityBagsBales,
+    remarks: row.remarks,
+    status: row.status,
+    assignedTradeRef: row.assignedTradeRef,
+    assignedAt: row.assignedAt,
+    remainingKg: num(row.remainingKg),
+    gateInvoiceNo: row.gateInvoiceNo,
+    gateInvoiceWeightKg: numOrNull(row.gateInvoiceWeightKg),
+    gateInvoiceQtyMt: numOrNull(row.gateInvoiceQtyMt),
+    gateInvoiceAmount: numOrNull(row.gateInvoiceAmount),
+    gateInvoiceCurrency: row.gateInvoiceCurrency,
+    gateInvoiceRatePerKg: numOrNull(row.gateInvoiceRatePerKg),
+    gateInvoiceTradeRef: row.gateInvoiceTradeRef,
+    driverCnic: null,
+  };
+}
+
+/** Standard include for contract reads (split warehouse allocations). */
+export const CONTRACT_INCLUDE = {
+  warehouseAllocations: { orderBy: { warehouseName: "asc" as const } },
+} satisfies Prisma.ExecutionContractInclude;
+
+export type ExecutionContractRowWithAllocations = ExecutionContractRow & {
+  warehouseAllocations: ContractWarehouseAllocationRow[];
 };
 
-const EXEC_RUNTIME_KEY = "__kastrosExecutionRuntime";
-const EXEC_BATCH_REFRESH_KEY = "__kastrosExecutionBatchRefresh";
-const EXEC_DISK_MTIME_KEY = "__kastrosExecutionDiskMtime";
-const EXEC_DISK_LOADED_KEY = "__kastrosExecutionDiskLoaded";
-
-export function isBatchRefreshingContracts(): boolean {
-  return (globalThis as typeof globalThis & { [EXEC_BATCH_REFRESH_KEY]?: boolean })[
-    EXEC_BATCH_REFRESH_KEY
-  ] === true;
-}
-
-export function setBatchRefreshingContracts(value: boolean) {
-  (globalThis as typeof globalThis & { [EXEC_BATCH_REFRESH_KEY]?: boolean })[EXEC_BATCH_REFRESH_KEY] =
-    value;
-}
-
-function getDiskCacheMeta() {
-  const g = globalThis as typeof globalThis & {
-    [EXEC_DISK_MTIME_KEY]?: number;
-    [EXEC_DISK_LOADED_KEY]?: boolean;
+export function contractRowToRuntime(row: ExecutionContractRowWithAllocations): ExecutionContract {
+  return {
+    tradeRef: row.tradeRef,
+    tradeId: row.tradeId,
+    contractDate: row.contractDate,
+    direction: row.direction,
+    executionProfile: row.executionProfile,
+    tradeScope: row.tradeScope,
+    incoterms: row.incoterms,
+    buyingCategory: row.buyingCategory ?? null,
+    commodityCode: row.commodityCode,
+    commodityName: row.commodityName,
+    counterpartyName: row.counterpartyName,
+    counterpartyCode: row.counterpartyCode,
+    counterpartyNtn: row.counterpartyNtn,
+    quantityUnit: row.quantityUnit,
+    contractualQtyMt: num(row.contractualQtyMt),
+    receivedQtyMt: num(row.receivedQtyMt),
+    openQtyMt: num(row.openQtyMt),
+    contractStatus: row.contractStatus,
+    quantityToleranceMt: num(row.quantityToleranceMt),
+    qualityTolerances: json<QualityTolerances>(row.qualityTolerances) ?? DEFAULT_QUALITY_TOLERANCES,
+    ratePerMaund: numOrNull(row.ratePerMaund),
+    ratePerKg: numOrNull(row.ratePerKg),
+    unitPrice: numOrNull(row.unitPrice),
+    priceCurrency: row.priceCurrency,
+    priceWeightUnit: row.priceWeightUnit,
+    commissionPerMaund: numOrNull(row.commissionPerMaund),
+    currency: row.currency,
+    warehouseDefault: row.warehouseDefault,
+    traderWarehouseHint: row.traderWarehouseHint,
+    traderWarehouseSelections: row.traderWarehouseSelections,
+    allocatedWarehouse: row.allocatedWarehouse,
+    warehouseAllocations: row.warehouseAllocations.map((a) => ({
+      warehouseName: a.warehouseName,
+      qtyMt: num(a.qtyMt),
+      fulfilledQtyMt: num(a.fulfilledQtyMt),
+      // openQtyMt is derived, never stored.
+      openQtyMt: Math.max(0, num(a.qtyMt) - num(a.fulfilledQtyMt)),
+    })),
+    traderName: row.traderName,
+    lockedAt: row.lockedAt,
+    lockedBy: row.lockedBy,
+    deliveryStart: row.deliveryStart,
+    deliveryEnd: row.deliveryEnd,
   };
-  return g;
 }
 
-export function getExecutionRuntime(): ExecutionRuntime {
-  const g = globalThis as typeof globalThis & {
-    [EXEC_RUNTIME_KEY]?: ExecutionRuntime;
+/** Include the linked payment request so the runtime shape can expose its business ref. */
+export const INBOUND_INCLUDE = {
+  paymentRequest: { select: { requestRef: true } },
+} satisfies Prisma.InboundReceiptInclude;
+
+export type InboundReceiptRowWithPayment = InboundReceiptRow & {
+  paymentRequest?: { requestRef: string } | null;
+};
+
+export function inboundRowToRuntime(row: InboundReceiptRowWithPayment): InboundReceipt {
+  return {
+    id: row.id,
+    gatepassNo: row.gatepassNo,
+    kcsNo: row.kcsNo,
+    receiveDate: row.receiveDate,
+    truckNo: row.truckNo,
+    driverName: row.driverName,
+    driverCnic: row.driverCnic,
+    driverPhone: row.driverPhone,
+    biltyNo: row.biltyNo,
+    trnNo: row.trnNo,
+    warehouseName: row.warehouseName,
+    sellerName: row.sellerName,
+    tradeRef: row.tradeRef,
+    billNo: row.billNo,
+    bags: row.bags,
+    weightSpotKg: num(row.weightSpotKg),
+    weightWarehouseKg: num(row.weightWarehouseKg),
+    weightDiffKg: num(row.weightDiffKg),
+    qualityReadings: {
+      damagePct: num(row.damagePct),
+      brokenPct: num(row.brokenPct),
+      fungusPct: num(row.fungusPct),
+      foreignMatterPct: num(row.foreignMatterPct),
+      moisturePct: num(row.moisturePct),
+    },
+    deductionPct: num(row.deductionPct),
+    allocatedQtyMt: num(row.allocatedQtyMt),
+    fifoOverrideReason: row.fifoOverrideReason,
+    amountDue: num(row.amountDue),
+    status: row.status,
+    // UI-facing payment reference is the business requestRef, not the DB cuid.
+    paymentRequestId: row.paymentRequest?.requestRef ?? null,
+    documentRefs: row.documentRefs,
+    remarks: row.remarks,
   };
-  if (!g[EXEC_RUNTIME_KEY]) {
-    g[EXEC_RUNTIME_KEY] = {
-      contracts: new Map(),
-      inboundReceipts: [],
-      outboundDispatches: [],
-      spotEvents: new Map(),
-      paymentRequests: [],
-      pendingTrucks: [],
-      inboundSeq: 0,
-      outboundSeq: 0,
-      paymentSeq: 0,
-      truckSeq: 0,
-      gateInvoiceSeq: 0,
-    };
-  }
-  return g[EXEC_RUNTIME_KEY];
 }
 
-/** Load execution-state.json only when missing from memory or file mtime changed. */
-export function syncExecutionFromDisk(force = false): void {
-  if (!isLocalPersistEnabled()) return;
-  const meta = getDiskCacheMeta();
-  const mtime = persistedFileMtime(EXECUTION_FILE);
-  if (!force && meta[EXEC_DISK_LOADED_KEY] && meta[EXEC_DISK_MTIME_KEY] === mtime) {
-    return;
-  }
-  const snap = readPersisted<ExecutionSnapshot>(EXECUTION_FILE);
-  meta[EXEC_DISK_LOADED_KEY] = true;
-  meta[EXEC_DISK_MTIME_KEY] = mtime;
-  if (!snap) return;
-  const rt = getExecutionRuntime();
-  rt.contracts.clear();
-  for (const [k, v] of snap.contracts) rt.contracts.set(k, v);
-  rt.inboundReceipts.length = 0;
-  rt.inboundReceipts.push(...snap.inboundReceipts);
-  rt.outboundDispatches.length = 0;
-  rt.outboundDispatches.push(...snap.outboundDispatches);
-  rt.spotEvents.clear();
-  for (const [k, v] of snap.spotEvents) rt.spotEvents.set(k, v);
-  rt.paymentRequests.length = 0;
-  rt.paymentRequests.push(...snap.paymentRequests);
-  rt.pendingTrucks.length = 0;
-  rt.pendingTrucks.push(...(snap.pendingTrucks ?? []));
-  rt.inboundSeq = snap.inboundSeq;
-  rt.outboundSeq = snap.outboundSeq;
-  rt.paymentSeq = snap.paymentSeq;
-  rt.truckSeq = snap.truckSeq ?? 0;
-  rt.gateInvoiceSeq = snap.gateInvoiceSeq ?? 0;
+export const OUTBOUND_INCLUDE = {
+  paymentRequest: { select: { requestRef: true } },
+} satisfies Prisma.OutboundDispatchInclude;
+
+export type OutboundDispatchRowWithPayment = OutboundDispatchRow & {
+  paymentRequest?: { requestRef: string } | null;
+};
+
+export function outboundRowToRuntime(row: OutboundDispatchRowWithPayment): OutboundDispatch {
+  return {
+    id: row.id,
+    gatepassNo: row.gatepassNo,
+    dispatchDate: row.dispatchDate,
+    liftedBy: row.liftedBy,
+    buyerName: row.buyerName,
+    tradeRef: row.tradeRef,
+    warehouseName: row.warehouseName,
+    truckNo: row.truckNo,
+    driverName: row.driverName,
+    driverCnic: row.driverCnic,
+    driverPhone: row.driverPhone,
+    dispatchWeightKg: num(row.dispatchWeightKg),
+    invoiceWeightKg: num(row.invoiceWeightKg),
+    fungusPct: num(row.fungusPct),
+    doRef: row.doRef,
+    fifoOverrideReason: row.fifoOverrideReason,
+    allocatedQtyMt: num(row.allocatedQtyMt),
+    amountDue: num(row.amountDue),
+    status: row.status,
+    paymentRequestId: row.paymentRequest?.requestRef ?? null,
+    documentRefs: row.documentRefs,
+    remarks: row.remarks,
+  };
 }
 
-export function ex() {
-  if (!isBatchRefreshingContracts()) syncExecutionFromDisk();
-  return getExecutionRuntime();
+export const SPOT_INCLUDE = {
+  paymentRequest: { select: { requestRef: true } },
+} satisfies Prisma.SpotPurchaseEventInclude;
+
+export type SpotPurchaseEventRowWithPayment = SpotPurchaseEventRow & {
+  paymentRequest?: { requestRef: string } | null;
+};
+
+export function spotRowToRuntime(row: SpotPurchaseEventRowWithPayment): SpotPurchaseEvent {
+  return {
+    id: row.id,
+    tradeRef: row.tradeRef,
+    state: row.state,
+    selectorNotes: row.selectorNotes,
+    brokerName: row.brokerName,
+    dcNo: row.dcNo,
+    truckNo: row.truckNo,
+    spotWeightKg: numOrNull(row.spotWeightKg),
+    brokerInvoiceRef: row.brokerInvoiceRef,
+    invoiceAmount: numOrNull(row.invoiceAmount),
+    warehouseReceiveWeightKg: numOrNull(row.warehouseReceiveWeightKg),
+    weightVarianceKg: numOrNull(row.weightVarianceKg),
+    paymentRequestId: row.paymentRequest?.requestRef ?? null,
+  };
 }
 
-export function persistExecutionState() {
-  const rt = getExecutionRuntime();
-  writePersisted(EXECUTION_FILE, {
-    contracts: [...rt.contracts.entries()],
-    inboundReceipts: rt.inboundReceipts,
-    outboundDispatches: rt.outboundDispatches,
-    spotEvents: [...rt.spotEvents.entries()],
-    paymentRequests: rt.paymentRequests,
-    pendingTrucks: rt.pendingTrucks,
-    inboundSeq: rt.inboundSeq,
-    outboundSeq: rt.outboundSeq,
-    paymentSeq: rt.paymentSeq,
-    truckSeq: rt.truckSeq,
-    gateInvoiceSeq: rt.gateInvoiceSeq,
-  } satisfies ExecutionSnapshot);
-  const meta = getDiskCacheMeta();
-  meta[EXEC_DISK_LOADED_KEY] = true;
-  meta[EXEC_DISK_MTIME_KEY] = persistedFileMtime(EXECUTION_FILE);
+export function paymentRowToRuntime(row: PaymentRequestRow): PaymentRequest {
+  return {
+    // Runtime id is the business requestRef ("pay-7") — the DB cuid stays internal.
+    id: row.requestRef,
+    sourceType: row.sourceType,
+    sourceId: row.sourceId,
+    tradeRef: row.tradeRef,
+    counterpartyName: row.counterpartyName,
+    amount: num(row.amount),
+    currency: row.currency,
+    status: row.status,
+    financeComment: row.financeComment,
+    approvedBy: row.approvedBy,
+    approvedAt: row.approvedAt,
+    createdAt: row.createdAt,
+  };
 }
-

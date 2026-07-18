@@ -1,4 +1,4 @@
-import { subDays, addDays } from "date-fns";
+import { addDays } from "date-fns";
 import {
   getMergedCommodities,
   getMergedCounterparties,
@@ -7,7 +7,12 @@ import {
 import { getDeskMarketPrice, marketTickerPayload } from "@/server/market-prices";
 import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import type { KycStatus, QualityTolerances } from "@/lib/trade-constants";
-import { DEFAULT_QUALITY_TOLERANCES, priceBasisRequiresQuote } from "@/lib/trade-constants";
+import {
+  DEFAULT_QUALITY_TOLERANCES,
+  PAYMENT_TYPE_LABELS,
+  paymentTypeLabel,
+  priceBasisRequiresQuote,
+} from "@/lib/trade-constants";
 import {
   baseCurrencyOf,
   defaultKgPerUnit,
@@ -15,35 +20,31 @@ import {
   type PriceCurrency,
 } from "@/lib/price-units";
 import { toMt } from "@/lib/unit-registry";
+import { prisma } from "@/server/db";
+import { COUNTER, nextRef } from "@/server/db/counters";
+import { getSystemUserId } from "@/server/db/system-user";
+import { TRADE_INCLUDE, mockTradeToColumns, tradeRowToMock } from "@/server/db/trade-map";
 import {
-  isLocalPersistEnabled,
-  persistedFileMtime,
-  readPersisted,
-  TRADES_FILE,
-  writePersisted,
-} from "@/server/local-persist";
-import {
-  CashFlowType,
-  CounterpartyType,
   InventoryStatus,
-  InvoiceStatus,
+  LocationType,
   MovementType,
+  CounterpartyType,
   ReconStatus,
   ReconType,
+  Role,
+  TraceEventType,
   TradeDirection,
   TradeStatus,
-  TraceEventType,
-  Role,
-  LocationType,
 } from "@prisma/client";
 
 const now = () => new Date();
 
 /** SSE / ticker — execution desk CNF only */
-export function mockPriceTickerPayload() {
+export async function mockPriceTickerPayload() {
   return marketTickerPayload();
 }
 
+/** Dev-only fallback identity (used when MOCK_MODE=true and no DB user exists). */
 export function mockCredentialsUser(email: string) {
   const e = email.toLowerCase();
   const role =
@@ -309,8 +310,8 @@ export type MockLocationDetailRow = {
   lotCount: number;
 };
 
-export function mockLocationsDetail(): MockLocationDetailRow[] {
-  return getMergedLocations().map((loc) => ({
+export async function mockLocationsDetail(): Promise<MockLocationDetailRow[]> {
+  return (await getMergedLocations()).map((loc) => ({
     id: loc.id,
     name: loc.name,
     type: LocationType.WAREHOUSE,
@@ -349,8 +350,8 @@ export type MockCounterpartyScmRow = {
   lastDelivery: Date | null;
 };
 
-export function mockCounterpartiesScm(): MockCounterpartyScmRow[] {
-  return getMergedCounterparties().map((cp) => ({
+export async function mockCounterpartiesScm(): Promise<MockCounterpartyScmRow[]> {
+  return (await getMergedCounterparties()).map((cp) => ({
     id: cp.id,
     name: cp.name,
     code: cp.code,
@@ -454,7 +455,7 @@ export function mockOpenBreaks(): Array<{
   return [];
 }
 
-export function mockCommodityList() {
+export async function mockCommodityList() {
   return getMergedCommodities();
 }
 
@@ -485,7 +486,7 @@ export function mockTradesForCommodity(): Array<{
   return [];
 }
 
-// --- Trader desk (mock) ---
+// --- Trader desk ---
 
 export type PaymentType =
   | "DP"
@@ -496,8 +497,6 @@ export type PaymentType =
   | "CREDIT_30"
   | "AFTER_DELIVERY_100";
 export type { KycStatus };
-
-import { PAYMENT_TYPE_LABELS, paymentTypeLabel, tradeScopeFromSeed } from "@/lib/trade-constants";
 
 export type MockTraderTrade = {
   id: string;
@@ -602,197 +601,140 @@ export type MockTraderTrade = {
   }[];
 };
 
-type BookedTradesSnapshot = {
-  mockTradeSeq: number;
-  bookedTrades: MockTraderTrade[];
-};
+/** No-op in DB mode — kept for call-site compatibility during migration. */
+export function syncBookedTradesFromDisk(_force = false): void {}
 
-type BookedRuntime = {
-  trades: MockTraderTrade[];
-  mockTradeSeq: number;
-};
-
-const BOOKED_RUNTIME_KEY = "__kastrosBookedRuntime";
-const BOOKED_DISK_MTIME_KEY = "__kastrosBookedDiskMtime";
-const BOOKED_DISK_LOADED_KEY = "__kastrosBookedDiskLoaded";
-
-function getBookedRuntime(): BookedRuntime {
-  const g = globalThis as typeof globalThis & {
-    [BOOKED_RUNTIME_KEY]?: BookedRuntime;
-  };
-  if (!g[BOOKED_RUNTIME_KEY]) {
-    g[BOOKED_RUNTIME_KEY] = { trades: [], mockTradeSeq: 10020 };
-  }
-  return g[BOOKED_RUNTIME_KEY];
-}
-
-/** Sync booked trades from disk only when file mtime changed (or first load). */
-export function syncBookedTradesFromDisk(force = false): void {
-  if (!isLocalPersistEnabled()) return;
-  const g = globalThis as typeof globalThis & {
-    [BOOKED_DISK_MTIME_KEY]?: number;
-    [BOOKED_DISK_LOADED_KEY]?: boolean;
-  };
-  const mtime = persistedFileMtime(TRADES_FILE);
-  if (!force && g[BOOKED_DISK_LOADED_KEY] && g[BOOKED_DISK_MTIME_KEY] === mtime) {
-    return;
-  }
-  const snap = readPersisted<BookedTradesSnapshot>(TRADES_FILE);
-  g[BOOKED_DISK_LOADED_KEY] = true;
-  g[BOOKED_DISK_MTIME_KEY] = mtime;
-  if (!snap) return;
-  const rt = getBookedRuntime();
-  rt.trades.length = 0;
-  let backfilled = false;
-  for (const raw of snap.bookedTrades) {
-    if (!raw.tradeScope) {
-      raw.tradeScope = tradeScopeFromSeed(raw.tradeRef);
-      backfilled = true;
+/**
+ * Persist a mutated domain trade back to Postgres. Scalar columns are fully
+ * replaced; activity-log entries are inserted append-only (existing ids are
+ * left untouched).
+ */
+export async function upsertBookedTrade(trade: MockTraderTrade): Promise<void> {
+  const columns = mockTradeToColumns(trade);
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.trade.findUnique({
+      where: { tradeRef: trade.tradeRef },
+      select: { id: true },
+    });
+    let tradeId: string;
+    if (existing) {
+      tradeId = existing.id;
+      await tx.trade.update({ where: { id: existing.id }, data: columns });
+    } else {
+      const created = await tx.trade.create({
+        data: {
+          ...columns,
+          tradeRef: trade.tradeRef,
+          commodityId: trade.commodity.id,
+          counterpartyId: trade.counterparty.id,
+          createdById: await getSystemUserId(),
+        },
+        select: { id: true },
+      });
+      tradeId = created.id;
     }
-    rt.trades.push(raw);
-  }
-  if (snap.mockTradeSeq > rt.mockTradeSeq) rt.mockTradeSeq = snap.mockTradeSeq;
-  if (backfilled) persistBookedTrades();
+    const entries = trade.activityLog ?? [];
+    if (entries.length) {
+      await tx.tradeActivity.createMany({
+        data: entries.map((e) => ({
+          id: e.id,
+          tradeId,
+          at: e.at,
+          actorName: e.actorName,
+          actorSide: e.actorSide,
+          kind: e.kind,
+          requiresApproval: e.requiresApproval,
+          summary: e.summary,
+          note: e.note ?? null,
+          changeCount: e.changeCount ?? null,
+          changeRequestId: e.changeRequestId ?? null,
+          payload: (e.payload ?? undefined) as object | undefined,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  });
 }
 
-function getBookedTrades(): MockTraderTrade[] {
-  syncBookedTradesFromDisk();
-  return getBookedRuntime().trades;
-}
-
-function persistBookedTrades() {
-  const rt = getBookedRuntime();
-  writePersisted(TRADES_FILE, {
-    mockTradeSeq: rt.mockTradeSeq,
-    bookedTrades: rt.trades,
-  } satisfies BookedTradesSnapshot);
-  const g = globalThis as typeof globalThis & {
-    [BOOKED_DISK_MTIME_KEY]?: number;
-    [BOOKED_DISK_LOADED_KEY]?: boolean;
-  };
-  g[BOOKED_DISK_LOADED_KEY] = true;
-  g[BOOKED_DISK_MTIME_KEY] = persistedFileMtime(TRADES_FILE);
-}
-
-/** Keep booked / locked / updated trades on disk (survives logout and server restart). */
-export function upsertBookedTrade(trade: MockTraderTrade) {
-  const rt = getBookedRuntime();
-  const idx = rt.trades.findIndex((t) => t.tradeRef === trade.tradeRef);
-  if (idx >= 0) rt.trades[idx] = trade;
-  else rt.trades.unshift(trade);
-  persistBookedTrades();
-}
-
-/** Remove a booked trade from the local trade book. */
-export function deleteBookedTrade(tradeRef: string): { ok: true } {
-  syncBookedTradesFromDisk();
-  const rt = getBookedRuntime();
-  const idx = rt.trades.findIndex((t) => t.tradeRef === tradeRef);
-  if (idx < 0) {
-    throw new Error("Trade not found");
-  }
-  rt.trades.splice(idx, 1);
-  persistBookedTrades();
+/** Remove a booked trade (cascades activity, contract, receipts, dispatches). */
+export async function deleteBookedTrade(tradeRef: string): Promise<{ ok: true }> {
+  const existing = await prisma.trade.findUnique({
+    where: { tradeRef },
+    select: { id: true },
+  });
+  if (!existing) throw new Error("Trade not found");
+  await prisma.trade.delete({ where: { id: existing.id } });
   return { ok: true };
 }
 
-function buildTraderTrade(
-  partial: Partial<Omit<MockTraderTrade, "marketPrice" | "mtmPnl">> &
-    Pick<
-      MockTraderTrade,
-      | "id"
-      | "tradeRef"
-      | "tradeDate"
-      | "traderName"
-      | "desk"
-      | "direction"
-      | "quantity"
-      | "price"
-      | "currency"
-      | "tradeStatus"
-      | "deliveryStart"
-      | "deliveryEnd"
-      | "originName"
-      | "destName"
-      | "paymentTerms"
-      | "contractRef"
-      | "commodity"
-      | "counterparty"
-    > & { marketPrice?: number },
-): MockTraderTrade {
-  const merged: Omit<MockTraderTrade, "marketPrice" | "mtmPnl"> = {
-    quantityUnit: "MT",
-    grade: "Grade A",
-    productOrigin: partial.originName,
-    qualityTolerances: "Max moisture 14%; foreign matter 2% max",
-    maxMoisturePct: partial.maxMoisturePct ?? null,
-    incoterms: "FOB",
-    paymentType: "LC",
-    priceBasis: "Fixed",
-    counterpartyKycStatus: "VERIFIED",
-    counterpartyKycRef: "KYC-2025-001",
-    notes: undefined,
-    tradeScope: partial.tradeScope ?? tradeScopeFromSeed(partial.tradeRef),
-    ...partial,
-  };
-  // Book price is compared on a per-canonical-quantity-unit basis so quantity (canonical)
-  // drives notional and MTM consistently regardless of how the trade was quoted.
-  const bookUnitPrice = merged.pricePerCanonicalQty ?? merged.price;
-  const marketPrice = partial.marketPrice ?? bookUnitPrice * (1 + (Math.random() - 0.45) * 0.02);
-  const desk = partial.commodity?.code ? getDeskMarketPrice(partial.commodity.code) : null;
-  const mktPrice = desk?.cnf?.amount ?? desk?.yesterday?.amount ?? marketPrice;
-  const q = merged.quantity;
-  const book = q * bookUnitPrice;
-  const mkt = q * mktPrice;
-  const mtmPnl =
-    merged.direction === TradeDirection.BUY ? mkt - book : book - mkt;
-  return { ...merged, marketPrice: mktPrice, mtmPnl };
+/** Compute display MTM from the live desk mark (falls back to stored mark). */
+async function withDeskMtm(trade: MockTraderTrade): Promise<MockTraderTrade> {
+  const bookUnitPrice = trade.pricePerCanonicalQty ?? trade.price;
+  const desk = trade.commodity?.code ? await getDeskMarketPrice(trade.commodity.code) : null;
+  const mktPrice = desk?.cnf?.amount ?? desk?.yesterday?.amount ?? trade.marketPrice;
+  if (!mktPrice) return trade;
+  const book = trade.quantity * bookUnitPrice;
+  const mkt = trade.quantity * mktPrice;
+  const mtmPnl = trade.direction === TradeDirection.BUY ? mkt - book : book - mkt;
+  return { ...trade, marketPrice: mktPrice, mtmPnl };
 }
 
-export function mockTraderTrades(
+export async function mockTraderTrades(
   traderName: string,
   filter?: { status?: TradeStatus; bucket?: "DRAFTS" | "CLOSED" },
-) {
-  syncBookedTradesFromDisk();
+): Promise<MockTraderTrade[]> {
   const canonical = canonicalTraderName(traderName);
-  let rows = getBookedTrades().filter((t) => traderNamesMatch(t.traderName, canonical));
+  const rows = await prisma.trade.findMany({
+    include: TRADE_INCLUDE,
+    orderBy: { tradeDate: "desc" },
+  });
+  let trades = rows
+    .map(tradeRowToMock)
+    .filter((t) => traderNamesMatch(t.traderName, canonical));
 
   if (filter?.bucket === "DRAFTS") {
-    rows = rows.filter((t) => t.tradeStatus === TradeStatus.PENDING);
+    trades = trades.filter((t) => t.tradeStatus === TradeStatus.PENDING);
   } else if (filter?.bucket === "CLOSED") {
-    rows = rows.filter(
+    trades = trades.filter(
       (t) => t.tradeStatus === TradeStatus.EXECUTED || t.tradeStatus === TradeStatus.SETTLED,
     );
   } else if (filter?.status) {
-    rows = rows.filter((t) => t.tradeStatus === filter.status);
+    trades = trades.filter((t) => t.tradeStatus === filter.status);
   }
-
-  return rows.sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime());
+  return Promise.all(trades.map(withDeskMtm));
 }
 
-export function mockTraderTradeByRef(traderName: string, tradeRef: string) {
+export async function mockTraderTradeByRef(
+  traderName: string,
+  tradeRef: string,
+): Promise<MockTraderTrade | null> {
   const ref = tradeRef.trim();
   const canonical = canonicalTraderName(traderName);
-  const trade =
-    mockTraderTrades(traderName).find((t) => t.tradeRef === ref) ??
-    mockTradeByRefGlobal(ref);
+  const trade = await mockTradeByRefGlobal(ref);
   if (!trade) return null;
   if (!traderNamesMatch(trade.traderName, canonical)) return null;
   return trade;
 }
 
-/** All trades in the book (for execution desk). No seeded demo trades. */
-export function mockAllTraderTrades() {
-  syncBookedTradesFromDisk();
-  return [...getBookedTrades()].sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime());
+/** All trades in the book (for execution desk). */
+export async function mockAllTraderTrades(): Promise<MockTraderTrade[]> {
+  const rows = await prisma.trade.findMany({
+    include: TRADE_INCLUDE,
+    orderBy: { tradeDate: "desc" },
+  });
+  return rows.map(tradeRowToMock);
 }
 
-export function mockTradeByRefGlobal(tradeRef: string) {
-  return mockAllTraderTrades().find((t) => t.tradeRef === tradeRef.trim()) ?? null;
+export async function mockTradeByRefGlobal(tradeRef: string): Promise<MockTraderTrade | null> {
+  const row = await prisma.trade.findUnique({
+    where: { tradeRef: tradeRef.trim() },
+    include: TRADE_INCLUDE,
+  });
+  return row ? withDeskMtm(tradeRowToMock(row)) : null;
 }
 
-export function mockTraderDeskSummary(traderName: string) {
-  const trades = mockTraderTrades(canonicalTraderName(traderName));
+export async function mockTraderDeskSummary(traderName: string) {
+  const trades = await mockTraderTrades(canonicalTraderName(traderName));
   const isOpen = (s: TradeStatus) =>
     s === TradeStatus.PENDING ||
     s === TradeStatus.LOCKED ||
@@ -824,8 +766,8 @@ export function mockTraderDeskSummary(traderName: string) {
   };
 }
 
-export function mockTraderExposure(traderName: string) {
-  const trades = mockTraderTrades(canonicalTraderName(traderName)).filter(
+export async function mockTraderExposure(traderName: string) {
+  const trades = (await mockTraderTrades(canonicalTraderName(traderName))).filter(
     (t) =>
       t.tradeStatus === TradeStatus.CONFIRMED ||
       t.tradeStatus === TradeStatus.EXECUTED ||
@@ -850,21 +792,23 @@ export function mockTraderExposure(traderName: string) {
     cur.mtm += t.mtmPnl;
     byCommodity.set(t.commodity.code, cur);
   }
-  return Array.from(byCommodity.values()).map((c) => {
-    const desk = getDeskMarketPrice(c.code);
-    const ref = desk?.cnf ?? desk?.yesterday;
-    return {
-      ...c,
-      net: c.long - c.short,
-      marketPrice: ref?.amount ?? c.marketPrice,
-      marketCurrency: ref?.currency,
-      marketUnit: ref?.unit,
-    };
-  });
+  return Promise.all(
+    Array.from(byCommodity.values()).map(async (c) => {
+      const desk = await getDeskMarketPrice(c.code);
+      const ref = desk?.cnf ?? desk?.yesterday;
+      return {
+        ...c,
+        net: c.long - c.short,
+        marketPrice: ref?.amount ?? c.marketPrice,
+        marketCurrency: ref?.currency,
+        marketUnit: ref?.unit,
+      };
+    }),
+  );
 }
 
-export function mockTraderActionItems(traderName: string) {
-  const trades = mockTraderTrades(canonicalTraderName(traderName));
+export async function mockTraderActionItems(traderName: string) {
+  const trades = await mockTraderTrades(canonicalTraderName(traderName));
   const items: { id: string; type: string; message: string; tradeRef: string; priority: "high" | "medium" | "low" }[] = [];
   for (const t of trades) {
     if (t.tradeStatus === TradeStatus.PENDING && t.pendingTraderReview) {
@@ -897,15 +841,15 @@ export function mockTraderActionItems(traderName: string) {
   return items;
 }
 
-export function mockCounterpartyOptions() {
+export async function mockCounterpartyOptions() {
   return getMergedCounterparties();
 }
 
-export function mockLocationOptions() {
+export async function mockLocationOptions() {
   return getMergedLocations();
 }
 
-export function mockBookTrade(input: {
+export async function mockBookTrade(input: {
   traderName: string;
   commodityId: string;
   commodityCode: string;
@@ -959,11 +903,11 @@ export function mockBookTrade(input: {
   tradeParams?: Record<string, string | number | null>;
   /** When true, send to execution Open Trades instead of trader-only draft. */
   submitToExecution?: boolean;
-}): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const rt = getBookedRuntime();
-  rt.mockTradeSeq += 1;
-  const tradeRef = `KAS-2026-${rt.mockTradeSeq}`;
+  /** Session user id booking the trade (falls back to system admin). */
+  actorId?: string;
+}): Promise<MockTraderTrade> {
+  const seq = await nextRef(COUNTER.TRADE);
+  const tradeRef = `KAS-${new Date().getFullYear()}-${seq}`;
 
   // Map the quoted price (any currency + weight unit) into the canonical quantity unit.
   const priceCurrency: PriceCurrency =
@@ -1002,86 +946,89 @@ export function mockBookTrade(input: {
       : null;
   const baseCurrency = baseCurrencyOf(priceCurrency);
 
-  const trade = buildTraderTrade({
-    id: `tt-new-${rt.mockTradeSeq}`,
-    tradeRef,
-    tradeDate: input.tradeDate ?? now(),
-    traderName: canonicalTraderName(input.traderName),
-    desk: "AGRI_DESK",
-    direction: input.direction,
-    quantity: quantityMt,
-    quantityUnit: "MT",
-    quantityEntered: qtyEntered,
-    quantityEnteredUnit: qtyEnteredUnit,
-    tradeParams: input.tradeParams ?? null,
-    price: hasQuotedPrice ? quotedPrice : 0,
-    currency: baseCurrency,
-    priceBasis: input.priceBasis,
-    priceCurrency,
-    priceWeightUnit,
-    priceKgPerUnit,
-    pricePerCanonicalQty,
-    commissionAmount,
-    commissionPerUnit: commissionPerUnit ?? null,
-    commissionPerCanonicalQty,
-    tradeStatus: TradeStatus.PENDING,
-    deliveryStart: input.deliveryStart,
-    deliveryEnd: input.deliveryEnd,
-    originName: input.originName,
-    destName: input.destName,
-    incoterms: input.incoterms,
-    paymentType: input.paymentType,
-    paymentTerms:
-      input.paymentType === "CREDIT"
-        ? paymentTypeLabel("CREDIT", input.creditDays)
-        : PAYMENT_TYPE_LABELS[input.paymentType] ?? paymentTypeLabel(input.paymentType),
-    grade: input.grade,
-    productOrigin: input.productOrigin,
-    qualityTolerances: input.qualityTolerances,
-    maxMoisturePct: input.maxMoisturePct,
-    counterpartyKycStatus: input.counterpartyKycStatus,
-    counterpartyKycRef: input.counterpartyKycRef,
-    contractRef: null,
-    commodity: {
-      id: input.commodityId,
-      code: input.commodityCode,
-      name: input.commodityName,
-      unit: input.quantityUnit,
+  // Desk mark for preview MTM.
+  const bookUnitPrice = pricePerCanonicalQty ?? quotedPrice;
+  const desk = await getDeskMarketPrice(input.commodityCode);
+  const mktPrice =
+    desk?.cnf?.amount ??
+    desk?.yesterday?.amount ??
+    bookUnitPrice * (1 + (Math.random() - 0.45) * 0.02);
+  const book = quantityMt * bookUnitPrice;
+  const mkt = quantityMt * mktPrice;
+  const mtmPnl = input.direction === TradeDirection.BUY ? mkt - book : book - mkt;
+
+  const row = await prisma.trade.create({
+    include: TRADE_INCLUDE,
+    data: {
+      tradeRef,
+      tradeDate: input.tradeDate ?? now(),
+      traderName: canonicalTraderName(input.traderName),
+      desk: "AGRI_DESK",
+      direction: input.direction,
+      tradeScope: input.tradeScope ?? "LOCAL",
+      commodityId: input.commodityId,
+      counterpartyId: input.counterpartyId,
+      counterpartyKycStatus: input.counterpartyKycStatus,
+      counterpartyKycRef: input.counterpartyKycRef,
+      quantity: quantityMt,
+      quantityUnit: "MT",
+      quantityEntered: qtyEntered,
+      quantityEnteredUnit: qtyEnteredUnit,
+      price: hasQuotedPrice ? quotedPrice : 0,
+      currency: baseCurrency,
+      priceBasis: input.priceBasis,
+      priceCurrency,
+      priceWeightUnit,
+      priceKgPerUnit,
+      pricePerCanonicalQty,
+      ratePerMaund: input.ratePerMaund ?? null,
+      commissionAmount,
+      commissionPerUnit: commissionPerUnit ?? null,
+      commissionPerMaund: commissionPerMaund ?? null,
+      commissionPerCanonicalQty,
+      deliveryStart: input.deliveryStart,
+      deliveryEnd: input.deliveryEnd,
+      originName: input.originName,
+      destName: input.destName,
+      incoterms: input.incoterms,
+      // Internal desk routing only — trades are categorized by their incoterm.
+      // Only a literal "Spot" purchase routes through the spot pipeline.
+      buyingCategory:
+        input.buyingCategory ??
+        (input.direction === TradeDirection.BUY
+          ? input.incoterms === "Spot"
+            ? "Spot"
+            : "Delivered"
+          : null),
+      paymentType: input.paymentType,
+      paymentTerms:
+        input.paymentType === "CREDIT"
+          ? paymentTypeLabel("CREDIT", input.creditDays)
+          : PAYMENT_TYPE_LABELS[input.paymentType] ?? paymentTypeLabel(input.paymentType),
+      grade: input.grade,
+      productOrigin: input.productOrigin,
+      qualityTolerances: input.qualityTolerances,
+      qualityTolerancesDetail:
+        input.qualityTolerancesDetail ??
+        ({
+          ...DEFAULT_QUALITY_TOLERANCES,
+          moisturePct: input.maxMoisturePct ?? DEFAULT_QUALITY_TOLERANCES.moisturePct,
+        } satisfies QualityTolerances),
+      maxMoisturePct: input.maxMoisturePct ?? null,
+      tradeParams: input.tradeParams ?? undefined,
+      marketPrice: mktPrice,
+      mtmPnl,
+      notes: input.notes ?? null,
+      tradeStatus: TradeStatus.PENDING,
+      submittedToExecution: input.submitToExecution === true,
+      submittedToExecutionAt: input.submitToExecution === true ? now() : null,
+      pendingTraderReview: false,
+      pendingTraderPrice:
+        input.submitToExecution === true &&
+        !priceBasisRequiresQuote(input.priceBasis) &&
+        !hasQuotedPrice,
+      createdById: input.actorId ?? (await getSystemUserId()),
     },
-    counterparty: {
-      id: input.counterpartyId,
-      name: input.counterpartyName,
-      code: input.counterpartyCode,
-      companyNameNtn: input.counterpartyCompanyNameNtn ?? null,
-      ntn: input.counterpartyNtn ?? null,
-      address: input.counterpartyAddress ?? null,
-      bankDetails: input.counterpartyBankDetails ?? null,
-    },
-    notes: input.notes,
-    // Internal desk routing only — trades are categorized by their incoterm.
-    // Only a literal "Spot" purchase routes through the spot pipeline.
-    buyingCategory:
-      input.buyingCategory ??
-      (input.direction === TradeDirection.BUY
-        ? (input.incoterms === "Spot" ? "Spot" : "Delivered")
-        : null),
-    tradeScope: input.tradeScope ?? "LOCAL",
-    ratePerMaund: input.ratePerMaund ?? null,
-    commissionPerMaund: commissionPerMaund ?? null,
-    qualityTolerancesDetail:
-      input.qualityTolerancesDetail ??
-      ({
-        ...DEFAULT_QUALITY_TOLERANCES,
-        moisturePct: input.maxMoisturePct ?? DEFAULT_QUALITY_TOLERANCES.moisturePct,
-      } satisfies QualityTolerances),
-    submittedToExecution: input.submitToExecution === true,
-    submittedToExecutionAt: input.submitToExecution === true ? now() : null,
-    pendingTraderReview: false,
-    pendingTraderPrice:
-      input.submitToExecution === true &&
-      !priceBasisRequiresQuote(input.priceBasis) &&
-      !hasQuotedPrice,
   });
-  upsertBookedTrade(trade);
-  return trade;
+  return tradeRowToMock(row);
 }

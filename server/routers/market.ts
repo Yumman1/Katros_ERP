@@ -40,9 +40,9 @@ export const marketRouter = router({
         priceDate: z.string().optional(),
       }),
     )
-    .mutation(({ ctx, input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
-        return upsertDailyMarketPrice({
+        return await upsertDailyMarketPrice({
           code: input.code,
           cnf: input.cnf,
           cnfCurrency: input.cnfCurrency,
