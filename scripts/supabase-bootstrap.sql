@@ -1243,14 +1243,7 @@ INSERT INTO "User" ("id","email","passwordHash","name","role","isHead","updatedA
 ON CONFLICT ("email") DO UPDATE SET "name"=EXCLUDED."name","role"=EXCLUDED."role","isHead"=EXCLUDED."isHead","updatedAt"=now();
 
 INSERT INTO "Commodity" ("id","name","code","unit","exchange","tickerCode","category","canonicalKgPerUnit","grades","priceUnits","updatedAt","createdById") VALUES
-('cmd_corn','Corn (Maize)','CORN','MT','CBOT','ZC','GRAINS',1000,ARRAY['Grade A','Grade B','Feed Grade'],'{"LOCAL":{"currency":"PKR","weightUnit":"MAUND_40","kgPerUnit":40},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_admin'),
-('cmd_wheat','Wheat','WHEAT','MT','CBOT','ZW','GRAINS',1000,ARRAY['Grade A','Grade B','Milling','Feed'],'{"LOCAL":{"currency":"PKR","weightUnit":"MAUND_40","kgPerUnit":40},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_admin'),
-('cmd_rice','Rice (IRRI-6)','RICE','MT','CBOT','ZR','GRAINS',1000,ARRAY['IRRI-6','Basmati 1121','Super Kernel'],'{"LOCAL":{"currency":"PKR","weightUnit":"MAUND_40","kgPerUnit":40},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_admin'),
-('cmd_sbm','Soybean Meal','SBM','MT','CBOT','ZM','OILSEEDS',1000,ARRAY['Hi-Pro','Normal Protein','FAQ'],'{"LOCAL":{"currency":"PKR","weightUnit":"KG","kgPerUnit":1},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_admin'),
-('cmd_palm','Palm Oil','PALM','MT','BMD','FCPO','VEGOIL',1000,ARRAY['CP8','CP10','RBD Palm Olein'],'{"LOCAL":{"currency":"PKR","weightUnit":"MT","kgPerUnit":1000},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_admin'),
-('cmd_soy','Soybeans','SOY','MT','CBOT','ZS','OILSEEDS',1000,ARRAY['No.1 Yellow','No.2 Yellow','Non-GMO'],NULL,now(),'usr_admin'),
-('cmd_sug','Sugar','SUG','MT','ICE','SB','SOFTS',1000,ARRAY['VHP','Raw','Refined','ICUMSA 45'],NULL,now(),'usr_admin'),
-('cmd_ctn','Cotton','CTN','MT','ICE','CT','SOFTS',1000,ARRAY['Grade A','FAQ','Standard'],NULL,now(),'usr_admin')
+('cmd_corn','Corn (Maize)','CORN','MT','CBOT','ZC','GRAINS',1000,ARRAY['Grade A','Grade B','Feed Grade'],'{"LOCAL":{"currency":"PKR","weightUnit":"MAUND_40","kgPerUnit":40},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_admin')
 ON CONFLICT ("code") DO UPDATE SET "name"=EXCLUDED."name","grades"=EXCLUDED."grades","priceUnits"=EXCLUDED."priceUnits","updatedAt"=now();
 
 INSERT INTO "UnitDef" ("code","label","kgPerUnit") VALUES
@@ -1270,14 +1263,7 @@ INSERT INTO "Location" ("id","name","code","type","country","lsp","address","cit
 ('loc_pq','Port Qasim','PQ','PORT','Pakistan','Hellmann','Port Qasim, Karachi','Karachi','Sindh',NULL,NULL,NULL,NULL,now(),'usr_admin')
 ON CONFLICT ("name") DO NOTHING;
 
-INSERT INTO "Counterparty" ("id","name","code","type","country","kycStatus","ntn","companyNameNtn","address","creditLimit","updatedAt","createdById") VALUES
-('cp_pgt','Punjab Grain Traders','PGT','TRADING_PARTNER','Pakistan','VERIFIED','1234567-8','Punjab Grain Traders (Pvt) Ltd','Grain Market, Sahiwal, Punjab',250000000,now(),'usr_admin'),
-('cp_sdf','Sadiq Feeds','SDF','BUYER','Pakistan','VERIFIED','2345678-9','Sadiq Feeds Limited','Vehari Road, Khanewal, Punjab',400000000,now(),'usr_admin'),
-('cp_iac','Indus AgriCorp','IAC','SELLER','Pakistan','PENDING','3456789-0','Indus AgriCorp (Pvt) Ltd','Site Area, Hyderabad, Sindh',150000000,now(),'usr_admin'),
-('cp_mch','Multan Commodity House','MCH','SELLER','Pakistan','VERIFIED','4567890-1','Multan Commodity House','Ghalla Mandi, Multan, Punjab',180000000,now(),'usr_admin'),
-('cp_htf','Hi-Tech Feed Mills','HTF','BUYER','Pakistan','PENDING','5678901-2','Hi-Tech Feed Mills (Pvt) Ltd','Raiwind Road, Lahore, Punjab',320000000,now(),'usr_admin'),
-('cp_kge','Karachi Grain Exchange Co','KGE','TRADING_PARTNER','Pakistan','VERIFIED','6789012-3','Karachi Grain Exchange Company','Jodia Bazar, Karachi, Sindh',500000000,now(),'usr_admin')
-ON CONFLICT ("code") DO NOTHING;
+-- (no sample counterparties — added by users in the app)
 
 INSERT INTO "RefCounter" ("name","value") VALUES ('trade',10020),('change-request',0)
 ON CONFLICT ("name") DO NOTHING;
