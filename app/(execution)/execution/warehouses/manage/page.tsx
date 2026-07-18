@@ -261,7 +261,8 @@ export default function WarehouseManagePage() {
                   ["province", "Province"],
                   ["capacitySqFt", "Square feet"],
                   ["costPerSqFt", "Rental / sq ft (PKR)"],
-                  ["grainDivisionSqFt", "Grain sq ft / MT"],
+                  ["balesDivisionSqFt", "Bales division (sq ft/bale)"],
+                  ["grainDivisionSqFt", "Grain division (sq ft/MT)"],
                 ] as const
               ).map(([key, label]) => (
                 <label key={key} className="block text-xs text-subtle">
