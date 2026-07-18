@@ -23,7 +23,7 @@ import { mergeUnitRegistry, type UnitDefinition } from "@/lib/unit-registry";
 import type { WarehouseLaborLine } from "@/lib/warehouse-costing";
 import { prisma } from "@/server/db";
 import { json, numOrNull } from "@/server/db/convert";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { bumpRefTo, COUNTER, nextRef } from "@/server/db/counters";
 import { getSystemUserId } from "@/server/db/system-user";
 
 export type MockCommodityOption = {
@@ -479,6 +479,29 @@ export async function getCompanyWarehouses(): Promise<MockLocationOption[]> {
   return (await getMergedLocations()).filter(isCompanyWarehouse);
 }
 
+/** Next free K-code (K001, K002, …) — counter-backed, collision-checked. */
+async function nextWarehouseCode(): Promise<string> {
+  const rows = await prisma.location.findMany({
+    where: { code: { not: null } },
+    select: { code: true },
+  });
+  const maxExisting = rows.reduce((max, r) => {
+    const m = /^K(\d+)$/i.exec(r.code?.trim() ?? "");
+    return m ? Math.max(max, parseInt(m[1]!, 10)) : max;
+  }, 0);
+  await bumpRefTo("warehouse", maxExisting);
+  for (let attempt = 0; attempt < 10_000; attempt += 1) {
+    const seq = await nextRef("warehouse");
+    const code = `K${String(seq).padStart(3, "0")}`;
+    const exists = await prisma.location.findFirst({
+      where: { code: { equals: code, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (!exists) return code;
+  }
+  throw new Error("Could not allocate a unique warehouse code");
+}
+
 export async function addCustomLocation(input: {
   name: string;
   code?: string;
@@ -503,10 +526,15 @@ export async function addCustomLocation(input: {
     select: { id: true },
   });
   if (dupe) throw new Error("Location already exists");
+  // Company warehouses (they have storage capacity) get an auto-generated
+  // K-code; plain load/delivery points stay code-less.
+  const code =
+    input.code?.trim() ||
+    (input.capacitySqFt != null ? await nextWarehouseCode() : null);
   const row = await prisma.location.create({
     data: {
       name: n,
-      code: input.code?.trim() || null,
+      code,
       type: LocationType.WAREHOUSE,
       country: "Pakistan",
       lsp: input.lsp?.trim() || null,
