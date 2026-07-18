@@ -1,8 +1,8 @@
-import { readPersisted, writePersisted } from "@/server/local-persist";
+import type { DeskMarketPrice } from "@prisma/client";
+import { prisma } from "@/server/db";
+import { numOrNull } from "@/server/db/convert";
 import { getMergedCommodities } from "@/server/trader-master-data";
 import { QUANTITY_UNITS } from "@/lib/trade-constants";
-
-export const MARKET_PRICES_FILE = "market-prices.json";
 
 export const DESK_MARKET_CURRENCIES = ["USD", "PKR", "MYR", "EUR", "CNY"] as const;
 export type DeskMarketCurrency = (typeof DESK_MARKET_CURRENCIES)[number];
@@ -20,10 +20,6 @@ export type StoredMarketPrice = {
   priceDate: string;
   updatedAt: string;
   updatedBy?: string;
-};
-
-type MarketPriceStore = {
-  prices: Record<string, StoredMarketPrice>;
 };
 
 export type MarketPriceSnapshot = {
@@ -45,10 +41,6 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function emptyStore(): MarketPriceStore {
-  return { prices: {} };
-}
-
 function isPositiveAmount(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n > 0;
 }
@@ -65,92 +57,23 @@ function normalizeLeg(
   return { amount, currency: c, unit: u };
 }
 
-type LegacyRow = {
-  code?: string;
-  cnf?: DeskPriceLeg | number | null;
-  yesterday?: DeskPriceLeg | null;
-  closePrice?: number;
-  previousClose?: number;
-  yesterdayRate?: number;
-  currency?: string;
-  unit?: string;
-  cnfCurrency?: string;
-  cnfUnit?: string;
-  yesterdayCurrency?: string;
-  yesterdayUnit?: string;
-  priceDate?: string;
-  updatedAt?: string;
-  updatedBy?: string;
-};
-
-function migrateRow(code: string, row: LegacyRow): StoredMarketPrice | null {
-  if (row.cnf && typeof row.cnf === "object" && "amount" in row.cnf) {
-    const cnf = row.cnf.amount > 0 ? row.cnf : null;
-    const yesterday = row.yesterday && row.yesterday.amount > 0 ? row.yesterday : null;
-    if (!cnf && !yesterday) return null;
-    return {
-      code,
-      cnf,
-      yesterday,
-      priceDate: row.priceDate ?? todayKey(),
-      updatedAt: row.updatedAt ?? new Date().toISOString(),
-      updatedBy: row.updatedBy,
-    };
-  }
-
-  const cnf = normalizeLeg(
-    typeof row.cnf === "number" ? row.cnf : row.closePrice,
-    row.cnfCurrency ?? row.currency,
-    row.cnfUnit ?? row.unit,
-  );
-  const yesterday = normalizeLeg(
-    row.yesterdayRate ?? row.previousClose,
-    row.yesterdayCurrency ?? row.currency,
-    row.yesterdayUnit ?? row.unit,
-  );
-  if (!cnf && !yesterday) return null;
-
+function rowToStored(row: DeskMarketPrice): StoredMarketPrice {
+  const cnfAmount = numOrNull(row.cnfAmount);
+  const yestAmount = numOrNull(row.yestAmount);
   return {
-    code,
-    cnf,
-    yesterday,
-    priceDate: row.priceDate ?? todayKey(),
-    updatedAt: row.updatedAt ?? new Date().toISOString(),
-    updatedBy: row.updatedBy,
+    code: row.commodityCode,
+    cnf:
+      cnfAmount != null && row.cnfCurrency && row.cnfUnit
+        ? { amount: cnfAmount, currency: row.cnfCurrency, unit: row.cnfUnit }
+        : null,
+    yesterday:
+      yestAmount != null && row.yestCurrency && row.yestUnit
+        ? { amount: yestAmount, currency: row.yestCurrency, unit: row.yestUnit }
+        : null,
+    priceDate: row.priceDate,
+    updatedAt: row.updatedAt.toISOString(),
+    updatedBy: row.updatedBy ?? undefined,
   };
-}
-
-function hydrateStoreFromDisk(): MarketPriceStore {
-  const raw = readPersisted<{ prices: Record<string, LegacyRow> }>(MARKET_PRICES_FILE);
-  if (!raw?.prices) return emptyStore();
-
-  const prices: Record<string, StoredMarketPrice> = {};
-  for (const [code, row] of Object.entries(raw.prices)) {
-    const migrated = migrateRow(code, row);
-    if (migrated) prices[code] = migrated;
-  }
-  return { prices };
-}
-
-const MARKET_STORE_KEY = "__kastrosMarketPriceStore";
-
-/** In-memory store survives across requests in dev; disk sync when persist is enabled. */
-function getStore(): MarketPriceStore {
-  const g = globalThis as typeof globalThis & { [MARKET_STORE_KEY]?: MarketPriceStore };
-  if (!g[MARKET_STORE_KEY]) {
-    g[MARKET_STORE_KEY] = hydrateStoreFromDisk();
-  }
-  return g[MARKET_STORE_KEY];
-}
-
-function loadStore(): MarketPriceStore {
-  return getStore();
-}
-
-function saveStore(store: MarketPriceStore) {
-  const g = globalThis as typeof globalThis & { [MARKET_STORE_KEY]?: MarketPriceStore };
-  g[MARKET_STORE_KEY] = store;
-  writePersisted(MARKET_PRICES_FILE, store);
 }
 
 function round2(n: number) {
@@ -164,7 +87,7 @@ function comparableChgPct(cnf: DeskPriceLeg | null, yesterday: DeskPriceLeg | nu
   return round2(((cnf.amount - yesterday.amount) / yesterday.amount) * 100);
 }
 
-function hasPublishedData(row: StoredMarketPrice | undefined): row is StoredMarketPrice {
+function hasPublishedData(row: StoredMarketPrice | undefined | null): row is StoredMarketPrice {
   return Boolean(row && (row.cnf || row.yesterday));
 }
 
@@ -184,26 +107,27 @@ function toSnapshot(code: string, name: string, row: StoredMarketPrice): MarketP
   };
 }
 
-/** Commodities with at least CNF or yesterday published. */
-export function getMarketPriceSnapshot(): MarketPriceSnapshot[] {
-  const store = loadStore();
-  const commodities = getMergedCommodities();
-  const rows: MarketPriceSnapshot[] = [];
+async function loadStoredByCode(): Promise<Map<string, StoredMarketPrice>> {
+  const rows = await prisma.deskMarketPrice.findMany();
+  return new Map(rows.map((r) => [r.commodityCode, rowToStored(r)]));
+}
 
+/** Commodities with at least CNF or yesterday published. */
+export async function getMarketPriceSnapshot(): Promise<MarketPriceSnapshot[]> {
+  const [byCode, commodities] = await Promise.all([loadStoredByCode(), getMergedCommodities()]);
+  const rows: MarketPriceSnapshot[] = [];
   for (const c of commodities) {
-    const row = store.prices[c.code];
+    const row = byCode.get(c.code);
     if (!hasPublishedData(row)) continue;
     rows.push(toSnapshot(c.code, c.name, row));
   }
-
   return rows.sort((a, b) => a.code.localeCompare(b.code));
 }
 
-export function listDailyMarketPrices() {
-  const commodities = getMergedCommodities();
-  const store = loadStore();
+export async function listDailyMarketPrices() {
+  const [byCode, commodities] = await Promise.all([loadStoredByCode(), getMergedCommodities()]);
   return commodities.map((c) => {
-    const row = store.prices[c.code];
+    const row = byCode.get(c.code);
     const defaultUnit = c.unit || "MT";
     return {
       commodityId: c.id,
@@ -222,7 +146,7 @@ export function listDailyMarketPrices() {
   });
 }
 
-export function upsertDailyMarketPrice(input: {
+export async function upsertDailyMarketPrice(input: {
   code: string;
   cnf?: number | null;
   cnfCurrency?: string | null;
@@ -232,13 +156,14 @@ export function upsertDailyMarketPrice(input: {
   yesterdayUnit?: string | null;
   priceDate?: string;
   updatedBy?: string;
-}) {
+}): Promise<StoredMarketPrice | null> {
   const code = input.code.trim().toUpperCase();
   if (!code) throw new Error("Commodity code required");
 
-  const store = loadStore();
-  const existing = store.prices[code];
-  const now = new Date().toISOString();
+  const existingRow = await prisma.deskMarketPrice.findUnique({
+    where: { commodityCode: code },
+  });
+  const existing = existingRow ? rowToStored(existingRow) : null;
   const date = input.priceDate ?? todayKey();
 
   const cnfProvided = input.cnf !== undefined;
@@ -267,32 +192,41 @@ export function upsertDailyMarketPrice(input: {
     throw new Error("Yesterday rate requires currency and unit when a value is entered");
   }
   if (!nextCnf && !nextYesterday) {
-    delete store.prices[code];
-    saveStore(store);
+    if (existingRow) {
+      await prisma.deskMarketPrice.delete({ where: { commodityCode: code } });
+    }
     return null;
   }
 
-  store.prices[code] = {
-    code,
-    cnf: nextCnf,
-    yesterday: nextYesterday,
+  const data = {
+    cnfAmount: nextCnf?.amount ?? null,
+    cnfCurrency: nextCnf?.currency ?? null,
+    cnfUnit: nextCnf?.unit ?? null,
+    yestAmount: nextYesterday?.amount ?? null,
+    yestCurrency: nextYesterday?.currency ?? null,
+    yestUnit: nextYesterday?.unit ?? null,
     priceDate: date,
-    updatedAt: now,
-    updatedBy: input.updatedBy,
+    updatedBy: input.updatedBy ?? null,
   };
-
-  saveStore(store);
-  return store.prices[code];
+  const saved = await prisma.deskMarketPrice.upsert({
+    where: { commodityCode: code },
+    update: data,
+    create: { commodityCode: code, ...data },
+  });
+  return rowToStored(saved);
 }
 
-export function getDeskMarketPrice(code: string): StoredMarketPrice | null {
-  const row = loadStore().prices[code.trim().toUpperCase()];
-  return hasPublishedData(row) ? row : null;
+export async function getDeskMarketPrice(code: string): Promise<StoredMarketPrice | null> {
+  const row = await prisma.deskMarketPrice.findUnique({
+    where: { commodityCode: code.trim().toUpperCase() },
+  });
+  const stored = row ? rowToStored(row) : null;
+  return hasPublishedData(stored) ? stored : null;
 }
 
 /** Primary desk reference — CNF if set, otherwise yesterday local. */
-export function getMarketPriceForCode(code: string): number | null {
-  const row = getDeskMarketPrice(code);
+export async function getMarketPriceForCode(code: string): Promise<number | null> {
+  const row = await getDeskMarketPrice(code);
   if (!row) return null;
   return row.cnf?.amount ?? row.yesterday?.amount ?? null;
 }
@@ -301,8 +235,8 @@ export function deskMarketUnits(): readonly string[] {
   return QUANTITY_UNITS;
 }
 
-export function marketTickerPayload() {
-  return getMarketPriceSnapshot().map((p) => {
+export async function marketTickerPayload() {
+  return (await getMarketPriceSnapshot()).map((p) => {
     const headline =
       p.cnf != null
         ? { price: p.cnf, ccy: p.cnfCurrency!, unit: p.cnfUnit! }

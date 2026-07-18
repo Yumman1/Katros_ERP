@@ -1,17 +1,12 @@
-import fs from "fs";
-import {
-  isLocalPersistEnabled,
-  localDataPath,
-  readPersisted,
-  writePersisted,
-} from "@/server/local-persist";
+import type { ChangeRequest as ChangeRequestRow } from "@prisma/client";
+import { prisma } from "@/server/db";
+import { json } from "@/server/db/convert";
+import { COUNTER, nextRef } from "@/server/db/counters";
 import type {
   ChangeRequestAction,
   ChangeRequestStatus,
   Department,
 } from "@/lib/departments";
-
-const CHANGE_REQUESTS_FILE = "change-requests.json";
 
 export type ChangeRequest = {
   id: string;
@@ -41,42 +36,31 @@ export type ChangeRequest = {
   departmentApprovalNote?: string | null;
 };
 
-type RuntimeState = {
-  requests: ChangeRequest[];
-  seq: number;
-};
-
-const globalStore = globalThis as unknown as {
-  __kastrosChangeRequests?: RuntimeState;
-};
-
-function getRuntime(): RuntimeState {
-  if (!globalStore.__kastrosChangeRequests) {
-    const persisted = readPersisted<RuntimeState>(CHANGE_REQUESTS_FILE);
-    globalStore.__kastrosChangeRequests = persisted ?? { requests: [], seq: 0 };
-  }
-  return globalStore.__kastrosChangeRequests;
+function rowToChangeRequest(row: ChangeRequestRow): ChangeRequest {
+  return {
+    id: row.id,
+    department: row.department,
+    entityType: row.entityType,
+    entityRef: row.entityRef,
+    entityLabel: row.entityLabel,
+    action: row.action,
+    comment: row.comment,
+    requestedById: row.requestedById,
+    requestedByName: row.requestedByName,
+    requestedAt: row.requestedAt,
+    status: row.status,
+    resolvedByName: row.resolvedByName,
+    resolvedAt: row.resolvedAt,
+    resolutionNote: row.resolutionNote,
+    applied: row.applied,
+    payload: json<Record<string, unknown>>(row.payload),
+    departmentApprovedByName: row.departmentApprovedByName,
+    departmentApprovedAt: row.departmentApprovedAt,
+    departmentApprovalNote: row.departmentApprovalNote,
+  };
 }
 
-function persist() {
-  if (!isLocalPersistEnabled()) return;
-  writePersisted(CHANGE_REQUESTS_FILE, getRuntime());
-}
-
-/** Re-read persisted state (dev has multiple worker processes sharing the file). */
-function syncFromDisk() {
-  if (!isLocalPersistEnabled()) return;
-  try {
-    // Only reload when the file exists; otherwise keep in-memory state.
-    if (!fs.existsSync(localDataPath(CHANGE_REQUESTS_FILE))) return;
-    const persisted = readPersisted<RuntimeState>(CHANGE_REQUESTS_FILE);
-    if (persisted) globalStore.__kastrosChangeRequests = persisted;
-  } catch {
-    // ignore
-  }
-}
-
-export function createChangeRequest(input: {
+export async function createChangeRequest(input: {
   department: Department;
   entityType: string;
   entityRef: string;
@@ -87,114 +71,119 @@ export function createChangeRequest(input: {
   requestedByName: string;
   payload?: Record<string, unknown> | null;
   status?: ChangeRequestStatus;
-}): ChangeRequest {
-  syncFromDisk();
-  const rt = getRuntime();
-  rt.seq += 1;
-  const req: ChangeRequest = {
-    id: `CR-${rt.seq.toString().padStart(4, "0")}`,
-    department: input.department,
-    entityType: input.entityType,
-    entityRef: input.entityRef,
-    entityLabel: input.entityLabel,
-    action: input.action,
-    comment: input.comment.trim(),
-    requestedById: input.requestedById,
-    requestedByName: input.requestedByName,
-    requestedAt: new Date(),
-    status: input.status ?? "PENDING",
-    resolvedByName: null,
-    resolvedAt: null,
-    resolutionNote: null,
-    applied: false,
-    payload: input.payload ?? null,
-    departmentApprovedByName: null,
-    departmentApprovedAt: null,
-    departmentApprovalNote: null,
-  };
-  rt.requests.unshift(req);
-  persist();
-  return req;
+}): Promise<ChangeRequest> {
+  const seq = await nextRef(COUNTER.CHANGE_REQUEST);
+  const row = await prisma.changeRequest.create({
+    data: {
+      id: `CR-${seq.toString().padStart(4, "0")}`,
+      department: input.department,
+      entityType: input.entityType,
+      entityRef: input.entityRef,
+      entityLabel: input.entityLabel,
+      action: input.action,
+      comment: input.comment.trim(),
+      requestedById: input.requestedById,
+      requestedByName: input.requestedByName,
+      status: input.status ?? "PENDING",
+      payload: (input.payload ?? undefined) as object | undefined,
+    },
+  });
+  return rowToChangeRequest(row);
 }
 
-export function listChangeRequests(filter?: {
+export async function listChangeRequests(filter?: {
   department?: Department;
   status?: ChangeRequestStatus;
   requestedById?: string;
-}): ChangeRequest[] {
-  syncFromDisk();
-  let list = [...getRuntime().requests];
-  if (filter?.department) list = list.filter((r) => r.department === filter.department);
-  if (filter?.status) list = list.filter((r) => r.status === filter.status);
-  if (filter?.requestedById) list = list.filter((r) => r.requestedById === filter.requestedById);
-  return list.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
+}): Promise<ChangeRequest[]> {
+  const rows = await prisma.changeRequest.findMany({
+    where: {
+      department: filter?.department,
+      status: filter?.status,
+      requestedById: filter?.requestedById,
+    },
+    orderBy: { requestedAt: "desc" },
+  });
+  return rows.map(rowToChangeRequest);
 }
 
-export function countPendingChangeRequests(department: Department): number {
-  return listChangeRequests({ department, status: "PENDING" }).length;
+export async function countPendingChangeRequests(department: Department): Promise<number> {
+  return prisma.changeRequest.count({ where: { department, status: "PENDING" } });
 }
 
-export function countPendingCeoApprovals(): number {
-  return listChangeRequests({ status: "PENDING_CEO" }).length;
+export async function countPendingCeoApprovals(): Promise<number> {
+  return prisma.changeRequest.count({ where: { status: "PENDING_CEO" } });
 }
 
-export function hasOpenChangeRequest(filter: {
+export async function hasOpenChangeRequest(filter: {
   entityRef: string;
   entityType: string;
   action?: ChangeRequestAction;
-}): boolean {
-  return listChangeRequests().some(
-    (r) =>
-      r.entityRef === filter.entityRef &&
-      r.entityType === filter.entityType &&
-      (!filter.action || r.action === filter.action) &&
-      (r.status === "PENDING" || r.status === "PENDING_CEO"),
-  );
+}): Promise<boolean> {
+  const count = await prisma.changeRequest.count({
+    where: {
+      entityRef: filter.entityRef,
+      entityType: filter.entityType,
+      action: filter.action,
+      status: { in: ["PENDING", "PENDING_CEO"] },
+    },
+  });
+  return count > 0;
 }
 
 /** Execution head approved — forward warehouse creation to CEO. */
-export function advanceChangeRequestToCeo(
+export async function advanceChangeRequestToCeo(
   id: string,
   approvedByName: string,
   note?: string,
-): ChangeRequest {
-  syncFromDisk();
-  const rt = getRuntime();
-  const req = rt.requests.find((r) => r.id === id);
-  if (!req) throw new Error("Change request not found");
-  if (req.status !== "PENDING") throw new Error("Change request is not pending department approval");
-  req.status = "PENDING_CEO";
-  req.departmentApprovedByName = approvedByName;
-  req.departmentApprovedAt = new Date();
-  req.departmentApprovalNote = note?.trim() || null;
-  persist();
-  return req;
+): Promise<ChangeRequest> {
+  // Guarded update: only transitions PENDING → PENDING_CEO; a concurrent
+  // resolve loses the race cleanly instead of double-applying.
+  const updated = await prisma.changeRequest.updateMany({
+    where: { id, status: "PENDING" },
+    data: {
+      status: "PENDING_CEO",
+      departmentApprovedByName: approvedByName,
+      departmentApprovedAt: new Date(),
+      departmentApprovalNote: note?.trim() || null,
+    },
+  });
+  if (updated.count === 0) {
+    const exists = await prisma.changeRequest.findUnique({ where: { id } });
+    if (!exists) throw new Error("Change request not found");
+    throw new Error("Change request is not pending department approval");
+  }
+  const row = await prisma.changeRequest.findUniqueOrThrow({ where: { id } });
+  return rowToChangeRequest(row);
 }
 
-export function getChangeRequest(id: string): ChangeRequest | null {
-  syncFromDisk();
-  return getRuntime().requests.find((r) => r.id === id) ?? null;
+export async function getChangeRequest(id: string): Promise<ChangeRequest | null> {
+  const row = await prisma.changeRequest.findUnique({ where: { id } });
+  return row ? rowToChangeRequest(row) : null;
 }
 
-export function resolveChangeRequest(
+export async function resolveChangeRequest(
   id: string,
   decision: "APPROVED" | "REJECTED",
   resolvedByName: string,
   resolutionNote?: string,
   applied?: boolean,
-): ChangeRequest {
-  syncFromDisk();
-  const rt = getRuntime();
-  const req = rt.requests.find((r) => r.id === id);
-  if (!req) throw new Error("Change request not found");
-  if (req.status !== "PENDING" && req.status !== "PENDING_CEO") {
+): Promise<ChangeRequest> {
+  const updated = await prisma.changeRequest.updateMany({
+    where: { id, status: { in: ["PENDING", "PENDING_CEO"] } },
+    data: {
+      status: decision,
+      resolvedByName,
+      resolvedAt: new Date(),
+      resolutionNote: resolutionNote?.trim() || null,
+      applied: Boolean(applied),
+    },
+  });
+  if (updated.count === 0) {
+    const exists = await prisma.changeRequest.findUnique({ where: { id } });
+    if (!exists) throw new Error("Change request not found");
     throw new Error("Change request already resolved");
   }
-  req.status = decision;
-  req.resolvedByName = resolvedByName;
-  req.resolvedAt = new Date();
-  req.resolutionNote = resolutionNote?.trim() || null;
-  req.applied = Boolean(applied);
-  persist();
-  return req;
+  const row = await prisma.changeRequest.findUniqueOrThrow({ where: { id } });
+  return rowToChangeRequest(row);
 }
