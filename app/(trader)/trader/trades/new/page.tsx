@@ -246,7 +246,6 @@ export default function BookTradePage() {
   const baseCurrency = baseCurrencyOf(priceCurrency);
   const formTraderName = watch("traderName");
   const commodityId = watch("commodityId");
-  const counterpartyId = watch("counterpartyId");
   const incoterms = watch("incoterms");
   const direction = watch("direction");
   const deliveryStart = watch("deliveryStart");
@@ -259,7 +258,6 @@ export default function BookTradePage() {
   const priceWeightUnitOptions = refData.data?.priceWeightUnits ?? [...PRICE_WEIGHT_UNITS];
   const priceCurrencyOptions = refData.data?.priceCurrencies ?? [...PRICE_CURRENCIES];
   const selectedCommodity = commodities.find((c) => c.id === commodityId);
-  const selectedCounterparty = refData.data?.counterparties.find((cp) => cp.id === counterpartyId);
 
   const bookingIncoterms = useMemo(
     () => incotermsForBooking(direction, tradeScope, selectedCommodity?.code),

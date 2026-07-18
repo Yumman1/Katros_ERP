@@ -5,7 +5,6 @@ import {
   getLockedContracts,
   getInboundReceipts,
   getOutboundDispatches,
-  syncExecutionFromDisk,
 } from "@/server/execution-store";
 import { mockAllTraderTrades } from "@/server/dummy-data";
 import { inboundStockDelta, outboundStockDelta } from "@/lib/inventory-stock";
@@ -113,7 +112,6 @@ function addCommodity(
 export async function computePositionLedger(options?: {
   traderName?: string;
 }): Promise<CommodityPositionRow[]> {
-  await syncExecutionFromDisk();
   await syncAllLockedContracts();
 
   const adjustments = await getPositionAdjustments();

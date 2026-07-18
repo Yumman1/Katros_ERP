@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { KG_PER_MAUND, type QualityTolerances } from "@/lib/trade-constants";
 import {
   countsAsReleasedOutbound,
@@ -6,24 +7,25 @@ import {
 import { suggestFifoAllocation } from "@/lib/fifo-allocation";
 import { kgToQuantityUnit, openQtyEpsilon } from "@/lib/unit-conversion";
 import { normWarehouseName } from "@/lib/warehouse-allocation";
+import { prisma } from "@/server/db";
+import { num } from "@/server/db/convert";
+import { COUNTER, nextRef } from "@/server/db/counters";
 import {
+  INBOUND_INCLUDE,
+  OUTBOUND_INCLUDE,
+  inboundRowToRuntime,
+  outboundRowToRuntime,
+  paymentRowToRuntime,
   type InboundReceipt,
   type InboundReceiptStatus,
   type OutboundDispatch,
   type OutboundDispatchStatus,
-  type PaymentRequest,
-  syncExecutionFromDisk,
-  getExecutionRuntime,
-  ex,
-  persistExecutionState,
-  setBatchRefreshingContracts,
 } from "./runtime";
 import {
   assertWithinDeliveryWindow,
   getContractByRef,
   getLockedContracts,
   refreshContract,
-  syncAllLockedContracts,
 } from "./contracts";
 
 function normWarehouse(s: string): string {
@@ -47,8 +49,8 @@ export function computeQualityDeduction(
   return Math.round(ded * 10000) / 10000;
 }
 
-export function suggestInboundFifo(qtyMt: number, sellerCode?: string) {
-  const candidates = getLockedContracts({ openOnly: true })
+export async function suggestInboundFifo(qtyMt: number, sellerCode?: string) {
+  const candidates = (await getLockedContracts({ openOnly: true }))
     .filter((c) => c.executionProfile === "PURCHASE_DELIVERED")
     .filter((c) => !sellerCode || c.counterpartyCode === sellerCode)
     .map((c) => ({
@@ -61,8 +63,8 @@ export function suggestInboundFifo(qtyMt: number, sellerCode?: string) {
   return suggestFifoAllocation(candidates, qtyMt, "PURCHASE_DELIVERED", "BUY");
 }
 
-export function suggestSaleFifo(qtyMt: number) {
-  const candidates = getLockedContracts({ openOnly: true })
+export async function suggestSaleFifo(qtyMt: number) {
+  const candidates = (await getLockedContracts({ openOnly: true }))
     .filter((c) => c.executionProfile === "SALE_EX_WAREHOUSE")
     .map((c) => ({
       tradeRef: c.tradeRef,
@@ -74,17 +76,35 @@ export function suggestSaleFifo(qtyMt: number) {
   return suggestFifoAllocation(candidates, qtyMt, "SALE_EX_WAREHOUSE", "SELL");
 }
 
-export function createInboundReceipt(input: Omit<InboundReceipt, "id" | "status" | "paymentRequestId" | "weightDiffKg" | "deductionPct" | "amountDue"> & {
-  status?: InboundReceiptStatus;
-  fifoOverrideReason?: string | null;
-  allowOutsideWindow?: boolean;
-}) {
-  const contract = getContractByRef(input.tradeRef);
-  if (!contract) throw new Error("Locked contract not found");
-  assertWithinDeliveryWindow(contract, input.receiveDate ?? new Date(), input.allowOutsideWindow ?? false);
+/** gatepassNo is an FK to PendingTruck — only store values that resolve to a gate entry. */
+async function resolvableGatepassNo(gatepassNo: string | null | undefined): Promise<string | null> {
+  const gp = gatepassNo?.trim();
+  if (!gp) return null;
+  const truck = await prisma.pendingTruck.findUnique({
+    where: { gatepassNo: gp },
+    select: { gatepassNo: true },
+  });
+  return truck?.gatepassNo ?? null;
+}
 
-  const rt = ex();
-  rt.inboundSeq += 1;
+export async function createInboundReceipt(
+  input: Omit<
+    InboundReceipt,
+    "id" | "status" | "paymentRequestId" | "weightDiffKg" | "deductionPct" | "amountDue"
+  > & {
+    status?: InboundReceiptStatus;
+    fifoOverrideReason?: string | null;
+    allowOutsideWindow?: boolean;
+  },
+): Promise<InboundReceipt> {
+  const contract = await getContractByRef(input.tradeRef);
+  if (!contract) throw new Error("Locked contract not found");
+  assertWithinDeliveryWindow(
+    contract,
+    input.receiveDate ?? new Date(),
+    input.allowOutsideWindow ?? false,
+  );
+
   const weightDiffKg = input.weightWarehouseKg - input.weightSpotKg;
   const deductionPct = computeQualityDeduction(contract.qualityTolerances, input.qualityReadings);
   const netKg = input.weightWarehouseKg * (1 - deductionPct / 100);
@@ -92,154 +112,231 @@ export function createInboundReceipt(input: Omit<InboundReceipt, "id" | "status"
   const rateKg = contract.ratePerKg ?? contract.ratePerMaund! / KG_PER_MAUND;
   const amountDue = netKg * rateKg;
 
-  const { allowOutsideWindow: _allowOutsideWindow, ...receiptInput } = input;
-  const receipt: InboundReceipt = {
-    ...receiptInput,
-    id: `kcs-${rt.inboundSeq}`,
-    weightDiffKg,
-    deductionPct,
-    allocatedQtyMt,
-    fifoOverrideReason: input.fifoOverrideReason ?? null,
-    amountDue,
-    status: input.status ?? "ALLOCATED",
-    paymentRequestId: null,
-  };
-  rt.inboundReceipts.unshift(receipt);
-  refreshContract(input.tradeRef);
-  persistExecutionState();
-  return receipt;
+  const row = await prisma.inboundReceipt.create({
+    data: {
+      kcsNo: input.kcsNo,
+      gatepassNo: await resolvableGatepassNo(input.gatepassNo),
+      tradeRef: input.tradeRef,
+      receiveDate: input.receiveDate,
+      truckNo: input.truckNo,
+      driverName: input.driverName ?? null,
+      driverCnic: input.driverCnic ?? null,
+      driverPhone: input.driverPhone ?? null,
+      biltyNo: input.biltyNo,
+      trnNo: input.trnNo,
+      warehouseName: input.warehouseName,
+      sellerName: input.sellerName,
+      billNo: input.billNo ?? null,
+      bags: input.bags ?? null,
+      weightSpotKg: input.weightSpotKg,
+      weightWarehouseKg: input.weightWarehouseKg,
+      weightDiffKg,
+      damagePct: input.qualityReadings.damagePct,
+      brokenPct: input.qualityReadings.brokenPct,
+      fungusPct: input.qualityReadings.fungusPct,
+      foreignMatterPct: input.qualityReadings.foreignMatterPct,
+      moisturePct: input.qualityReadings.moisturePct,
+      deductionPct,
+      allocatedQtyMt,
+      fifoOverrideReason: input.fifoOverrideReason ?? null,
+      amountDue,
+      status: input.status ?? "ALLOCATED",
+      documentRefs: input.documentRefs ?? [],
+      remarks: input.remarks ?? null,
+    },
+    include: INBOUND_INCLUDE,
+  });
+  await refreshContract(input.tradeRef);
+  return inboundRowToRuntime(row);
 }
 
-export function getInboundReceipts(tradeRef?: string) {
-  const rt = ex();
-  return tradeRef ? rt.inboundReceipts.filter((r) => r.tradeRef === tradeRef) : [...rt.inboundReceipts];
+export async function getInboundReceipts(tradeRef?: string): Promise<InboundReceipt[]> {
+  const rows = await prisma.inboundReceipt.findMany({
+    where: tradeRef ? { tradeRef } : undefined,
+    include: INBOUND_INCLUDE,
+    orderBy: { createdAt: "desc" },
+  });
+  return rows.map(inboundRowToRuntime);
 }
 
-export function submitInboundForFinance(receiptId: string) {
-  const rt = ex();
-  const r = rt.inboundReceipts.find((x) => x.id === receiptId);
-  if (!r) throw new Error("Receipt not found");
-  if (r.status === "PAID") throw new Error("Already paid");
-  rt.paymentSeq += 1;
-  const pr: PaymentRequest = {
-    id: `pay-${rt.paymentSeq}`,
-    sourceType: "INBOUND",
-    sourceId: r.id,
-    tradeRef: r.tradeRef,
-    counterpartyName: r.sellerName,
-    amount: r.amountDue,
-    currency: getContractByRef(r.tradeRef)?.currency ?? "PKR",
-    status: "PENDING",
-    financeComment: null,
-    approvedBy: null,
-    approvedAt: null,
-    createdAt: new Date(),
-  };
-  rt.paymentRequests.push(pr);
-  r.paymentRequestId = pr.id;
-  r.status = "FINANCE_PENDING";
-  persistExecutionState();
-  return { receipt: r, paymentRequest: pr };
+export async function submitInboundForFinance(receiptId: string) {
+  return prisma.$transaction(async (tx) => {
+    const r = await tx.inboundReceipt.findUnique({ where: { id: receiptId } });
+    if (!r) throw new Error("Receipt not found");
+    if (r.status === "PAID") throw new Error("Already paid");
+    const contract = await tx.executionContract.findUnique({
+      where: { tradeRef: r.tradeRef },
+      select: { currency: true },
+    });
+    const seq = await nextRef(COUNTER.PAYMENT, tx);
+    const pr = await tx.paymentRequest.create({
+      data: {
+        requestRef: `pay-${seq}`,
+        sourceType: "INBOUND",
+        sourceId: r.id,
+        tradeRef: r.tradeRef,
+        counterpartyName: r.sellerName,
+        amount: r.amountDue,
+        currency: contract?.currency ?? "PKR",
+        status: "PENDING",
+      },
+    });
+    // Guarded transition — loses against a concurrent approval marking it PAID.
+    const updated = await tx.inboundReceipt.updateMany({
+      where: { id: receiptId, status: { not: "PAID" } },
+      data: { paymentRequestId: pr.id, status: "FINANCE_PENDING" },
+    });
+    if (updated.count === 0) throw new Error("Already paid");
+    const fresh = await tx.inboundReceipt.findUnique({
+      where: { id: receiptId },
+      include: INBOUND_INCLUDE,
+    });
+    return { receipt: inboundRowToRuntime(fresh!), paymentRequest: paymentRowToRuntime(pr) };
+  });
 }
 
-export function createOutboundDispatch(
-  input: Omit<OutboundDispatch, "id" | "status" | "paymentRequestId" | "amountDue" | "allocatedQtyMt">,
+export async function createOutboundDispatch(
+  input: Omit<
+    OutboundDispatch,
+    "id" | "status" | "paymentRequestId" | "amountDue" | "allocatedQtyMt"
+  >,
   options?: { status?: OutboundDispatchStatus; allowOutsideWindow?: boolean },
-) {
-  const contract = getContractByRef(input.tradeRef);
+): Promise<OutboundDispatch> {
+  const contract = await getContractByRef(input.tradeRef);
   if (!contract) throw new Error("Locked sale contract not found");
-  assertWithinDeliveryWindow(contract, input.dispatchDate ?? new Date(), options?.allowOutsideWindow ?? false);
-  const rt = ex();
-  rt.outboundSeq += 1;
+  assertWithinDeliveryWindow(
+    contract,
+    input.dispatchDate ?? new Date(),
+    options?.allowOutsideWindow ?? false,
+  );
   const allocatedQtyMt = kgToQuantityUnit(input.invoiceWeightKg, contract.quantityUnit);
   const dispatchStatus = options?.status ?? "WEIGHED";
   if (countsAsReleasedOutbound(dispatchStatus)) {
-    assertSufficientOutboundStock(input.warehouseName, contract.commodityCode, allocatedQtyMt);
+    await assertSufficientOutboundStock(input.warehouseName, contract.commodityCode, allocatedQtyMt);
   }
   const rateKg = contract.ratePerKg ?? contract.ratePerMaund! / KG_PER_MAUND;
   const amountDue = input.invoiceWeightKg * rateKg;
-  const dispatch: OutboundDispatch = {
-    ...input,
-    id: `out-${rt.outboundSeq}`,
-    allocatedQtyMt,
-    amountDue,
-    status: dispatchStatus,
-    paymentRequestId: null,
-  };
-  rt.outboundDispatches.unshift(dispatch);
-  refreshContract(input.tradeRef);
-  persistExecutionState();
-  return dispatch;
+  const row = await prisma.outboundDispatch.create({
+    data: {
+      gatepassNo: await resolvableGatepassNo(input.gatepassNo),
+      tradeRef: input.tradeRef,
+      dispatchDate: input.dispatchDate,
+      liftedBy: input.liftedBy,
+      buyerName: input.buyerName,
+      warehouseName: input.warehouseName,
+      truckNo: input.truckNo,
+      driverName: input.driverName ?? null,
+      driverCnic: input.driverCnic ?? null,
+      driverPhone: input.driverPhone ?? null,
+      dispatchWeightKg: input.dispatchWeightKg,
+      invoiceWeightKg: input.invoiceWeightKg,
+      fungusPct: input.fungusPct,
+      doRef: input.doRef ?? null,
+      fifoOverrideReason: input.fifoOverrideReason ?? null,
+      allocatedQtyMt,
+      amountDue,
+      status: dispatchStatus,
+      documentRefs: input.documentRefs ?? [],
+      remarks: input.remarks ?? null,
+    },
+    include: OUTBOUND_INCLUDE,
+  });
+  await refreshContract(input.tradeRef);
+  return outboundRowToRuntime(row);
 }
 
-export function getOutboundDispatches(tradeRef?: string) {
-  const rt = ex();
-  return tradeRef ? rt.outboundDispatches.filter((d) => d.tradeRef === tradeRef) : [...rt.outboundDispatches];
+export async function getOutboundDispatches(tradeRef?: string): Promise<OutboundDispatch[]> {
+  const rows = await prisma.outboundDispatch.findMany({
+    where: tradeRef ? { tradeRef } : undefined,
+    include: OUTBOUND_INCLUDE,
+    orderBy: { createdAt: "desc" },
+  });
+  return rows.map(outboundRowToRuntime);
 }
 
-export function requestOutboundRelease(dispatchId: string) {
-  const rt = ex();
-  const d = rt.outboundDispatches.find((x) => x.id === dispatchId);
+export async function requestOutboundRelease(dispatchId: string) {
+  return prisma.$transaction(async (tx) => {
+    const d = await tx.outboundDispatch.findUnique({ where: { id: dispatchId } });
+    if (!d) throw new Error("Dispatch not found");
+    if (d.status === "RELEASED") throw new Error("Already released");
+    const contract = await tx.executionContract.findUnique({
+      where: { tradeRef: d.tradeRef },
+      select: { currency: true },
+    });
+    const seq = await nextRef(COUNTER.PAYMENT, tx);
+    const pr = await tx.paymentRequest.create({
+      data: {
+        requestRef: `pay-${seq}`,
+        sourceType: "OUTBOUND",
+        sourceId: d.id,
+        tradeRef: d.tradeRef,
+        counterpartyName: d.buyerName,
+        amount: d.amountDue,
+        currency: contract?.currency ?? "PKR",
+        status: "PENDING",
+      },
+    });
+    const updated = await tx.outboundDispatch.updateMany({
+      where: { id: dispatchId, status: { not: "RELEASED" } },
+      data: { paymentRequestId: pr.id, status: "FINANCE_PENDING" },
+    });
+    if (updated.count === 0) throw new Error("Already released");
+    const fresh = await tx.outboundDispatch.findUnique({
+      where: { id: dispatchId },
+      include: OUTBOUND_INCLUDE,
+    });
+    return { dispatch: outboundRowToRuntime(fresh!), paymentRequest: paymentRowToRuntime(pr) };
+  });
+}
+
+export async function releaseOutbound(dispatchId: string, doRef: string): Promise<OutboundDispatch> {
+  const d = await prisma.outboundDispatch.findUnique({
+    where: { id: dispatchId },
+    include: { paymentRequest: { select: { status: true } } },
+  });
   if (!d) throw new Error("Dispatch not found");
-  if (d.status === "RELEASED") throw new Error("Already released");
-  rt.paymentSeq += 1;
-  const contract = getContractByRef(d.tradeRef);
-  const pr: PaymentRequest = {
-    id: `pay-${rt.paymentSeq}`,
-    sourceType: "OUTBOUND",
-    sourceId: d.id,
-    tradeRef: d.tradeRef,
-    counterpartyName: d.buyerName,
-    amount: d.amountDue,
-    currency: contract?.currency ?? "PKR",
-    status: "PENDING",
-    financeComment: null,
-    approvedBy: null,
-    approvedAt: null,
-    createdAt: new Date(),
-  };
-  rt.paymentRequests.push(pr);
-  d.paymentRequestId = pr.id;
-  d.status = "FINANCE_PENDING";
-  persistExecutionState();
-  return { dispatch: d, paymentRequest: pr };
-}
-
-export function releaseOutbound(dispatchId: string, doRef: string) {
-  const rt = ex();
-  const d = rt.outboundDispatches.find((x) => x.id === dispatchId);
-  if (!d) throw new Error("Dispatch not found");
-  const pr = d.paymentRequestId ? rt.paymentRequests.find((p) => p.id === d.paymentRequestId) : null;
-  if (!pr || pr.status !== "APPROVED") {
+  if (!d.paymentRequest || d.paymentRequest.status !== "APPROVED") {
     throw new Error("Finance must approve payment before release");
   }
-  d.doRef = doRef;
-  d.status = "RELEASED";
-  refreshContract(d.tradeRef);
-  persistExecutionState();
-  return d;
+  // Guarded transition — release applies once.
+  const updated = await prisma.outboundDispatch.updateMany({
+    where: { id: dispatchId, status: { not: "RELEASED" } },
+    data: { doRef, status: "RELEASED" },
+  });
+  if (updated.count === 0) throw new Error("Already released");
+  await refreshContract(d.tradeRef);
+  const fresh = await prisma.outboundDispatch.findUnique({
+    where: { id: dispatchId },
+    include: OUTBOUND_INCLUDE,
+  });
+  return outboundRowToRuntime(fresh!);
 }
 
-function movementsForGatepass(
-  rt: ReturnType<typeof getExecutionRuntime>,
-  gatepassNo: string | null | undefined,
-  truckNo: string,
-) {
-  const gp = gatepassNo?.trim();
-  if (!gp) return { receipts: [] as InboundReceipt[], dispatches: [] as OutboundDispatch[] };
-  const tn = truckNo.trim().toUpperCase();
-  return {
-    receipts: rt.inboundReceipts.filter(
-      (r) => r.gatepassNo === gp && r.truckNo.trim().toUpperCase() === tn,
-    ),
-    dispatches: rt.outboundDispatches.filter(
-      (d) => d.gatepassNo === gp && d.truckNo.trim().toUpperCase() === tn,
-    ),
-  };
+/** Keep a PENDING payment request's amount in sync with its source receipt. */
+async function syncPaymentAmountForInbound(receipt: {
+  paymentRequestId: string | null;
+  amountDue: Prisma.Decimal | number;
+}): Promise<void> {
+  if (!receipt.paymentRequestId) return;
+  await prisma.paymentRequest.updateMany({
+    where: { id: receipt.paymentRequestId, status: "PENDING" },
+    data: { amount: receipt.amountDue },
+  });
 }
 
-function syncLinkedPendingTrucks(
-  rt: ReturnType<typeof getExecutionRuntime>,
+async function syncPaymentAmountForOutbound(dispatch: {
+  paymentRequestId: string | null;
+  amountDue: Prisma.Decimal | number;
+}): Promise<void> {
+  if (!dispatch.paymentRequestId) return;
+  await prisma.paymentRequest.updateMany({
+    where: { id: dispatch.paymentRequestId, status: "PENDING" },
+    data: { amount: dispatch.amountDue },
+  });
+}
+
+/** Mirror gatepass-level edits onto pending trucks sharing the same gatepass + truck no. */
+async function syncLinkedPendingTrucks(
   gatepassNo: string | null | undefined,
   truckNo: string,
   patch: Partial<{
@@ -252,31 +349,32 @@ function syncLinkedPendingTrucks(
     weightKg: number;
     bags: number | null;
   }>,
-) {
-  const { receipts, dispatches } = movementsForGatepass(rt, gatepassNo, truckNo);
+): Promise<void> {
   const gp = gatepassNo?.trim();
   if (!gp) return;
   const tn = truckNo.trim().toUpperCase();
-  for (const truck of rt.pendingTrucks) {
-    if (truck.gatepassNo !== gp || truck.truckNo.trim().toUpperCase() !== tn) continue;
-    if (patch.warehouseName != null) truck.warehouseName = patch.warehouseName;
-    if (patch.truckNo != null) truck.truckNo = patch.truckNo.trim().toUpperCase();
-    if (patch.transporterName !== undefined) truck.transporterName = patch.transporterName;
-    if (patch.transporterPhone !== undefined) truck.transporterPhone = patch.transporterPhone;
-    if (patch.counterpartyName != null) truck.counterpartyName = patch.counterpartyName;
-    if (patch.builtyDetails != null) truck.builtyDetails = patch.builtyDetails;
-    if (patch.bags !== undefined) truck.bags = patch.bags;
+  const trucks = await prisma.pendingTruck.findMany({ where: { gatepassNo: gp } });
+  for (const truck of trucks) {
+    if (truck.truckNo.trim().toUpperCase() !== tn) continue;
+    const data: Prisma.PendingTruckUpdateInput = {};
+    if (patch.warehouseName != null) data.warehouseName = patch.warehouseName;
+    if (patch.truckNo != null) data.truckNo = patch.truckNo.trim().toUpperCase();
+    if (patch.transporterName !== undefined) data.transporterName = patch.transporterName;
+    if (patch.transporterPhone !== undefined) data.transporterPhone = patch.transporterPhone;
+    if (patch.counterpartyName != null) data.counterpartyName = patch.counterpartyName;
+    if (patch.builtyDetails != null) data.builtyDetails = patch.builtyDetails;
+    if (patch.bags !== undefined) data.quantityBagsBales = patch.bags;
     if (patch.weightKg != null && truck.status !== "ASSIGNED") {
-      truck.weightKg = patch.weightKg;
-      truck.remainingKg = patch.weightKg;
+      data.weightKg = patch.weightKg;
+      data.remainingKg = patch.weightKg;
+    }
+    if (Object.keys(data).length) {
+      await prisma.pendingTruck.update({ where: { id: truck.id }, data });
     }
   }
-  void receipts;
-  void dispatches;
 }
 
-export function syncLinkedMovementsFromGatepass(
-  rt: ReturnType<typeof getExecutionRuntime>,
+export async function syncLinkedMovementsFromGatepass(
   gatepassNo: string | null | undefined,
   truckNo: string,
   patch: Partial<{
@@ -287,48 +385,53 @@ export function syncLinkedMovementsFromGatepass(
     counterpartyName: string;
     builtyDetails: string;
   }>,
-) {
+): Promise<void> {
+  const gp = gatepassNo?.trim();
+  if (!gp) return;
+  const tn = truckNo.trim().toUpperCase();
   const tradeRefs = new Set<string>();
-  const { receipts, dispatches } = movementsForGatepass(rt, gatepassNo, truckNo);
+
+  const receipts = await prisma.inboundReceipt.findMany({ where: { gatepassNo: gp } });
   for (const r of receipts) {
-    if (patch.warehouseName != null) r.warehouseName = patch.warehouseName;
-    if (patch.truckNo != null) r.truckNo = patch.truckNo.trim().toUpperCase();
-    if (patch.transporterName !== undefined) r.driverName = patch.transporterName;
-    if (patch.transporterPhone !== undefined) r.driverPhone = patch.transporterPhone;
-    if (patch.counterpartyName != null) r.sellerName = patch.counterpartyName;
-    if (patch.builtyDetails != null) r.biltyNo = patch.builtyDetails;
+    if (r.truckNo.trim().toUpperCase() !== tn) continue;
+    const data: Prisma.InboundReceiptUpdateInput = {};
+    if (patch.warehouseName != null) data.warehouseName = patch.warehouseName;
+    if (patch.truckNo != null) data.truckNo = patch.truckNo.trim().toUpperCase();
+    if (patch.transporterName !== undefined) data.driverName = patch.transporterName;
+    if (patch.transporterPhone !== undefined) data.driverPhone = patch.transporterPhone;
+    if (patch.counterpartyName != null) data.sellerName = patch.counterpartyName;
+    if (patch.builtyDetails != null) data.biltyNo = patch.builtyDetails;
+    if (Object.keys(data).length) {
+      await prisma.inboundReceipt.update({ where: { id: r.id }, data });
+    }
     tradeRefs.add(r.tradeRef);
-    syncPaymentAmountForInbound(rt, r);
+    await syncPaymentAmountForInbound(r);
   }
+
+  const dispatches = await prisma.outboundDispatch.findMany({ where: { gatepassNo: gp } });
   for (const d of dispatches) {
-    if (patch.warehouseName != null) d.warehouseName = patch.warehouseName;
-    if (patch.truckNo != null) d.truckNo = patch.truckNo.trim().toUpperCase();
-    if (patch.transporterName !== undefined) d.driverName = patch.transporterName;
-    if (patch.transporterPhone !== undefined) d.driverPhone = patch.transporterPhone;
+    if (d.truckNo.trim().toUpperCase() !== tn) continue;
+    const data: Prisma.OutboundDispatchUpdateInput = {};
+    if (patch.warehouseName != null) data.warehouseName = patch.warehouseName;
+    if (patch.truckNo != null) data.truckNo = patch.truckNo.trim().toUpperCase();
+    if (patch.transporterName !== undefined) data.driverName = patch.transporterName;
+    if (patch.transporterPhone !== undefined) data.driverPhone = patch.transporterPhone;
     if (patch.counterpartyName != null) {
-      d.buyerName = patch.counterpartyName;
-      d.liftedBy = patch.transporterName ?? patch.counterpartyName;
+      data.buyerName = patch.counterpartyName;
+      data.liftedBy = patch.transporterName ?? patch.counterpartyName;
+    }
+    if (Object.keys(data).length) {
+      await prisma.outboundDispatch.update({ where: { id: d.id }, data });
     }
     tradeRefs.add(d.tradeRef);
-    syncPaymentAmountForOutbound(rt, d);
+    await syncPaymentAmountForOutbound(d);
   }
-  syncLinkedPendingTrucks(rt, gatepassNo, truckNo, patch);
-  for (const ref of tradeRefs) refreshContract(ref);
+
+  await syncLinkedPendingTrucks(gp, tn, patch);
+  for (const ref of tradeRefs) await refreshContract(ref);
 }
 
-function syncPaymentAmountForInbound(rt: ReturnType<typeof getExecutionRuntime>, receipt: InboundReceipt) {
-  if (!receipt.paymentRequestId) return;
-  const pr = rt.paymentRequests.find((p) => p.id === receipt.paymentRequestId);
-  if (pr && pr.status === "PENDING") pr.amount = receipt.amountDue;
-}
-
-function syncPaymentAmountForOutbound(rt: ReturnType<typeof getExecutionRuntime>, dispatch: OutboundDispatch) {
-  if (!dispatch.paymentRequestId) return;
-  const pr = rt.paymentRequests.find((p) => p.id === dispatch.paymentRequestId);
-  if (pr && pr.status === "PENDING") pr.amount = dispatch.amountDue;
-}
-
-export function updateInboundReceipt(
+export async function updateInboundReceipt(
   id: string,
   patch: Partial<{
     gatepassNo: string | null;
@@ -343,58 +446,64 @@ export function updateInboundReceipt(
     weightWarehouseKg: number;
     remarks: string | null;
   }>,
-): InboundReceipt {
-  syncExecutionFromDisk();
-  setBatchRefreshingContracts(true);
-  try {
-    const rt = getExecutionRuntime();
-    const receipt = rt.inboundReceipts.find((r) => r.id === id);
-    if (!receipt) throw new Error("Inbound receipt not found");
-    const prevGatepass = receipt.gatepassNo;
-    const prevTruckNo = receipt.truckNo;
-    const contract = getContractByRef(receipt.tradeRef);
-    if (!contract) throw new Error("Locked contract not found");
+): Promise<InboundReceipt> {
+  const receipt = await prisma.inboundReceipt.findUnique({ where: { id } });
+  if (!receipt) throw new Error("Inbound receipt not found");
+  const prevGatepass = receipt.gatepassNo;
+  const prevTruckNo = receipt.truckNo;
+  const contract = await getContractByRef(receipt.tradeRef);
+  if (!contract) throw new Error("Locked contract not found");
 
-    if (patch.gatepassNo !== undefined) receipt.gatepassNo = patch.gatepassNo?.trim() || null;
-    if (patch.truckNo != null) receipt.truckNo = patch.truckNo.trim().toUpperCase();
-    if (patch.warehouseName != null) receipt.warehouseName = patch.warehouseName.trim();
-    if (patch.sellerName != null) receipt.sellerName = patch.sellerName.trim();
-    if (patch.driverName !== undefined) receipt.driverName = patch.driverName?.trim() || null;
-    if (patch.driverPhone !== undefined) receipt.driverPhone = patch.driverPhone?.trim() || null;
-    if (patch.biltyNo != null) receipt.biltyNo = patch.biltyNo.trim();
-    if (patch.bags !== undefined) receipt.bags = patch.bags;
-    if (patch.remarks !== undefined) receipt.remarks = patch.remarks?.trim() || null;
-    if (patch.weightSpotKg != null) receipt.weightSpotKg = patch.weightSpotKg;
-    if (patch.weightWarehouseKg != null) receipt.weightWarehouseKg = patch.weightWarehouseKg;
-
-    if (patch.weightSpotKg != null || patch.weightWarehouseKg != null) {
-      receipt.weightDiffKg = receipt.weightWarehouseKg - receipt.weightSpotKg;
-      const netKg = receipt.weightWarehouseKg * (1 - receipt.deductionPct / 100);
-      receipt.allocatedQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
-      const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
-      receipt.amountDue = netKg * rateKg;
-    }
-
-    syncLinkedPendingTrucks(rt, prevGatepass, prevTruckNo, {
-      warehouseName: receipt.warehouseName,
-      truckNo: receipt.truckNo,
-      transporterName: receipt.driverName,
-      transporterPhone: receipt.driverPhone,
-      counterpartyName: receipt.sellerName,
-      builtyDetails: receipt.biltyNo,
-      weightKg: receipt.weightWarehouseKg,
-      bags: receipt.bags,
-    });
-    syncPaymentAmountForInbound(rt, receipt);
-    refreshContract(receipt.tradeRef);
-    persistExecutionState();
-    return receipt;
-  } finally {
-    setBatchRefreshingContracts(false);
+  const data: Prisma.InboundReceiptUpdateInput = {};
+  if (patch.gatepassNo !== undefined) {
+    data.gatepassTruck = { disconnect: true };
+    const gp = await resolvableGatepassNo(patch.gatepassNo);
+    if (gp) data.gatepassTruck = { connect: { gatepassNo: gp } };
   }
+  if (patch.truckNo != null) data.truckNo = patch.truckNo.trim().toUpperCase();
+  if (patch.warehouseName != null) data.warehouseName = patch.warehouseName.trim();
+  if (patch.sellerName != null) data.sellerName = patch.sellerName.trim();
+  if (patch.driverName !== undefined) data.driverName = patch.driverName?.trim() || null;
+  if (patch.driverPhone !== undefined) data.driverPhone = patch.driverPhone?.trim() || null;
+  if (patch.biltyNo != null) data.biltyNo = patch.biltyNo.trim();
+  if (patch.bags !== undefined) data.bags = patch.bags;
+  if (patch.remarks !== undefined) data.remarks = patch.remarks?.trim() || null;
+  if (patch.weightSpotKg != null) data.weightSpotKg = patch.weightSpotKg;
+  if (patch.weightWarehouseKg != null) data.weightWarehouseKg = patch.weightWarehouseKg;
+
+  if (patch.weightSpotKg != null || patch.weightWarehouseKg != null) {
+    const weightSpotKg = patch.weightSpotKg ?? num(receipt.weightSpotKg);
+    const weightWarehouseKg = patch.weightWarehouseKg ?? num(receipt.weightWarehouseKg);
+    const deductionPct = num(receipt.deductionPct);
+    const netKg = weightWarehouseKg * (1 - deductionPct / 100);
+    const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
+    data.weightDiffKg = weightWarehouseKg - weightSpotKg;
+    data.allocatedQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
+    data.amountDue = netKg * rateKg;
+  }
+
+  const updated = await prisma.inboundReceipt.update({
+    where: { id },
+    data,
+    include: INBOUND_INCLUDE,
+  });
+
+  await syncLinkedPendingTrucks(prevGatepass, prevTruckNo, {
+    warehouseName: updated.warehouseName,
+    truckNo: updated.truckNo,
+    transporterName: updated.driverName,
+    transporterPhone: updated.driverPhone,
+    counterpartyName: updated.sellerName,
+    builtyDetails: updated.biltyNo,
+    weightKg: num(updated.weightWarehouseKg),
+    bags: updated.bags,
+  });
+  await syncPaymentAmountForInbound(updated);
+  await refreshContract(updated.tradeRef);
+  return inboundRowToRuntime(updated);
 }
 
-export function updateOutboundDispatch(
+export async function updateOutboundDispatch(
   id: string,
   patch: Partial<{
     gatepassNo: string | null;
@@ -409,141 +518,178 @@ export function updateOutboundDispatch(
     doRef: string | null;
     remarks: string | null;
   }>,
-): OutboundDispatch {
-  syncExecutionFromDisk();
-  setBatchRefreshingContracts(true);
-  try {
-    const rt = getExecutionRuntime();
-    const dispatch = rt.outboundDispatches.find((d) => d.id === id);
-    if (!dispatch) throw new Error("Outbound dispatch not found");
-    const prevGatepass = dispatch.gatepassNo;
-    const prevTruckNo = dispatch.truckNo;
-    const contract = getContractByRef(dispatch.tradeRef);
-    if (!contract) throw new Error("Locked contract not found");
-
-    if (patch.gatepassNo !== undefined) dispatch.gatepassNo = patch.gatepassNo?.trim() || null;
-    if (patch.truckNo != null) dispatch.truckNo = patch.truckNo.trim().toUpperCase();
-    if (patch.warehouseName != null) dispatch.warehouseName = patch.warehouseName.trim();
-    if (patch.buyerName != null) dispatch.buyerName = patch.buyerName.trim();
-    if (patch.liftedBy != null) dispatch.liftedBy = patch.liftedBy.trim();
-    if (patch.driverName !== undefined) dispatch.driverName = patch.driverName?.trim() || null;
-    if (patch.driverPhone !== undefined) dispatch.driverPhone = patch.driverPhone?.trim() || null;
-    if (patch.doRef !== undefined) dispatch.doRef = patch.doRef?.trim() || null;
-    if (patch.remarks !== undefined) dispatch.remarks = patch.remarks?.trim() || null;
-    if (patch.dispatchWeightKg != null) dispatch.dispatchWeightKg = patch.dispatchWeightKg;
-    if (patch.invoiceWeightKg != null) dispatch.invoiceWeightKg = patch.invoiceWeightKg;
-
-    if (patch.dispatchWeightKg != null || patch.invoiceWeightKg != null) {
-      const weightKg = dispatch.invoiceWeightKg;
-      dispatch.allocatedQtyMt = kgToQuantityUnit(weightKg, contract.quantityUnit);
-      const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
-      dispatch.amountDue = weightKg * rateKg;
-    }
-
-    const wh = dispatch.warehouseName;
-    const code = contract.commodityCode;
-    if (countsAsReleasedOutbound(dispatch.status)) {
-      assertSufficientOutboundStock(wh, code, dispatch.allocatedQtyMt, { dispatchId: dispatch.id });
-    }
-
-    syncLinkedPendingTrucks(rt, prevGatepass, prevTruckNo, {
-      warehouseName: dispatch.warehouseName,
-      truckNo: dispatch.truckNo,
-      transporterName: dispatch.driverName,
-      transporterPhone: dispatch.driverPhone,
-      counterpartyName: dispatch.buyerName,
-      weightKg: dispatch.dispatchWeightKg,
-    });
-    syncPaymentAmountForOutbound(rt, dispatch);
-    refreshContract(dispatch.tradeRef);
-    persistExecutionState();
-    return dispatch;
-  } finally {
-    setBatchRefreshingContracts(false);
-  }
-}
-
-export function deleteInboundReceipt(id: string): { ok: true } {
-  syncExecutionFromDisk();
-  const rt = getExecutionRuntime();
-  const receipt = rt.inboundReceipts.find((r) => r.id === id);
-  if (!receipt) throw new Error("Inbound receipt not found");
-  rt.inboundReceipts = rt.inboundReceipts.filter((r) => r.id !== id);
-  if (receipt.paymentRequestId) {
-    rt.paymentRequests = rt.paymentRequests.filter((p) => p.id !== receipt.paymentRequestId);
-  }
-  refreshContract(receipt.tradeRef);
-  persistExecutionState();
-  return { ok: true };
-}
-
-export function deleteOutboundDispatch(id: string): { ok: true } {
-  syncExecutionFromDisk();
-  const rt = getExecutionRuntime();
-  const dispatch = rt.outboundDispatches.find((d) => d.id === id);
+): Promise<OutboundDispatch> {
+  const dispatch = await prisma.outboundDispatch.findUnique({ where: { id } });
   if (!dispatch) throw new Error("Outbound dispatch not found");
-  rt.outboundDispatches = rt.outboundDispatches.filter((d) => d.id !== id);
-  if (dispatch.paymentRequestId) {
-    rt.paymentRequests = rt.paymentRequests.filter((p) => p.id !== dispatch.paymentRequestId);
+  const prevGatepass = dispatch.gatepassNo;
+  const prevTruckNo = dispatch.truckNo;
+  const contract = await getContractByRef(dispatch.tradeRef);
+  if (!contract) throw new Error("Locked contract not found");
+
+  const data: Prisma.OutboundDispatchUpdateInput = {};
+  if (patch.gatepassNo !== undefined) {
+    data.gatepassTruck = { disconnect: true };
+    const gp = await resolvableGatepassNo(patch.gatepassNo);
+    if (gp) data.gatepassTruck = { connect: { gatepassNo: gp } };
   }
-  refreshContract(dispatch.tradeRef);
-  persistExecutionState();
+  if (patch.truckNo != null) data.truckNo = patch.truckNo.trim().toUpperCase();
+  if (patch.warehouseName != null) data.warehouseName = patch.warehouseName.trim();
+  if (patch.buyerName != null) data.buyerName = patch.buyerName.trim();
+  if (patch.liftedBy != null) data.liftedBy = patch.liftedBy.trim();
+  if (patch.driverName !== undefined) data.driverName = patch.driverName?.trim() || null;
+  if (patch.driverPhone !== undefined) data.driverPhone = patch.driverPhone?.trim() || null;
+  if (patch.doRef !== undefined) data.doRef = patch.doRef?.trim() || null;
+  if (patch.remarks !== undefined) data.remarks = patch.remarks?.trim() || null;
+  if (patch.dispatchWeightKg != null) data.dispatchWeightKg = patch.dispatchWeightKg;
+  if (patch.invoiceWeightKg != null) data.invoiceWeightKg = patch.invoiceWeightKg;
+
+  let allocatedQtyMt = num(dispatch.allocatedQtyMt);
+  if (patch.dispatchWeightKg != null || patch.invoiceWeightKg != null) {
+    const weightKg = patch.invoiceWeightKg ?? num(dispatch.invoiceWeightKg);
+    const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
+    allocatedQtyMt = kgToQuantityUnit(weightKg, contract.quantityUnit);
+    data.allocatedQtyMt = allocatedQtyMt;
+    data.amountDue = weightKg * rateKg;
+  }
+
+  // Validate stock before persisting anything.
+  const wh = patch.warehouseName != null ? patch.warehouseName.trim() : dispatch.warehouseName;
+  if (countsAsReleasedOutbound(dispatch.status)) {
+    await assertSufficientOutboundStock(wh, contract.commodityCode, allocatedQtyMt, {
+      dispatchId: dispatch.id,
+    });
+  }
+
+  const updated = await prisma.outboundDispatch.update({
+    where: { id },
+    data,
+    include: OUTBOUND_INCLUDE,
+  });
+
+  await syncLinkedPendingTrucks(prevGatepass, prevTruckNo, {
+    warehouseName: updated.warehouseName,
+    truckNo: updated.truckNo,
+    transporterName: updated.driverName,
+    transporterPhone: updated.driverPhone,
+    counterpartyName: updated.buyerName,
+    weightKg: num(updated.dispatchWeightKg),
+  });
+  await syncPaymentAmountForOutbound(updated);
+  await refreshContract(updated.tradeRef);
+  return outboundRowToRuntime(updated);
+}
+
+export async function deleteInboundReceipt(id: string): Promise<{ ok: true }> {
+  const receipt = await prisma.inboundReceipt.findUnique({ where: { id } });
+  if (!receipt) throw new Error("Inbound receipt not found");
+  await prisma.inboundReceipt.delete({ where: { id } });
+  if (receipt.paymentRequestId) {
+    await prisma.paymentRequest.deleteMany({ where: { id: receipt.paymentRequestId } });
+  }
+  await refreshContract(receipt.tradeRef);
   return { ok: true };
 }
 
-function commodityCodeForTradeRef(tradeRef: string): string | null {
-  syncAllLockedContracts();
-  return getExecutionRuntime().contracts.get(tradeRef)?.commodityCode ?? null;
+export async function deleteOutboundDispatch(id: string): Promise<{ ok: true }> {
+  const dispatch = await prisma.outboundDispatch.findUnique({ where: { id } });
+  if (!dispatch) throw new Error("Outbound dispatch not found");
+  await prisma.outboundDispatch.delete({ where: { id } });
+  if (dispatch.paymentRequestId) {
+    await prisma.paymentRequest.deleteMany({ where: { id: dispatch.paymentRequestId } });
+  }
+  await refreshContract(dispatch.tradeRef);
+  return { ok: true };
 }
 
-export function getWarehouseCommodityStockMt(
+async function commodityCodeByTradeRef(): Promise<Map<string, string>> {
+  const rows = await prisma.executionContract.findMany({
+    select: { tradeRef: true, commodityCode: true },
+  });
+  return new Map(rows.map((r) => [r.tradeRef, r.commodityCode]));
+}
+
+type MovementStockRow = {
+  id: string;
+  warehouseName: string;
+  tradeRef: string;
+  allocatedQtyMt: number;
+  status: string;
+};
+
+async function loadStockMovements(): Promise<{
+  inbound: MovementStockRow[];
+  outbound: MovementStockRow[];
+}> {
+  const [inboundRows, outboundRows] = await Promise.all([
+    prisma.inboundReceipt.findMany({
+      select: { id: true, warehouseName: true, tradeRef: true, allocatedQtyMt: true, status: true },
+    }),
+    prisma.outboundDispatch.findMany({
+      select: { id: true, warehouseName: true, tradeRef: true, allocatedQtyMt: true, status: true },
+    }),
+  ]);
+  return {
+    inbound: inboundRows.map((r) => ({ ...r, allocatedQtyMt: num(r.allocatedQtyMt) })),
+    outbound: outboundRows.map((d) => ({ ...d, allocatedQtyMt: num(d.allocatedQtyMt) })),
+  };
+}
+
+export async function getWarehouseCommodityStockMt(
   warehouseName: string,
   commodityCode: string,
   exclude?: { inboundId?: string; outboundId?: string },
-): number {
-  syncExecutionFromDisk();
-  syncAllLockedContracts();
-  const rt = getExecutionRuntime();
+): Promise<number> {
+  const [{ inbound, outbound }, codeByRef] = await Promise.all([
+    loadStockMovements(),
+    commodityCodeByTradeRef(),
+  ]);
   return netCommodityStockMt(
     warehouseName,
     commodityCode,
-    rt.inboundReceipts,
-    rt.outboundDispatches,
-    commodityCodeForTradeRef,
+    inbound,
+    outbound,
+    (tradeRef) => codeByRef.get(tradeRef) ?? null,
     exclude,
   );
 }
 
 /** Physical stock minus outbound trucks still at gate (not yet assigned). Includes unallocated inbound. */
-export function getAvailableOutboundStockMt(
+export async function getAvailableOutboundStockMt(
   warehouseName: string,
   commodityCode: string,
   exclude?: { truckId?: string; dispatchId?: string },
-): number {
-  syncExecutionFromDisk();
-  let available = getWarehouseCommodityStockMt(warehouseName, commodityCode, {
+): Promise<number> {
+  let available = await getWarehouseCommodityStockMt(warehouseName, commodityCode, {
     outboundId: exclude?.dispatchId,
   });
-  const rt = getExecutionRuntime();
-  for (const t of rt.pendingTrucks) {
+  const trucks = await prisma.pendingTruck.findMany({
+    where: { status: { not: "ASSIGNED" } },
+    select: {
+      id: true,
+      warehouseName: true,
+      commodityCode: true,
+      movementType: true,
+      remainingKg: true,
+    },
+  });
+  for (const t of trucks) {
     if (exclude?.truckId && t.id === exclude.truckId) continue;
     if (normWarehouse(t.warehouseName) !== normWarehouse(warehouseName)) continue;
     if ((t.commodityCode ?? "").trim() !== commodityCode.trim()) continue;
-    if (t.status === "ASSIGNED") continue;
-    const qtyMt = kgToQuantityUnit(t.remainingKg, "MT");
+    const qtyMt = kgToQuantityUnit(num(t.remainingKg), "MT");
     if (t.movementType === "INBOUND") available += qtyMt;
     else available -= qtyMt;
   }
   return Math.max(0, available);
 }
 
-export function assertSufficientOutboundStock(
+export async function assertSufficientOutboundStock(
   warehouseName: string,
   commodityCode: string,
   qtyMt: number,
   exclude?: { truckId?: string; dispatchId?: string },
-): void {
-  const available = getAvailableOutboundStockMt(warehouseName, commodityCode, exclude);
+): Promise<void> {
+  const available = await getAvailableOutboundStockMt(warehouseName, commodityCode, exclude);
   if (qtyMt > available + openQtyEpsilon("MT")) {
     throw new Error(
       `Insufficient physical stock at ${warehouseName}: only ${available.toFixed(3)} MT of ${commodityCode} available, but ${qtyMt.toFixed(3)} MT requested. Outbound cannot exceed on-hand inventory.`,
@@ -551,16 +697,22 @@ export function assertSufficientOutboundStock(
   }
 }
 
-export function exportMovementsCsv(filter?: {
+export async function exportMovementsCsv(filter?: {
   warehouseName?: string;
   commodityCode?: string;
   movementType?: "INBOUND" | "OUTBOUND" | "ALL";
   from?: Date;
   to?: Date;
-}): string {
-  syncExecutionFromDisk();
-  const rt = getExecutionRuntime();
-  const contractByRef = new Map(rt.contracts.entries());
+}): Promise<string> {
+  const [trucks, receipts, dispatches, contracts] = await Promise.all([
+    prisma.pendingTruck.findMany({ orderBy: { createdAt: "desc" } }),
+    prisma.inboundReceipt.findMany({ orderBy: { createdAt: "desc" } }),
+    prisma.outboundDispatch.findMany({ orderBy: { createdAt: "desc" } }),
+    prisma.executionContract.findMany({
+      select: { tradeRef: true, commodityCode: true, currency: true },
+    }),
+  ]);
+  const contractByRef = new Map(contracts.map((c) => [c.tradeRef, c]));
   const escape = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
   const fmtDate = (d: Date) =>
     new Date(d).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
@@ -573,7 +725,7 @@ export function exportMovementsCsv(filter?: {
   const from = filter?.from;
   const to = filter?.to;
 
-  for (const t of rt.pendingTrucks) {
+  for (const t of trucks) {
     if (t.status === "ASSIGNED") continue;
     if (tp && tp !== t.movementType) continue;
     const d = new Date(t.arrivalDate);
@@ -581,6 +733,8 @@ export function exportMovementsCsv(filter?: {
     if (to && d > to) continue;
     if (wh && t.warehouseName !== wh) continue;
     if (cm && t.commodityCode !== cm) continue;
+    const remainingKg = num(t.remainingKg);
+    const gateInvoiceQtyMt = t.gateInvoiceQtyMt != null ? num(t.gateInvoiceQtyMt) : null;
     rows.push(
       [
         t.movementType,
@@ -592,12 +746,12 @@ export function exportMovementsCsv(filter?: {
         "—",
         t.commodityCode ?? "-",
         t.counterpartyName,
-        t.remainingKg,
-        t.gateInvoiceQtyMt != null ? t.gateInvoiceQtyMt.toFixed(3) : (t.remainingKg / 1000).toFixed(3),
-        t.gateInvoiceAmount ?? "",
+        remainingKg,
+        gateInvoiceQtyMt != null ? gateInvoiceQtyMt.toFixed(3) : (remainingKg / 1000).toFixed(3),
+        t.gateInvoiceAmount != null ? num(t.gateInvoiceAmount) : "",
         t.gateInvoiceCurrency ?? "",
         "GATEPASS_PENDING",
-        t.transporterName?.trim() || t.driverName?.trim() || "",
+        t.transporterName?.trim() || "",
         [t.builtyDetails, t.recordedByName ? `By ${t.recordedByName}` : ""].filter(Boolean).join(" · "),
       ]
         .map(escape)
@@ -606,7 +760,7 @@ export function exportMovementsCsv(filter?: {
   }
 
   if (!tp || tp === "INBOUND") {
-    for (const r of rt.inboundReceipts) {
+    for (const r of receipts) {
       const d = new Date(r.receiveDate);
       if (from && d < from) continue;
       if (to && d > to) continue;
@@ -615,13 +769,13 @@ export function exportMovementsCsv(filter?: {
       if (cm && c?.commodityCode !== cm) continue;
       rows.push(
         ["INBOUND", r.gatepassNo ?? r.kcsNo, r.billNo ?? "", fmtDate(d), r.truckNo, r.warehouseName, r.tradeRef,
-          c?.commodityCode ?? "-", r.sellerName, r.weightWarehouseKg, r.allocatedQtyMt.toFixed(3),
-          r.amountDue, c?.currency ?? "", r.status, r.driverName ?? "", r.remarks ?? ""].map(escape).join(","),
+          c?.commodityCode ?? "-", r.sellerName, num(r.weightWarehouseKg), num(r.allocatedQtyMt).toFixed(3),
+          num(r.amountDue), c?.currency ?? "", r.status, r.driverName ?? "", r.remarks ?? ""].map(escape).join(","),
       );
     }
   }
   if (!tp || tp === "OUTBOUND") {
-    for (const d2 of rt.outboundDispatches) {
+    for (const d2 of dispatches) {
       const d = new Date(d2.dispatchDate);
       if (from && d < from) continue;
       if (to && d > to) continue;
@@ -630,8 +784,8 @@ export function exportMovementsCsv(filter?: {
       if (cm && c?.commodityCode !== cm) continue;
       rows.push(
         ["OUTBOUND", d2.gatepassNo ?? d2.doRef ?? d2.id, "", fmtDate(d), d2.truckNo, d2.warehouseName, d2.tradeRef,
-          c?.commodityCode ?? "-", d2.buyerName, d2.dispatchWeightKg, d2.allocatedQtyMt.toFixed(3),
-          d2.amountDue, c?.currency ?? "", d2.status, d2.driverName ?? "", d2.remarks ?? ""].map(escape).join(","),
+          c?.commodityCode ?? "-", d2.buyerName, num(d2.dispatchWeightKg), num(d2.allocatedQtyMt).toFixed(3),
+          num(d2.amountDue), c?.currency ?? "", d2.status, d2.driverName ?? "", d2.remarks ?? ""].map(escape).join(","),
       );
     }
   }
