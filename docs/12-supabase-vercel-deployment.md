@@ -36,8 +36,8 @@ flowchart TB
 
 Get the database password from **Supabase Dashboard → Project Settings → Database**. Then:
 
-- `DATABASE_URL` (app, pooled): `postgresql://postgres.qyvdpbkxqgqyzuwpynpd:<password>@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1`
-- `DIRECT_URL` (migrations): same host, port `5432`, no pgbouncer params.
+- `POSTGRES_PRISMA_URL` (app, pooled): `postgresql://postgres.qyvdpbkxqgqyzuwpynpd:<password>@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1`
+- `POSTGRES_URL_NON_POOLING` (migrations): same host, port `5432`, no pgbouncer params.
 
 `connection_limit=1` per serverless function instance + pgBouncer transaction pooling is the recommended Prisma-on-Vercel setup.
 
@@ -45,7 +45,7 @@ Get the database password from **Supabase Dashboard → Project Settings → Dat
 
 1. Import the GitHub repo into Vercel (framework: Next.js — zero config; `npm run build` already runs `prisma generate`).
 2. Set Environment Variables (all environments):
-   - `DATABASE_URL`, `DIRECT_URL` (above)
+   - `POSTGRES_PRISMA_URL`, `POSTGRES_URL_NON_POOLING` — set automatically by the Supabase↔Vercel integration (or manually, values above)
    - `NEXTAUTH_SECRET` (`openssl rand -base64 32`)
    - `NEXTAUTH_URL` = the deployment URL (e.g. `https://katros-erp.vercel.app`)
    - `SUPABASE_URL` = `https://qyvdpbkxqgqyzuwpynpd.supabase.co`
