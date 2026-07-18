@@ -48,7 +48,8 @@ const emptyForm = (): FormState => ({
 function parseForm(form: FormState, costing: WarehouseCostingFormState) {
   return {
     name: form.name.trim(),
-    code: form.code.trim() || undefined,
+    // WH code is auto-generated server-side (next free K###).
+    code: undefined,
     lsp: form.lsp.trim() || undefined,
     address: form.address.trim() || undefined,
     city: form.city.trim() || undefined,
@@ -176,8 +177,7 @@ export default function WarehouseSetupPage() {
         <div className="grid gap-3 pt-4 md:grid-cols-2 lg:grid-cols-3">
           {(
             [
-              ["name", "Warehouse name", "K001-Al Amin WH SWL"],
-              ["code", "WH code", "K001"],
+              ["name", "Warehouse name", "Al Amin WH SWL"],
               ["lsp", "LSP", "Hellmann"],
               ["city", "Location", "Sahiwal"],
               ["province", "Province", "Punjab"],

@@ -69,7 +69,8 @@ function locToForm(loc: Loc): FormState {
 function parseForm(form: FormState, costing: WarehouseCostingFormState) {
   return {
     name: form.name.trim(),
-    code: form.code.trim() || undefined,
+    // WH code is auto-generated and immutable.
+    code: undefined,
     lsp: form.lsp.trim() || undefined,
     address: form.address.trim() || undefined,
     city: form.city.trim() || undefined,
@@ -256,7 +257,6 @@ export default function WarehouseManagePage() {
               {(
                 [
                   ["name", "Name"],
-                  ["code", "Code"],
                   ["city", "City"],
                   ["province", "Province"],
                   ["capacitySqFt", "Square feet"],
