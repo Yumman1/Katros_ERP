@@ -1,5 +1,8 @@
 import { z } from "zod";
+import bcrypt from "bcryptjs";
 import { TRPCError } from "@trpc/server";
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/server/db";
 import { ceoProcedure, router } from "@/server/trpc/trpc";
 import {
   countPendingCeoApprovals,
@@ -118,6 +121,118 @@ export const ceoRouter = router({
         await recordTradeChangeResolved(resolved, input.decision, actorName(ctx.session.user));
       }
       return resolved;
+    }),
+
+
+  // ─── User management (CEO is the top authority) ───────────────────────────
+
+  users: ceoProcedure().query(async () => {
+    const rows = await prisma.user.findMany({
+      orderBy: [{ disabled: "asc" }, { createdAt: "asc" }],
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        isHead: true,
+        disabled: true,
+        lastSeenAt: true,
+        createdAt: true,
+      },
+    });
+    return rows;
+  }),
+
+  /** Users active in the last 5 minutes (presence heartbeat). */
+  activeUsers: ceoProcedure().query(async () => {
+    const cutoff = new Date(Date.now() - 5 * 60 * 1000);
+    const rows = await prisma.user.findMany({
+      where: { disabled: false, lastSeenAt: { gte: cutoff } },
+      orderBy: { lastSeenAt: "desc" },
+      select: { id: true, email: true, name: true, role: true, lastSeenAt: true },
+    });
+    return { count: rows.length, users: rows };
+  }),
+
+  createUser: ceoProcedure()
+    .input(
+      z.object({
+        email: z.string().trim().toLowerCase().email(),
+        name: z.string().trim().min(1, "Name is required"),
+        password: z.string().min(8, "Password must be at least 8 characters"),
+        role: z.enum(["CEO", "TRADER", "EXECUTION", "FINANCE", "RISK_MANAGER", "READ_ONLY"]),
+        isHead: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      try {
+        const passwordHash = await bcrypt.hash(input.password, 12);
+        const user = await prisma.user.create({
+          data: {
+            email: input.email,
+            name: input.name,
+            passwordHash,
+            role: input.role,
+            isHead: input.isHead ?? false,
+          },
+          select: { id: true, email: true, name: true, role: true, isHead: true },
+        });
+        return user;
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          throw new TRPCError({ code: "CONFLICT", message: "A user with this email already exists" });
+        }
+        throw e;
+      }
+    }),
+
+  updateUser: ceoProcedure()
+    .input(
+      z.object({
+        id: z.string(),
+        name: z.string().trim().min(1).optional(),
+        role: z.enum(["CEO", "TRADER", "EXECUTION", "FINANCE", "RISK_MANAGER", "READ_ONLY"]).optional(),
+        isHead: z.boolean().optional(),
+        disabled: z.boolean().optional(),
+        /** Set to reset the user's password. */
+        password: z.string().min(8).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const self = ctx.session.user.id === input.id;
+      if (self && (input.disabled === true || (input.role && input.role !== "CEO"))) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "You cannot disable or demote your own account",
+        });
+      }
+      const data: Prisma.UserUpdateInput = {};
+      if (input.name !== undefined) data.name = input.name;
+      if (input.role !== undefined) data.role = input.role;
+      if (input.isHead !== undefined) data.isHead = input.isHead;
+      if (input.disabled !== undefined) data.disabled = input.disabled;
+      if (input.password) data.passwordHash = await bcrypt.hash(input.password, 12);
+      try {
+        return await prisma.user.update({
+          where: { id: input.id },
+          data,
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+            isHead: true,
+            disabled: true,
+            lastSeenAt: true,
+            createdAt: true,
+          },
+        });
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025") {
+          throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+        }
+        throw e;
+      }
     }),
 
   dashboardSummary: ceoProcedure().query(async () => {
