@@ -1,9 +1,9 @@
 // Kastros CTRM — Supabase PostgreSQL schema (Prisma 5)
 //
 // This schema is the single source of truth for the cloud deployment:
-// - Frontend + tRPC API on Vercel (serverless) → DATABASE_URL must be the
+// - Frontend + tRPC API on Vercel (serverless) → POSTGRES_PRISMA_URL must be the
 //   Supabase *pooled* connection string (pgBouncer, port 6543);
-//   DIRECT_URL is the direct connection (port 5432) used for migrations.
+//   POSTGRES_URL_NON_POOLING is the direct connection used for migrations.
 // - The former mock JSON runtime (booked trades, execution state, master
 //   data, change requests, market prices, position adjustments) is modeled
 //   relationally below with real foreign keys.
@@ -13,9 +13,12 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  // Variable names match what the Supabase↔Vercel integration injects
+  // automatically: POSTGRES_PRISMA_URL is the pooled (pgBouncer) connection,
+  // POSTGRES_URL_NON_POOLING the direct connection used for migrations.
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
 // ─── Auth & RBAC ──────────────────────────────────────────────────────────────
