@@ -1,27 +1,30 @@
 # Kastros CTRM
 
-Commodity Trading and Risk Management platform — Next.js 14, tRPC, Prisma, mock-first execution runtime.
+Commodity Trading and Risk Management platform — Next.js 14 + tRPC on **Vercel**, PostgreSQL + file Storage on **Supabase** (Prisma 5).
 
-## Quick start
+## Quick start (local)
 
 ```bash
-cd kastros-ctrm
-npm install
+cp .env.example .env   # fill in Supabase credentials (see docs/12)
+npm install            # runs prisma generate
+npm run db:seed        # idempotent demo users + master data
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Mock login password: `demo` or `Kastros123!`.
+Open [http://localhost:3000](http://localhost:3000). Login: `admin@kastros.com` / `Kastros123!` (see [docs/12](./docs/12-supabase-vercel-deployment.md) for all role accounts).
 
-## Full recreation documentation
+## Deployment
+
+**Read:** [docs/12-supabase-vercel-deployment.md](./docs/12-supabase-vercel-deployment.md) — architecture, Supabase project details, Vercel environment variables, concurrency model, and the relationship graph.
+
+## Documentation
 
 **Start here:** [docs/README.md](./docs/README.md)
-
-Structured specs for rebuilding the entire application — data model (ERD), trade lifecycle, execution profiles, warehouse/gatepass, approvals, formulas, API reference, UI routes, and persistence.
 
 | Doc | Topic |
 |-----|-------|
 | [docs/01-architecture.md](./docs/01-architecture.md) | System architecture |
-| [docs/02-data-model.md](./docs/02-data-model.md) | Prisma + mock runtime |
+| [docs/02-data-model.md](./docs/02-data-model.md) | Data model (see also `prisma/schema.prisma`) |
 | [docs/03-auth-and-roles.md](./docs/03-auth-and-roles.md) | Auth & RBAC |
 | [docs/04-trade-lifecycle.md](./docs/04-trade-lifecycle.md) | Draft → close |
 | [docs/05-execution-profiles.md](./docs/05-execution-profiles.md) | Physical pipelines |
@@ -30,19 +33,15 @@ Structured specs for rebuilding the entire application — data model (ERD), tra
 | [docs/08-formulas-and-calculations.md](./docs/08-formulas-and-calculations.md) | Business math |
 | [docs/09-api-reference.md](./docs/09-api-reference.md) | tRPC & REST |
 | [docs/10-ui-routes-and-components.md](./docs/10-ui-routes-and-components.md) | Pages & UI |
-| [docs/11-persistence-and-seeding.md](./docs/11-persistence-and-seeding.md) | JSON & seeds |
-
-## Local data
-
-Mock persistence: `data/local/*.json` — see [docs/11-persistence-and-seeding.md](./docs/11-persistence-and-seeding.md).
-
-Reset: `npm run data:reset`
+| [docs/11-persistence-and-seeding.md](./docs/11-persistence-and-seeding.md) | Persistence (historical — superseded by docs/12) |
+| [docs/12-supabase-vercel-deployment.md](./docs/12-supabase-vercel-deployment.md) | **Supabase + Vercel deployment** |
 
 ## Scripts
 
 | Command | Purpose |
 |---------|---------|
 | `npm run dev` | Development server |
-| `npm run build` | Production build |
-| `npm run data:reset` | Clear local JSON stores |
-| `npm run db:seed` | Seed PostgreSQL |
+| `npm run build` | Production build (`prisma generate` + `next build`) |
+| `npm run db:seed` | Seed Postgres (users, commodities, warehouses, counterparties) |
+| `npm run db:migrate` | Apply pending Prisma migrations (`prisma migrate deploy`) |
+| `npm run data:reset` | Truncate operational tables (trades, execution, approvals) |
