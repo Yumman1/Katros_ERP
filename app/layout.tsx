@@ -11,6 +11,10 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Kastros CTRM",
   description: "Commodity trading and risk management",
+  icons: {
+    icon: "/branding/favicon.png",
+    apple: "/branding/favicon.png",
+  },
 };
 
 export default function RootLayout({
@@ -19,8 +23,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${inter.variable} min-h-screen bg-kastros-bg font-sans text-zinc-100 antialiased`}>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${inter.variable} h-dvh overflow-hidden bg-background font-sans text-foreground antialiased`}>
         <Providers>{children}</Providers>
       </body>
     </html>

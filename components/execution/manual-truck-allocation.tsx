@@ -2,6 +2,12 @@
 
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { kgToQuantityUnit, quantityUnitToKg } from "@/lib/unit-conversion";
+import { contractMatchesWarehouse, allocationSummaryLabel } from "@/lib/warehouse-allocation";
+import { warehouseOpenQtyAt } from "@/components/execution/warehouse-split-allocation";
+import { deliveryWindowStatus, DELIVERY_WINDOW_TONE } from "@/lib/delivery-window";
+import { cn } from "@/lib/utils";
+import { ListPagination } from "@/components/ui/list-pagination";
+import { useListPagination } from "@/lib/use-list-pagination";
 import { Truck } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -16,6 +22,17 @@ type Contract = {
   receivedQtyMt: number;
   openQtyMt: number;
   warehouseDefault?: string | null;
+  allocatedWarehouse?: string | null;
+  warehouseAllocations?: { warehouseName: string; qtyMt: number }[] | null;
+  warehouseAllocationProgress?: {
+    warehouseName: string;
+    qtyMt: number;
+    fulfilledQtyMt: number;
+    openQtyMt: number;
+  }[];
+  contractStatus?: string;
+  deliveryStart?: Date | string | null;
+  deliveryEnd?: Date | string | null;
 };
 
 type PendingTruck = {
@@ -33,13 +50,38 @@ type PendingTruck = {
   arrivalDate: Date | string;
 };
 
+type AccentVariant = "success" | "warning" | "info";
+
+const ACCENT_TEXT: Record<AccentVariant, string> = {
+  success: "text-success",
+  warning: "text-accent-secondary",
+  info: "text-info",
+};
+
+const ROW_HIGHLIGHT: Record<AccentVariant, string> = {
+  success: "exec-row-highlight-success",
+  warning: "exec-row-highlight-warning",
+  info: "exec-row-highlight-info",
+};
+
+const TRUCK_ACTIVE: Record<AccentVariant, string> = {
+  success: "exec-truck-chip-active-success",
+  warning: "exec-truck-chip-active",
+  info: "exec-truck-chip-active-info",
+};
+
+const TRUCK_DETAIL: Record<AccentVariant, string> = {
+  success: "exec-truck-detail-success",
+  warning: "exec-truck-detail",
+  info: "exec-truck-detail-info",
+};
+
 type Props = {
   mode: "INBOUND" | "OUTBOUND";
   trucks: PendingTruck[];
   contracts: Contract[];
   detailBasePath: string;
-  accent: string;
-  accentRgb: string;
+  accentVariant?: AccentVariant;
   isAssigning: boolean;
   error: string | null;
   successMessage?: string | null;
@@ -47,16 +89,13 @@ type Props = {
   onClearError?: () => void;
 };
 
+
 function normCp(s: string) {
   return s.trim().toLowerCase();
 }
 
 function counterpartyMatchesTruck(truck: PendingTruck, contract: Contract): boolean {
-  const cp = normCp(contract.counterpartyName);
-  const truckCp = normCp(truck.counterpartyName);
-  if (cp === truckCp) return true;
-  if (truck.brokerName && normCp(truck.brokerName) === cp) return true;
-  return false;
+  return normCp(contract.counterpartyName) === normCp(truck.counterpartyName);
 }
 
 function commodityMatchesTruck(truck: PendingTruck, contract: Contract): boolean {
@@ -64,13 +103,16 @@ function commodityMatchesTruck(truck: PendingTruck, contract: Contract): boolean
   return contract.commodityCode === truck.commodityCode;
 }
 
+function warehouseMatchesTruck(truck: PendingTruck, contract: Contract): boolean {
+  return contractMatchesWarehouse(contract, truck.warehouseName);
+}
+
 export function ManualTruckAllocation({
   mode,
   trucks,
   contracts,
   detailBasePath,
-  accent,
-  accentRgb,
+  accentVariant = "warning",
   isAssigning,
   error,
   successMessage,
@@ -92,11 +134,14 @@ export function ManualTruckAllocation({
     if (!selectedTruck) return [];
     return openOrders
       .filter((c) => counterpartyMatchesTruck(selectedTruck, c))
-      .filter((c) => commodityMatchesTruck(selectedTruck, c));
+      .filter((c) => commodityMatchesTruck(selectedTruck, c))
+      .filter((c) => warehouseMatchesTruck(selectedTruck, c))
+      .filter((c) => warehouseOpenQtyAt(c, selectedTruck.warehouseName) > 0.001);
   }, [openOrders, selectedTruck]);
 
   const visibleOrders = selectedTruck ? matchingOrders : [];
-
+  const ordersPagination = useListPagination(visibleOrders, { resetKey: selectedTruck?.id ?? "none" });
+  const trucksPagination = useListPagination(activeTrucks);
   const fulfilledLabel = mode === "INBOUND" ? "Received" : "Dispatched";
 
   function qtyForTrade(tradeRef: string) {
@@ -113,120 +158,153 @@ export function ManualTruckAllocation({
     return Math.min(truckInUnit, openQty);
   }
 
-  function suggestMax(tradeRef: string, openQty: number, unit: string) {
+  function fillMaxInput(tradeRef: string, openQty: number, unit: string) {
     if (!selectedTruck) return;
     const max = maxAllocatable(selectedTruck, openQty, unit);
     setQty(tradeRef, max > 0 ? String(Number(max.toFixed(3))) : "");
   }
 
-  function submitAllocation(tradeRef: string, openQty: number, unit: string) {
+  function submitAllocation(tradeRef: string, openQty: number, unit: string, qtyOverride?: number) {
     if (!selectedTruck) return;
-    const raw = parseFloat(qtyByTrade[tradeRef] ?? "");
-    if (!raw || raw <= 0) return;
+    const raw = qtyOverride ?? parseFloat(qtyByTrade[tradeRef] ?? "");
+    if (!Number.isFinite(raw) || raw <= 0) {
+      onClearError?.();
+      return;
+    }
     const max = maxAllocatable(selectedTruck, openQty, unit);
+    if (max <= 0) return;
     const allocateQty = Math.min(raw, max);
     const kg = quantityUnitToKg(allocateQty, unit);
+    if (!Number.isFinite(kg) || kg <= 0) return;
     onAssign(selectedTruck.id, tradeRef, kg);
     setQtyByTrade((s) => ({ ...s, [tradeRef]: "" }));
   }
 
+  function allocateMax(tradeRef: string, openQty: number, unit: string) {
+    if (!selectedTruck) return;
+    const max = maxAllocatable(selectedTruck, openQty, unit);
+    if (max <= 0) return;
+    submitAllocation(tradeRef, openQty, unit, max);
+  }
+
   function orderMatchesTruck(c: Contract) {
     if (!selectedTruck) return false;
-    return counterpartyMatchesTruck(selectedTruck, c) && commodityMatchesTruck(selectedTruck, c);
+    return (
+      warehouseMatchesTruck(selectedTruck, c) &&
+      counterpartyMatchesTruck(selectedTruck, c) &&
+      commodityMatchesTruck(selectedTruck, c)
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <p className="text-sm text-zinc-400">
+    <div className="kastros-desk-page">
+      {error && (
+        <p className="rounded-xl border border-destructive/30 bg-[color-mix(in_srgb,var(--destructive)_10%,transparent)] px-4 py-3 text-sm text-destructive">
+          {error}
+        </p>
+      )}
+      {successMessage && (
+        <p className="rounded-xl border border-success/30 bg-[color-mix(in_srgb,var(--success)_10%,transparent)] px-4 py-3 text-sm text-success">
+          {successMessage}
+        </p>
+      )}
+      <p className="text-sm text-muted-foreground">
         {mode === "INBOUND"
           ? "Gate weight is in kg. Allocate in each order's booked unit — the contract open balance updates in that same unit."
           : "Gate weight is in kg. Allocate in each sale order's booked unit — dispatched qty is deducted from the contract open balance."}
       </p>
 
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">
           {selectedTruck
             ? `Matching orders for ${selectedTruck.counterpartyName} (${visibleOrders.length})`
             : `Open ${mode === "INBOUND" ? "purchase" : "sale"} orders`}
         </h3>
         {!selectedTruck ? (
-          <div
-            className="rounded-2xl p-6 text-center text-sm text-zinc-500"
-            style={{ border: "1px solid rgba(255,255,255,0.06)" }}
-          >
+          <div className="exec-empty">
             Select a truck below to see open orders for the same counterparty and commodity.
           </div>
         ) : visibleOrders.length === 0 ? (
-          <div
-            className="rounded-2xl p-6 text-center text-sm text-zinc-500"
-            style={{ border: "1px solid rgba(255,255,255,0.06)" }}
-          >
+          <div className="exec-empty">
             No open orders match this truck&apos;s counterparty
-            {selectedTruck.commodityCode ? ` and commodity (${selectedTruck.commodityCode})` : ""}.
-            Lock a trade for{" "}
-            <span className="text-zinc-300">{selectedTruck.counterpartyName}</span> on{" "}
-            <Link href="/execution/contracts" className="text-amber-400 hover:underline">
-              Locked Contracts
+            {selectedTruck.commodityCode ? `, commodity (${selectedTruck.commodityCode})` : ""}
+            , and warehouse ({selectedTruck.warehouseName}). Confirm the trade is locked, allocated to
+            this warehouse, and still open on{" "}
+            <Link href="/execution/contracts" className="text-accent-secondary hover:underline">
+              Reviewed Trades
             </Link>
             .
           </div>
         ) : (
-          <div
-            className="overflow-x-auto rounded-2xl"
-            style={{ border: "1px solid rgba(255,255,255,0.08)" }}
-          >
-            <table className="w-full text-sm">
+          <div className="kastros-table-wrap">
+            <table className="kastros-table">
               <thead>
-                <tr className="border-b border-white/10 text-left text-[11px] uppercase tracking-wider text-zinc-500">
-                  <th className="px-4 py-3">Order</th>
-                  <th className="px-4 py-3">Counterparty</th>
-                  <th className="px-4 py-3">Commodity</th>
-                  <th className="px-4 py-3">Unit</th>
-                  <th className="px-4 py-3">Contract</th>
-                  <th className="px-4 py-3">{fulfilledLabel}</th>
-                  <th className="px-4 py-3">Open</th>
-                  {selectedTruck && <th className="px-4 py-3">Allocate</th>}
+                <tr>
+                  <th>Order</th>
+                  <th>Counterparty</th>
+                  <th>Commodity</th>
+                  <th>Unit</th>
+                  <th>Contract</th>
+                  <th>{fulfilledLabel}</th>
+                  <th>Open</th>
+                  {selectedTruck && <th>Allocate</th>}
                 </tr>
               </thead>
               <tbody>
-                {visibleOrders.map((c) => {
+                {ordersPagination.items.map((c) => {
                   const canAllocate = selectedTruck && orderMatchesTruck(c);
                   const unit = c.quantityUnit;
-                  const openQty = c.openQtyMt;
+                  const openQty =
+                    selectedTruck && canAllocate
+                      ? warehouseOpenQtyAt(c, selectedTruck.warehouseName)
+                      : c.openQtyMt;
                   const maxQty = canAllocate && selectedTruck ? maxAllocatable(selectedTruck, openQty, unit) : 0;
                   return (
                     <tr
                       key={c.tradeRef}
-                      className="border-b border-white/5 hover:bg-white/[0.02]"
-                      style={canAllocate ? { background: `${accentRgb}08` } : undefined}
+                      className={canAllocate ? ROW_HIGHLIGHT[accentVariant] : undefined}
                     >
-                      <td className="px-4 py-3">
+                      <td>
                         <Link
                           href={`${detailBasePath}/${encodeURIComponent(c.tradeRef)}`}
-                          className="font-mono font-semibold hover:underline"
-                          style={{ color: accent }}
+                          className={cn("font-mono font-semibold hover:underline", ACCENT_TEXT[accentVariant])}
                         >
                           {c.tradeRef}
                         </Link>
-                        <div className="text-xs text-zinc-500">{c.warehouseDefault ?? "—"}</div>
+                        <div className="text-xs text-subtle">
+                          {allocationSummaryLabel(c, unit)}
+                        </div>
+                        {(() => {
+                          const dw = deliveryWindowStatus(c.deliveryStart, c.deliveryEnd, {
+                            fulfilled: c.contractStatus === "Close",
+                          });
+                          if (dw.state === "NO_DATES") return null;
+                          const tone = DELIVERY_WINDOW_TONE[dw.state];
+                          return (
+                            <span
+                              className="mt-1 inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase"
+                              style={{ background: tone.bg, color: tone.color }}
+                            >
+                              {dw.label}
+                            </span>
+                          );
+                        })()}
                       </td>
-                      <td className="px-4 py-3 text-zinc-300">{c.counterpartyName}</td>
-                      <td className="px-4 py-3 text-zinc-300">
+                      <td className="text-muted-foreground">{c.counterpartyName}</td>
+                      <td className="text-muted-foreground">
                         {c.commodityName}
-                        <span className="text-zinc-600"> ({c.commodityCode})</span>
+                        <span className="text-subtle"> ({c.commodityCode})</span>
                       </td>
-                      <td className="px-4 py-3 font-medium text-zinc-400">{unit}</td>
-                      <td className="px-4 py-3 text-zinc-400">
+                      <td className="font-medium text-muted-foreground">{unit}</td>
+                      <td className="text-muted-foreground">
                         {formatQtyWithUnit(c.contractualQtyMt, unit, 2)}
                       </td>
-                      <td className="px-4 py-3 text-sky-400">
-                        {formatQtyWithUnit(c.receivedQtyMt, unit, 2)}
-                      </td>
-                      <td className="px-4 py-3 font-semibold text-white">
+                      <td className="text-info">{formatQtyWithUnit(c.receivedQtyMt, unit, 2)}</td>
+                      <td className="font-semibold text-foreground">
                         {formatQtyWithUnit(openQty, unit, 2)}
                       </td>
                       {selectedTruck && (
-                        <td className="px-4 py-3">
+                        <td>
                           {canAllocate ? (
                             <div className="flex flex-wrap items-center gap-2">
                               <input
@@ -238,28 +316,36 @@ export function ManualTruckAllocation({
                                 onChange={(e) => setQty(c.tradeRef, e.target.value)}
                                 placeholder={`max ${maxQty.toFixed(2)} ${unit}`}
                                 disabled={maxQty <= 0 || isAssigning}
-                                className="w-32 rounded-lg border border-white/10 bg-[#161a22] px-2 py-1.5 text-sm text-white outline-none focus:border-amber-400/50 disabled:opacity-50"
+                                className="kastros-input kastros-input-sm w-32 disabled:opacity-50"
                               />
                               <button
                                 type="button"
                                 disabled={maxQty <= 0 || isAssigning}
-                                onClick={() => suggestMax(c.tradeRef, openQty, unit)}
-                                className="rounded-lg border border-white/10 px-2 py-1 text-xs text-zinc-400 hover:text-white disabled:opacity-40"
+                                onClick={() => fillMaxInput(c.tradeRef, openQty, unit)}
+                                className="kastros-btn-secondary px-2 py-1 text-xs disabled:opacity-40"
                               >
-                                Fill max
+                                Fill
+                              </button>
+                              <button
+                                type="button"
+                                disabled={maxQty <= 0 || isAssigning}
+                                onClick={() => allocateMax(c.tradeRef, openQty, unit)}
+                                className="kastros-btn-primary px-3 py-1 text-xs disabled:opacity-40"
+                              >
+                                {isAssigning ? "…" : "Allocate max"}
                               </button>
                               <button
                                 type="button"
                                 disabled={
                                   maxQty <= 0 ||
                                   isAssigning ||
-                                  !parseFloat(qtyForTrade(c.tradeRef) || "0")
+                                  !Number.isFinite(parseFloat(qtyForTrade(c.tradeRef))) ||
+                                  parseFloat(qtyForTrade(c.tradeRef)) <= 0
                                 }
                                 onClick={() => submitAllocation(c.tradeRef, openQty, unit)}
-                                className="rounded-lg px-3 py-1 text-xs font-bold text-black disabled:opacity-40"
-                                style={{ background: `linear-gradient(135deg,${accent},${accentRgb}cc)` }}
+                                className="kastros-btn-secondary px-3 py-1 text-xs disabled:opacity-40"
                               >
-                                {isAssigning ? "…" : "Allocate"}
+                                {isAssigning ? "…" : "Allocate qty"}
                               </button>
                             </div>
                           ) : null}
@@ -270,25 +356,31 @@ export function ManualTruckAllocation({
                 })}
               </tbody>
             </table>
+            <ListPagination
+              page={ordersPagination.page}
+              totalPages={ordersPagination.totalPages}
+              totalItems={ordersPagination.totalItems}
+              startIndex={ordersPagination.startIndex}
+              endIndex={ordersPagination.endIndex}
+              onPageChange={ordersPagination.setPage}
+            />
           </div>
         )}
       </section>
 
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">
           Trucks at gate ({activeTrucks.length})
         </h3>
         {activeTrucks.length === 0 ? (
-          <div
-            className="rounded-2xl p-6 text-center text-sm text-zinc-500"
-            style={{ border: "1px solid rgba(255,255,255,0.06)" }}
-          >
+          <div className="exec-empty">
             No trucks waiting for assignment. Open orders above stay listed — add a gatepass when the next truck
             arrives.
           </div>
         ) : (
+          <>
           <div className="flex flex-wrap gap-2">
-            {activeTrucks.map((t) => {
+            {trucksPagination.items.map((t) => {
               const active = (selectedTruck?.id ?? activeTrucks[0]?.id) === t.id;
               return (
                 <button
@@ -298,23 +390,25 @@ export function ManualTruckAllocation({
                     setSelectedTruckId(t.id);
                     onClearError?.();
                   }}
-                  className="rounded-xl px-4 py-3 text-left transition-all"
-                  style={{
-                    background: active ? `${accentRgb}14` : "rgba(255,255,255,0.02)",
-                    border: `1px solid ${active ? `${accentRgb}55` : "rgba(255,255,255,0.08)"}`,
-                  }}
+                  className={cn("exec-truck-chip", active && TRUCK_ACTIVE[accentVariant])}
                 >
-                  <div className="font-mono text-sm font-bold" style={{ color: accent }}>
+                  <div className={cn("font-mono text-sm font-bold", ACCENT_TEXT[accentVariant])}>
                     {t.gatepassNo}
                   </div>
-                  <div className="mt-0.5 text-xs text-zinc-400">
+                  <div className="mt-0.5 text-xs text-muted-foreground">
                     {t.truckNo} · {t.commodityName ?? "—"}
                   </div>
-                  <div className="mt-1 text-sm font-semibold text-amber-400">
+                  <div className="mt-0.5 text-[10px] text-subtle">
+                    {new Date(t.arrivalDate).toLocaleString("en-PK", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-accent-secondary">
                     {formatQtyWithUnit(t.remainingKg, "KG", 0)} left on truck
                   </div>
                   {t.status === "PARTIAL" && (
-                    <span className="mt-1 inline-block text-[10px] font-bold uppercase text-sky-400">
+                    <span className="mt-1 inline-block text-[10px] font-bold uppercase text-info">
                       Partially allocated
                     </span>
                   )}
@@ -322,47 +416,46 @@ export function ManualTruckAllocation({
               );
             })}
           </div>
+          <ListPagination
+            page={trucksPagination.page}
+            totalPages={trucksPagination.totalPages}
+            totalItems={trucksPagination.totalItems}
+            startIndex={trucksPagination.startIndex}
+            endIndex={trucksPagination.endIndex}
+            onPageChange={trucksPagination.setPage}
+          />
+          </>
         )}
       </section>
 
       {selectedTruck && (
-        <div
-          className="rounded-2xl p-4"
-          style={{ background: `${accentRgb}0a`, border: `1px solid ${accentRgb}33` }}
-        >
+        <div className={TRUCK_DETAIL[accentVariant]}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="flex items-center gap-2 text-white">
-                <Truck className="h-4 w-4" style={{ color: accent }} />
+              <div className="flex items-center gap-2 text-foreground">
+                <Truck className={cn("h-4 w-4", ACCENT_TEXT[accentVariant])} />
                 <span className="font-semibold">{selectedTruck.truckNo}</span>
-                <span className="text-zinc-500">·</span>
-                <span className="text-sm text-zinc-300">{selectedTruck.counterpartyName}</span>
+                <span className="text-subtle">·</span>
+                <span className="text-sm text-muted-foreground">{selectedTruck.counterpartyName}</span>
               </div>
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="mt-1 text-xs text-subtle">
                 {selectedTruck.warehouseName} · {selectedTruck.commodityName} ({selectedTruck.commodityCode})
                 · Builty: {selectedTruck.builtyDetails ?? "—"}
               </p>
-              <p className="mt-1 text-xs text-zinc-600">
+              <p className="mt-1 text-xs text-subtle">
                 {matchingOrders.length} matching open order{matchingOrders.length === 1 ? "" : "s"} — enter qty in
                 each order&apos;s unit in the table above
               </p>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-bold tabular-nums text-amber-400">
+              <div className="text-2xl font-bold tabular-nums text-accent-secondary">
                 {formatQtyWithUnit(selectedTruck.remainingKg, "KG", 0)}
               </div>
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500">remaining on truck (kg)</div>
+              <div className="text-[10px] uppercase tracking-wider text-subtle">remaining on truck (kg)</div>
             </div>
           </div>
         </div>
       )}
-
-      {successMessage && (
-        <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-400">
-          {successMessage}
-        </p>
-      )}
-      {error && <p className="text-sm text-red-400">{error}</p>}
     </div>
   );
 }

@@ -1,27 +1,46 @@
 "use client";
 
-import { CommodityFilterBar } from "@/components/execution/commodity-filter-bar";
+import { ClosedTradesSection } from "@/components/execution/closed-trades-section";
+import { ListPagination } from "@/components/ui/list-pagination";
+import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
 import {
   collectCommodityOptions,
   matchesCommodityFilter,
 } from "@/lib/execution-commodity-filter";
 import { trpc } from "@/lib/trpc/client";
 import { executionWorkspacePath } from "@/lib/execution-routes";
+import { formatLockedContractRate } from "@/lib/formatters/contract-rate";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
-import { EXECUTION_PROFILES, TRADE_SCOPES, TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
+import {
+  allocationSummaryLabel,
+  contractHasWarehouseAllocation,
+} from "@/lib/warehouse-allocation";
+import {
+  executionIncotermLabel,
+  executionTypeLabel,
+  INCOTERMS,
+  TRADE_SCOPES,
+  TRADE_SCOPE_LABELS,
+} from "@/lib/trade-constants";
+import { deliveryWindowStatus, DELIVERY_WINDOW_TONE } from "@/lib/delivery-window";
+import { cn } from "@/lib/utils";
+import { useListPagination } from "@/lib/use-list-pagination";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-const PROFILE_LABELS: Record<string, string> = {
-  PURCHASE_DELIVERED: "Purchase — Delivered",
-  PURCHASE_SPOT: "Purchase — Spot",
-  SALE_EX_WAREHOUSE: "Sale — Ex-Warehouse",
+/** Fits content area below app shell header + main padding. */
+const PAGE_HEIGHT = "kastros-desk-page";
+
+const PROFILE_CLASS: Record<string, string> = {
+  PURCHASE_DELIVERED: "exec-profile-purchase-delivered",
+  PURCHASE_SPOT: "exec-profile-purchase-spot",
+  SALE_EX_WAREHOUSE: "exec-profile-sale",
 };
 
-const PROFILE_COLORS: Record<string, string> = {
-  PURCHASE_DELIVERED: "#34d399",
-  PURCHASE_SPOT: "#60a5fa",
+const PROFILE_BAR: Record<string, string> = {
+  PURCHASE_DELIVERED: "var(--success)",
+  PURCHASE_SPOT: "var(--info)",
   SALE_EX_WAREHOUSE: "#a78bfa",
 };
 
@@ -29,7 +48,7 @@ export function LockedContractsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [profile, setProfile] = useState(() => searchParams.get("profile") ?? "");
+  const [incoterm, setIncoterm] = useState(() => searchParams.get("incoterm") ?? "");
   const [scopeFilter, setScopeFilter] = useState(() => searchParams.get("scope") ?? "");
   const [commodityFilter, setCommodityFilter] = useState(() => searchParams.get("commodity") ?? "ALL");
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
@@ -37,17 +56,18 @@ export function LockedContractsPage() {
     const s = searchParams.get("status");
     return s === "Open" || s === "Close" ? s : "all";
   });
+  const [viewTab, setViewTab] = useState<"contracts" | "closed">("contracts");
 
   const syncUrl = useCallback(
     (next: {
-      profile: string;
+      incoterm: string;
       scope: string;
       commodity: string;
       q: string;
       status: "all" | "Open" | "Close";
     }) => {
       const params = new URLSearchParams();
-      if (next.profile) params.set("profile", next.profile);
+      if (next.incoterm) params.set("incoterm", next.incoterm);
       if (next.scope) params.set("scope", next.scope);
       if (next.commodity && next.commodity !== "ALL") params.set("commodity", next.commodity);
       if (next.q) params.set("q", next.q);
@@ -59,13 +79,12 @@ export function LockedContractsPage() {
   );
 
   useEffect(() => {
-    syncUrl({ profile, scope: scopeFilter, commodity: commodityFilter, q: search, status: statusFilter });
-  }, [profile, scopeFilter, commodityFilter, search, statusFilter, syncUrl]);
+    syncUrl({ incoterm, scope: scopeFilter, commodity: commodityFilter, q: search, status: statusFilter });
+  }, [incoterm, scopeFilter, commodityFilter, search, statusFilter, syncUrl]);
 
-  const { data: pending } = trpc.execution.pendingForLock.useQuery();
-  const { data: contracts } = trpc.execution.lockedContracts.useQuery({
+  const { data: contracts, isLoading } = trpc.execution.lockedContracts.useQuery({
     openOnly: false,
-    profile: profile ? (profile as (typeof EXECUTION_PROFILES)[number]) : undefined,
+    incoterms: incoterm || undefined,
     tradeScope: scopeFilter ? (scopeFilter as (typeof TRADE_SCOPES)[number]) : undefined,
   });
 
@@ -86,231 +105,305 @@ export function LockedContractsPage() {
     return matchSearch && matchStatus && matchCommodity;
   });
 
+  const filterKey = `${incoterm}|${scopeFilter}|${commodityFilter}|${search}|${statusFilter}`;
+  const contractsPagination = useListPagination(filtered, { resetKey: filterKey, pageSize: 6 });
+
   const totalOpen = (contracts ?? []).filter((c) => c.contractStatus === "Open").length;
-  const totalClosed = (contracts ?? []).filter((c) => c.contractStatus !== "Open").length;
+  const totalClosedCount = (contracts ?? []).filter((c) => c.contractStatus !== "Open").length;
 
   const hasActiveFilters =
-    profile !== "" || scopeFilter !== "" || commodityFilter !== "ALL" || search !== "" || statusFilter !== "all";
+    incoterm !== "" || scopeFilter !== "" || commodityFilter !== "ALL" || search !== "" || statusFilter !== "all";
 
   const clearFilters = () => {
-    setProfile("");
+    setIncoterm("");
     setScopeFilter("");
     setCommodityFilter("ALL");
     setSearch("");
     setStatusFilter("all");
   };
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <div className="flex items-center gap-2 text-xs" style={{ color: "#71717a" }}>
-          <Link href="/execution" className="hover:text-white">Desk</Link><span>/</span>
-          <span style={{ color: "#a1a1aa" }}>Locked Contracts</span>
-        </div>
-        <h1 className="mt-2 text-2xl font-bold text-white">Locked Contracts</h1>
-        <p className="mt-1 text-sm" style={{ color: "#71717a" }}>
-          Filter by market, contract type, and commodity — all locked trades in one place
-        </p>
+  if (isLoading && !contracts) {
+    return (
+      <div className={cn("flex min-h-0 flex-col gap-2 overflow-hidden", PAGE_HEIGHT)}>
+        <PageLoadingSkeleton label="Loading reviewed trades…" rows={8} />
       </div>
+    );
+  }
 
-      <div className="flex flex-wrap gap-3">
-        <div className="rounded-xl px-4 py-2.5 text-center" style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
-          <span className="text-xl font-bold" style={{ color: "#f59e0b" }}>{filtered.length}</span>
-          <span className="ml-2 text-xs" style={{ color: "#71717a" }}>Showing</span>
+  return (
+    <div className={cn("flex min-h-0 flex-col gap-2 overflow-hidden", PAGE_HEIGHT)}>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
+        <div className="flex items-center gap-2 text-xs text-subtle">
+          <Link href="/execution" className="hover:text-foreground">
+            Desk
+          </Link>
+          <span>/</span>
+          <span className="font-medium text-foreground">Reviewed Trades</span>
         </div>
-        <div className="rounded-xl px-4 py-2.5 text-center" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.15)" }}>
-          <span className="text-xl font-bold" style={{ color: "#34d399" }}>{totalOpen}</span>
-          <span className="ml-2 text-xs" style={{ color: "#71717a" }}>Open</span>
+        <div className="exec-segment h-7">
+          {(
+            [
+              { id: "contracts" as const, label: `In Progress (${totalOpen})` },
+              { id: "closed" as const, label: `Closed (${totalClosedCount})` },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setViewTab(tab.id)}
+              className={cn("exec-segment-item px-2 py-0.5 text-xs", viewTab === tab.id && "exec-segment-active")}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
-        <div className="rounded-xl px-4 py-2.5 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-          <span className="text-xl font-bold text-zinc-400">{totalClosed}</span>
-          <span className="ml-2 text-xs" style={{ color: "#71717a" }}>Closed</span>
-        </div>
-        {(pending?.length ?? 0) > 0 && (
-          <div className="rounded-xl px-4 py-2.5 text-center" style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)" }}>
-            <span className="text-xl font-bold" style={{ color: "#f87171" }}>{pending?.length}</span>
-            <span className="ml-2 text-xs" style={{ color: "#71717a" }}>Awaiting Lock</span>
-          </div>
+        {viewTab === "contracts" && (
+          <span className="text-[11px] text-subtle">
+            {filtered.length} shown{hasActiveFilters ? " · filtered" : ""}
+          </span>
         )}
       </div>
 
-      {(pending?.length ?? 0) > 0 && (
-        <div className="rounded-2xl p-5" style={{ background: "rgba(248,113,113,0.05)", border: "1px solid rgba(248,113,113,0.15)" }}>
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold" style={{ color: "#f87171" }}>
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-            Awaiting Lock from Trader
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                  {["Contract", "Trader", "Direction", "Qty", "Counterparty", "Commodity"].map((h) => (
-                    <th key={h} className="pb-2 text-left font-medium uppercase tracking-wider" style={{ color: "#52525b" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(pending ?? []).map((t) => (
-                  <tr key={t.tradeRef} className="border-b" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
-                    <td className="py-2 font-mono font-semibold" style={{ color: "#f87171" }}>{t.tradeRef}</td>
-                    <td className="py-2 text-zinc-400">{t.traderName}</td>
-                    <td className="py-2"><span style={{ color: t.direction === "BUY" ? "#34d399" : "#a78bfa" }}>{t.direction}</span></td>
-                    <td className="py-2 tabular-nums text-zinc-300">{t.quantity} {t.quantityUnit}</td>
-                    <td className="py-2 text-zinc-300">{t.counterpartyName}</td>
-                    <td className="py-2 text-zinc-400">{t.commodityCode}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-3">
-        <div className="flex flex-wrap gap-3">
-          <input
-            placeholder="Search contract, counterparty, or commodity…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="min-w-[200px] flex-1 rounded-xl px-4 py-2.5 text-sm text-white outline-none"
-            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
-          />
-          <select
-            value={scopeFilter}
-            onChange={(e) => setScopeFilter(e.target.value)}
-            className="rounded-xl px-4 py-2.5 text-sm text-white outline-none"
-            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
-          >
-            <option value="">All Markets</option>
-            {TRADE_SCOPES.map((s) => <option key={s} value={s}>{TRADE_SCOPE_LABELS[s]}</option>)}
-          </select>
-          <select
-            value={profile}
-            onChange={(e) => setProfile(e.target.value)}
-            className="rounded-xl px-4 py-2.5 text-sm text-white outline-none"
-            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
-          >
-            <option value="">All Types</option>
-            {EXECUTION_PROFILES.map((p) => <option key={p} value={p}>{PROFILE_LABELS[p] ?? p}</option>)}
-          </select>
-          <div className="flex overflow-hidden rounded-xl" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
-            {(["all", "Open", "Close"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusFilter(s)}
-                className="px-4 py-2.5 text-xs font-medium capitalize transition-colors"
-                style={{
-                  background: statusFilter === s ? "rgba(245,158,11,0.15)" : "rgba(255,255,255,0.03)",
-                  color: statusFilter === s ? "#f59e0b" : "#71717a",
-                }}
-              >
-                {s === "Close" ? "Closed" : s}
-              </button>
-            ))}
-          </div>
-          {hasActiveFilters && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="rounded-xl px-4 py-2.5 text-xs font-medium text-zinc-400 transition-colors hover:text-white"
-              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}
+      {viewTab === "closed" ? (
+        <ClosedTradesSection contracts={contracts ?? []} compact className="min-h-0 flex-1" />
+      ) : (
+        <>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            <input
+              placeholder="Search…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="kastros-input h-7 min-w-[120px] flex-1 rounded-md py-0 text-xs"
+            />
+            <select
+              value={commodityFilter}
+              onChange={(e) => setCommodityFilter(e.target.value)}
+              className="exec-filter h-7 max-w-[130px] py-0 text-xs"
             >
-              Clear filters
-            </button>
-          )}
-        </div>
+              <option value="ALL">All commodities</option>
+              {commodityOptions.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={scopeFilter}
+              onChange={(e) => setScopeFilter(e.target.value)}
+              className="exec-filter h-7 max-w-[110px] py-0 text-xs"
+            >
+              <option value="">All markets</option>
+              {TRADE_SCOPES.map((s) => (
+                <option key={s} value={s}>
+                  {TRADE_SCOPE_LABELS[s]}
+                </option>
+              ))}
+            </select>
+            <select
+              value={incoterm}
+              onChange={(e) => setIncoterm(e.target.value)}
+              className="exec-filter h-7 max-w-[120px] py-0 text-xs"
+            >
+              <option value="">All incoterms</option>
+              {INCOTERMS.map((i) => (
+                <option key={i} value={i}>
+                  {executionIncotermLabel(i)}
+                </option>
+              ))}
+            </select>
+            <div className="exec-segment h-7">
+              {(["all", "Open", "Close"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStatusFilter(s)}
+                  className={cn(
+                    "exec-segment-item px-2 py-0.5 text-xs capitalize",
+                    statusFilter === s && "exec-segment-active",
+                  )}
+                >
+                  {s === "Close" ? "Closed" : s === "Open" ? "In Progress" : s === "all" ? "All" : s}
+                </button>
+              ))}
+            </div>
+            {hasActiveFilters && (
+              <button type="button" onClick={clearFilters} className="kastros-btn-secondary px-2 py-0.5 text-xs">
+                Clear
+              </button>
+            )}
+          </div>
 
-        <CommodityFilterBar
-          commodities={commodityOptions}
-          value={commodityFilter}
-          onChange={setCommodityFilter}
-        />
-      </div>
-
-      <div className="overflow-hidden rounded-2xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr style={{ background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                {["Contract No.", "Market", "Type", "Commodity", "Counterparty", "Contract Qty", "Received", "Open", "Progress", "Status", ""].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left font-medium uppercase tracking-wider" style={{ color: "#52525b" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((c, i) => {
-                const pct = c.contractualQtyMt > 0 ? Math.min(c.receivedQtyMt / c.contractualQtyMt, 1) : 0;
-                const color = PROFILE_COLORS[c.executionProfile] ?? "#6b7280";
-                return (
-                  <tr
-                    key={c.tradeRef}
-                    className="transition-colors hover:bg-white/[0.02]"
-                    style={{ borderBottom: i < filtered.length - 1 ? "1px solid rgba(255,255,255,0.04)" : undefined }}
-                  >
-                    <td className="px-4 py-3 font-mono font-bold" style={{ color }}>{c.tradeRef}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase"
-                        style={{
-                          background: c.tradeScope === "LOCAL" ? "rgba(52,211,153,0.12)" : "rgba(96,165,250,0.12)",
-                          color: c.tradeScope === "LOCAL" ? "#34d399" : "#60a5fa",
-                        }}
-                      >
-                        {TRADE_SCOPE_LABELS[c.tradeScope]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: `${color}15`, color }}>
-                        {PROFILE_LABELS[c.executionProfile]?.split("—")[1]?.trim() ?? c.executionProfile}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-medium text-zinc-300">{c.commodityCode}</span>
-                      <span className="ml-1 text-zinc-500">{c.commodityName}</span>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-300">{c.counterpartyName}</td>
-                    <td className="px-4 py-3 tabular-nums text-zinc-300">{formatQtyWithUnit(c.contractualQtyMt, c.quantityUnit, 2)}</td>
-                    <td className="px-4 py-3 tabular-nums text-zinc-400">{formatQtyWithUnit(c.receivedQtyMt, c.quantityUnit, 2)}</td>
-                    <td className="px-4 py-3 tabular-nums text-zinc-300">{formatQtyWithUnit(c.openQtyMt, c.quantityUnit, 2)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="h-1.5 w-20 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
-                          <div className="h-full rounded-full" style={{ width: `${pct * 100}%`, background: color }} />
-                        </div>
-                        <span className="tabular-nums" style={{ color: "#52525b" }}>{(pct * 100).toFixed(0)}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase"
-                        style={{
-                          background: c.contractStatus === "Open" ? "rgba(52,211,153,0.1)" : "rgba(255,255,255,0.04)",
-                          color: c.contractStatus === "Open" ? "#34d399" : "#6b7280",
-                        }}
-                      >
-                        {c.contractStatus}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link
-                        href={executionWorkspacePath(c.tradeRef, c.executionProfile)}
-                        className="text-[11px] font-medium hover:underline"
-                        style={{ color }}
-                      >
-                        Open →
-                      </Link>
-                    </td>
+          <div className="kastros-table-wrap flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="kastros-table text-[11px] [&_td]:px-2 [&_td]:py-1 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-[10px]">
+                <thead className="sticky top-0 z-10 bg-[var(--brand-muted)]">
+                  <tr>
+                    {[
+                      "Contract",
+                      "Type",
+                      "Cmdty",
+                      "Rate",
+                      "Counterparty",
+                      "Wh",
+                      "Qty",
+                      "Rcvd",
+                      "Open",
+                      "%",
+                      "Del.",
+                      "St.",
+                      "",
+                    ].map((h) => (
+                      <th key={h}>{h}</th>
+                    ))}
                   </tr>
-                );
-              })}
-              {filtered.length === 0 && (
-                <tr><td colSpan={11} className="px-4 py-12 text-center text-sm text-zinc-500">No contracts match your filters.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                </thead>
+                <tbody>
+                  {contractsPagination.items.map((c) => {
+                    const pct = c.contractualQtyMt > 0 ? Math.min(c.receivedQtyMt / c.contractualQtyMt, 1) : 0;
+                    const profileClass = PROFILE_CLASS[c.executionProfile] ?? "text-muted-foreground";
+                    const dw = deliveryWindowStatus(c.deliveryStart, c.deliveryEnd, {
+                      fulfilled: c.contractStatus !== "Open",
+                    });
+                    const dwTone = DELIVERY_WINDOW_TONE[dw.state];
+                    const usesWarehouse =
+                      c.executionProfile === "PURCHASE_DELIVERED" ||
+                      c.executionProfile === "SALE_EX_WAREHOUSE";
+                    const warehouseLabel = usesWarehouse
+                      ? contractHasWarehouseAllocation(c)
+                        ? allocationSummaryLabel(c, c.quantityUnit)
+                        : "Not allocated"
+                      : null;
+                    return (
+                      <tr key={c.tradeRef}>
+                        <td className={cn("font-mono font-semibold whitespace-nowrap", profileClass)}>
+                          {c.tradeRef}
+                        </td>
+                        <td>
+                          <span
+                            className={cn(
+                              "whitespace-nowrap rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase",
+                              profileClass,
+                              "bg-[color-mix(in_srgb,currentColor_12%,transparent)]",
+                            )}
+                            title={`${TRADE_SCOPE_LABELS[c.tradeScope]} · ${c.incoterms}`}
+                          >
+                            {executionTypeLabel(c.tradeScope, c.executionProfile, c.incoterms)}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap font-medium">{c.commodityCode}</td>
+                        <td
+                          className="whitespace-nowrap tabular-nums text-muted-foreground"
+                          title="Locked trade rate"
+                        >
+                          {formatLockedContractRate(c)}
+                        </td>
+                        <td className="max-w-[100px] truncate text-muted-foreground" title={c.counterpartyName}>
+                          {c.counterpartyName}
+                        </td>
+                        <td className="max-w-[80px]">
+                          {usesWarehouse ? (
+                            <span
+                              className={cn(
+                                "block truncate text-[10px]",
+                                warehouseLabel === "Not allocated" ? "text-destructive" : "text-muted-foreground",
+                              )}
+                              title={warehouseLabel ?? undefined}
+                            >
+                              {warehouseLabel}
+                            </span>
+                          ) : (
+                            <span className="text-subtle">—</span>
+                          )}
+                        </td>
+                        <td className="tabular-nums whitespace-nowrap text-muted-foreground">
+                          {formatQtyWithUnit(c.contractualQtyMt, c.quantityUnit, 0)}
+                        </td>
+                        <td className="tabular-nums whitespace-nowrap text-muted-foreground">
+                          {formatQtyWithUnit(c.receivedQtyMt, c.quantityUnit, 0)}
+                        </td>
+                        <td className="tabular-nums whitespace-nowrap text-muted-foreground">
+                          {formatQtyWithUnit(c.openQtyMt, c.quantityUnit, 0)}
+                        </td>
+                        <td>
+                          <div className="flex items-center gap-1">
+                            <div className="h-1 w-8 rounded-full bg-[color-mix(in_srgb,var(--foreground)_8%,transparent)]">
+                              <div
+                                className="h-full rounded-full"
+                                style={{
+                                  width: `${pct * 100}%`,
+                                  background: PROFILE_BAR[c.executionProfile] ?? "var(--muted-foreground)",
+                                }}
+                              />
+                            </div>
+                            <span className="tabular-nums text-[10px] text-subtle">{(pct * 100).toFixed(0)}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span
+                            className="whitespace-nowrap rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase"
+                            style={{ background: dwTone.bg, color: dwTone.color }}
+                            title={
+                              c.deliveryStart || c.deliveryEnd
+                                ? `Delivery ${c.deliveryStart ? new Date(c.deliveryStart).toISOString().slice(0, 10) : "?"} → ${c.deliveryEnd ? new Date(c.deliveryEnd).toISOString().slice(0, 10) : "?"}`
+                                : "No delivery window"
+                            }
+                          >
+                            {dw.label}
+                          </span>
+                        </td>
+                        <td>
+                          <span
+                            className={cn(
+                              "rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase",
+                              c.contractStatus === "Open" ? "exec-badge-open" : "exec-badge-closed",
+                            )}
+                          >
+                            {c.contractStatus === "Open" ? "Open" : "Closed"}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap">
+                          <div className="flex items-center gap-1">
+                            <Link
+                              href={executionWorkspacePath(c.tradeRef, c.executionProfile)}
+                              className={cn("text-[10px] font-medium hover:underline", profileClass)}
+                            >
+                              Open
+                            </Link>
+                            {c.contractStatus === "Open" && (
+                              <Link
+                                href={`/execution/contracts/${encodeURIComponent(c.tradeRef)}/edit`}
+                                className="text-[10px] font-medium text-brand hover:underline"
+                              >
+                                Edit
+                              </Link>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={13} className="py-6 text-center text-sm text-subtle">
+                        No contracts match your filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <ListPagination
+              page={contractsPagination.page}
+              totalPages={contractsPagination.totalPages}
+              totalItems={contractsPagination.totalItems}
+              startIndex={contractsPagination.startIndex}
+              endIndex={contractsPagination.endIndex}
+              onPageChange={contractsPagination.setPage}
+              className="shrink-0 px-3 py-2"
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

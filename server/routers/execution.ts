@@ -2,19 +2,25 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { Role } from "@prisma/client";
 import { EXECUTION_PROFILES, TRADE_SCOPES } from "@/lib/trade-constants";
-import { roleProcedure, router } from "@/server/trpc/trpc";
+import { headProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import { isMockMode } from "@/server/mock-mode";
 import {
   advanceSpotState,
+  allocateContractWarehouse,
+  allocateContractWarehousesSplit,
   approvePayment,
   assignTruckToTrade,
   assignTruckFifoAuto,
   createInboundReceipt,
   createOutboundDispatch,
   createPendingTruck,
+  deleteInboundReceipt,
+  deleteOutboundDispatch,
+  deletePendingTruck,
   exportLockedContractsCsv,
   exportMovementsCsv,
   getContractByRef,
+  getContractsPendingWarehouseAllocation,
   getDeskSummary,
   getInboundReceipts,
   getLockedContracts,
@@ -23,6 +29,7 @@ import {
   getPendingTrucks,
   getOutboundDispatches,
   getSpotEvent,
+  withWarehouseProgress,
   listSpotPipeline,
   releaseOutbound,
   rejectPayment,
@@ -32,10 +39,61 @@ import {
   submitSpotForFinance,
   suggestInboundFifo,
   suggestSaleFifo,
-  syncAllLockedContracts,
+  closeLockedContract,
   syncExecutionFromDisk,
+  updatePendingTruck,
+  updateInboundReceipt,
+  updateOutboundDispatch,
 } from "@/server/execution-store";
-import { addCustomLocation, getMergedLocations, updateWarehouseLocation } from "@/server/trader-master-data";
+import {
+  addCustomLocation,
+  deleteWarehouseLocation,
+  getCompanyWarehouses,
+  getMergedLocations,
+  updateWarehouseLocation,
+} from "@/server/trader-master-data";
+import {
+  exportTradeFileCsv,
+  previewTradeFile,
+  tradeFileFilterOptions,
+} from "@/server/trade-file-export";
+import { computePositionLedger, setPositionAdjustment } from "@/server/position-ledger";
+import {
+  getOpenTradeByRef,
+  getOpenTradesForExecution,
+  getOpenTradesNeedingWarehouseAllocation,
+  applyOpenTradeWarehouseSplit,
+  getLockedTradeByRef,
+  lockOpenTradeFromExecution,
+  updateLockedTradeDirect,
+  updateOpenTradeDirect,
+} from "@/server/open-trades";
+import { getTradeTimeline } from "@/server/trade-activity";
+import { PRICE_CURRENCIES } from "@/lib/price-units";
+
+const warehouseLaborLineSchema = z.object({
+  role: z.string().trim().min(1),
+  headcount: z.number().nonnegative(),
+  unitCostPkr: z.number().nonnegative(),
+});
+
+const warehouseLocationFieldsSchema = z.object({
+  name: z.string().trim().min(1),
+  code: z.string().trim().optional(),
+  lsp: z.string().trim().optional(),
+  address: z.string().trim().optional(),
+  city: z.string().trim().optional(),
+  province: z.string().trim().optional(),
+  capacitySqFt: z.number().positive().optional(),
+  costPerSqFt: z.number().nonnegative().optional(),
+  balesDivisionSqFt: z.number().positive().optional(),
+  grainDivisionSqFt: z.number().positive().optional(),
+  serviceStartDate: z.string().trim().optional(),
+  rentalTaxPkr: z.number().nonnegative().optional(),
+  managementFeePct: z.number().nonnegative().optional(),
+  hiringPeriodMonths: z.number().int().positive().optional(),
+  laborLines: z.array(warehouseLaborLineSchema).optional(),
+});
 
 const qualitySchema = z.object({
   damagePct: z.number().min(0),
@@ -45,7 +103,67 @@ const qualitySchema = z.object({
   moisturePct: z.number().min(0),
 });
 
+const openTradePatchSchema = z.object({
+  quantityEntered: z.number().positive().optional(),
+  quantityEnteredUnit: z.string().trim().min(1).optional(),
+  price: z.number().positive().optional(),
+  priceCurrency: z.enum(PRICE_CURRENCIES).optional(),
+  priceWeightUnit: z.string().trim().min(1).optional(),
+  priceKgPerUnit: z.number().positive().optional(),
+  priceBasis: z.string().optional(),
+  commissionAmount: z.number().min(0).nullable().optional(),
+  deliveryStart: z.coerce.date().optional(),
+  deliveryEnd: z.coerce.date().optional(),
+  originName: z.string().optional(),
+  destName: z.string().optional(),
+  productOrigin: z.string().optional(),
+  grade: z.string().optional(),
+  incoterms: z.string().optional(),
+  paymentType: z
+    .enum(["DP", "LC", "CAD", "ADVANCE_100", "CREDIT", "CREDIT_30", "AFTER_DELIVERY_100"])
+    .optional(),
+  creditDays: z.number().int().positive().optional(),
+  notes: z.string().nullable().optional(),
+  qualityTolerances: z.string().optional(),
+  qualityTolerancesDetail: qualitySchema.optional(),
+  maxMoisturePct: z.number().min(0).max(100).nullable().optional(),
+  tradeParams: z.record(z.string(), z.union([z.string(), z.number(), z.null()])).optional(),
+  warehouseSelections: z.array(z.string().trim().min(1)).optional(),
+  warehouseSplit: z
+    .array(
+      z.object({
+        warehouseName: z.string().trim().min(1),
+        openQtyMt: z.number().nonnegative(),
+      }),
+    )
+    .optional(),
+  executionEditNote: z.string().nullable().optional(),
+  counterparty: z
+    .object({
+      name: z.string().trim().min(1).optional(),
+      companyNameNtn: z.string().nullable().optional(),
+      ntn: z.string().nullable().optional(),
+      address: z.string().nullable().optional(),
+      bankDetails: z.string().nullable().optional(),
+      verify: z.boolean().optional(),
+    })
+    .optional(),
+});
+
 const execRoles: Role[] = [Role.EXECUTION, Role.ADMIN];
+
+const tradeFileFilterSchema = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  commodityCode: z.string().optional(),
+  counterpartyId: z.string().optional(),
+  counterpartyName: z.string().optional(),
+  direction: z.enum(["BUY", "SELL"]).optional(),
+  tradeScope: z.enum(TRADE_SCOPES).optional(),
+  tradeStatus: z.string().optional(),
+  incoterms: z.string().optional(),
+  traderName: z.string().optional(),
+});
 
 export const executionRouter = router({
   deskSummary: roleProcedure([...execRoles]).query(() => {
@@ -53,34 +171,307 @@ export const executionRouter = router({
     return getDeskSummary();
   }),
 
+  // ── Head-of-execution direct deletions ──────────────────────────────────
+  deleteGateEntry: headProcedure("EXECUTION")
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => {
+      try {
+        return deletePendingTruck(input.id);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  updateGateEntry: headProcedure("EXECUTION")
+    .input(
+      z.object({
+        id: z.string(),
+        truckNo: z.string().trim().min(1).optional(),
+        weightKg: z.number().positive().optional(),
+        weightAsPerBuiltyKg: z.number().positive().nullable().optional(),
+        bags: z.number().int().nonnegative().nullable().optional(),
+        quantityBagsBales: z.number().int().nonnegative().nullable().optional(),
+        warehouseName: z.string().trim().min(1).optional(),
+        counterpartyName: z.string().trim().min(1).optional(),
+        transporterName: z.string().nullable().optional(),
+        transporterPhone: z.string().nullable().optional(),
+        builtyDetails: z.string().trim().optional(),
+        quantityAsPerBuilty: z.string().nullable().optional(),
+        weighBridgeName: z.string().nullable().optional(),
+        warehouseWeightKg: z.number().nonnegative().nullable().optional(),
+        qualitySpecs: qualitySchema.nullable().optional(),
+        totalDeductionsKg: z.number().nonnegative().nullable().optional(),
+        documentRefs: z.array(z.string().trim().min(1)).optional(),
+        remarks: z.string().nullable().optional(),
+        commodityCode: z.string().trim().optional(),
+        commodityName: z.string().trim().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      try {
+        const { id, ...patch } = input;
+        return updatePendingTruck(id, patch);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  updateInboundReceipt: headProcedure("EXECUTION")
+    .input(
+      z.object({
+        id: z.string(),
+        gatepassNo: z.string().nullable().optional(),
+        truckNo: z.string().trim().min(1).optional(),
+        warehouseName: z.string().trim().min(1).optional(),
+        sellerName: z.string().trim().min(1).optional(),
+        driverName: z.string().nullable().optional(),
+        driverPhone: z.string().nullable().optional(),
+        biltyNo: z.string().trim().optional(),
+        bags: z.number().int().nonnegative().nullable().optional(),
+        weightSpotKg: z.number().positive().optional(),
+        weightWarehouseKg: z.number().positive().optional(),
+        remarks: z.string().nullable().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      try {
+        const { id, ...patch } = input;
+        return updateInboundReceipt(id, patch);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  updateOutboundDispatch: headProcedure("EXECUTION")
+    .input(
+      z.object({
+        id: z.string(),
+        gatepassNo: z.string().nullable().optional(),
+        truckNo: z.string().trim().min(1).optional(),
+        warehouseName: z.string().trim().min(1).optional(),
+        buyerName: z.string().trim().min(1).optional(),
+        liftedBy: z.string().trim().min(1).optional(),
+        driverName: z.string().nullable().optional(),
+        driverPhone: z.string().nullable().optional(),
+        dispatchWeightKg: z.number().positive().optional(),
+        invoiceWeightKg: z.number().positive().optional(),
+        doRef: z.string().nullable().optional(),
+        remarks: z.string().nullable().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      try {
+        const { id, ...patch } = input;
+        return updateOutboundDispatch(id, patch);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  deleteInboundReceipt: headProcedure("EXECUTION")
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => {
+      try {
+        return deleteInboundReceipt(input.id);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  deleteOutboundDispatch: headProcedure("EXECUTION")
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => {
+      try {
+        return deleteOutboundDispatch(input.id);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
   pendingForLock: roleProcedure([...execRoles]).query(() => {
-    syncAllLockedContracts();
     return getPendingTradesForExecution();
   }),
 
-  warehouseLocations: roleProcedure([...execRoles]).query(() => getMergedLocations()),
+  openTrades: roleProcedure([...execRoles]).query(() => {
+    return getOpenTradesForExecution();
+  }),
 
-  addWarehouseLocation: roleProcedure([...execRoles])
+  openTradeByRef: roleProcedure([...execRoles])
+    .input(z.object({ tradeRef: z.string() }))
+    .query(({ input }) => {
+      return getOpenTradeByRef(input.tradeRef.trim());
+    }),
+
+  tradeTimeline: roleProcedure([...execRoles])
+    .input(z.object({ tradeRef: z.string() }))
+    .query(({ input }) => {
+      const ref = input.tradeRef.trim();
+      const open = getOpenTradeByRef(ref);
+      if (!open && !getLockedTradeByRef(ref)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Trade not found" });
+      }
+      return getTradeTimeline(ref);
+    }),
+
+  updateOpenTrade: headProcedure("EXECUTION")
+    .input(z.object({ tradeRef: z.string(), patch: openTradePatchSchema }))
+    .mutation(({ ctx, input }) => {
+      if (!isMockMode()) {
+        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Open trades only in mock mode" });
+      }
+      try {
+        const editedBy = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
+        return updateOpenTradeDirect(input.tradeRef.trim(), input.patch, editedBy);
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not update open trade",
+        });
+      }
+    }),
+
+  lockOpenTrade: roleProcedure([...execRoles])
+    .input(z.object({ tradeRef: z.string(), patch: openTradePatchSchema.optional() }))
+    .mutation(({ ctx, input }) => {
+      if (!isMockMode()) {
+        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Unreviewed trades only in mock mode" });
+      }
+      try {
+        const lockedBy = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
+        return lockOpenTradeFromExecution(input.tradeRef.trim(), lockedBy, input.patch);
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not lock trade",
+        });
+      }
+    }),
+
+  lockedTradeByRef: roleProcedure([...execRoles])
+    .input(z.object({ tradeRef: z.string() }))
+    .query(({ input }) => {
+      return getLockedTradeByRef(input.tradeRef.trim());
+    }),
+
+  updateLockedTrade: headProcedure("EXECUTION")
+    .input(z.object({ tradeRef: z.string(), patch: openTradePatchSchema }))
+    .mutation(({ ctx, input }) => {
+      if (!isMockMode()) {
+        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Locked contracts only in mock mode" });
+      }
+      try {
+        const editedBy = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
+        return updateLockedTradeDirect(input.tradeRef.trim(), input.patch, editedBy);
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not update locked contract",
+        });
+      }
+    }),
+
+  closeLockedContract: roleProcedure([...execRoles])
+    .input(z.object({ tradeRef: z.string() }))
+    .mutation(({ ctx, input }) => {
+      if (!isMockMode()) {
+        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Locked contracts only in mock mode" });
+      }
+      try {
+        const closedBy = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
+        return closeLockedContract(input.tradeRef.trim(), closedBy);
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not close contract",
+        });
+      }
+    }),
+
+  pendingWarehouseAllocation: roleProcedure([...execRoles]).query(() => {
+    return getOpenTradesNeedingWarehouseAllocation();
+  }),
+
+  approveOpenTradeWarehouseSplit: headProcedure("EXECUTION")
     .input(
       z.object({
-        name: z.string().trim().min(1),
-        code: z.string().trim().optional(),
-        lsp: z.string().trim().optional(),
-        address: z.string().trim().optional(),
-        city: z.string().trim().optional(),
-        province: z.string().trim().optional(),
-        capacitySqFt: z.number().positive().optional(),
-        costPerSqFt: z.number().nonnegative().optional(),
-        balesDivisionSqFt: z.number().positive().optional(),
-        grainDivisionSqFt: z.number().positive().optional(),
+        tradeRef: z.string(),
+        allocations: z
+          .array(
+            z.object({
+              warehouseName: z.string().trim().min(1),
+              openQtyMt: z.number().positive(),
+            }),
+          )
+          .min(1),
       }),
     )
+    .mutation(({ ctx, input }) => {
+      if (!isMockMode()) {
+        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Open trades only in mock mode" });
+      }
+      try {
+        const by = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
+        return applyOpenTradeWarehouseSplit(input.tradeRef.trim(), input.allocations, by, true);
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not approve warehouse allocation",
+        });
+      }
+    }),
+
+  warehouseLocations: roleProcedure([...execRoles]).query(() => getMergedLocations()),
+
+  companyWarehouses: roleProcedure([...execRoles]).query(() =>
+    getCompanyWarehouses().map((w) => ({ id: w.id, name: w.name, code: w.code ?? null })),
+  ),
+
+  // Execution head allocates each locked contract to a company warehouse (local + international).
+  allocateWarehouse: headProcedure("EXECUTION")
+    .input(z.object({ tradeRef: z.string(), warehouseName: z.string().nullable() }))
+    .mutation(({ input }) => {
+      try {
+        const result = allocateContractWarehouse(input.tradeRef, input.warehouseName);
+        return withWarehouseProgress(result);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  allocateWarehouseSplit: headProcedure("EXECUTION")
+    .input(
+      z.object({
+        tradeRef: z.string(),
+        allocations: z
+          .array(
+            z.object({
+              warehouseName: z.string().trim().min(1),
+              openQtyMt: z.number().nonnegative(),
+            }),
+          )
+          .min(1),
+      }),
+    )
+    .mutation(({ input }) => {
+      try {
+        const result = allocateContractWarehousesSplit(input.tradeRef, input.allocations);
+        return withWarehouseProgress(result);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  addWarehouseLocation: headProcedure("EXECUTION")
+    .input(warehouseLocationFieldsSchema)
     .mutation(({ input }) => {
       if (!isMockMode()) {
         throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Warehouse creation only in mock mode" });
       }
       try {
-        return addCustomLocation(input);
+        return addCustomLocation({
+          ...input,
+          capacitySqFt: input.capacitySqFt ?? 1,
+        });
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -89,22 +480,8 @@ export const executionRouter = router({
       }
     }),
 
-  updateWarehouseLocation: roleProcedure([...execRoles])
-    .input(
-      z.object({
-        id: z.string(),
-        name: z.string().trim().min(1).optional(),
-        code: z.string().trim().optional(),
-        lsp: z.string().trim().optional(),
-        address: z.string().trim().optional(),
-        city: z.string().trim().optional(),
-        province: z.string().trim().optional(),
-        capacitySqFt: z.number().positive().optional(),
-        costPerSqFt: z.number().nonnegative().optional(),
-        balesDivisionSqFt: z.number().positive().optional(),
-        grainDivisionSqFt: z.number().positive().optional(),
-      }),
-    )
+  updateWarehouseLocation: headProcedure("EXECUTION")
+    .input(warehouseLocationFieldsSchema.partial().extend({ id: z.string() }))
     .mutation(({ input }) => {
       if (!isMockMode()) {
         throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Warehouse update only in mock mode" });
@@ -120,15 +497,35 @@ export const executionRouter = router({
       }
     }),
 
+  deleteWarehouseLocation: headProcedure("EXECUTION")
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => {
+      if (!isMockMode()) {
+        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Warehouse delete only in mock mode" });
+      }
+      try {
+        return deleteWarehouseLocation(input.id);
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not delete warehouse",
+        });
+      }
+    }),
+
   lockedContracts: roleProcedure([...execRoles])
     .input(
       z
         .object({
           profile: z.enum(EXECUTION_PROFILES).optional(),
+          incoterms: z.string().optional(),
           tradeScope: z.enum(TRADE_SCOPES).optional(),
           openOnly: z.boolean().optional(),
           from: z.coerce.date().optional(),
           to: z.coerce.date().optional(),
+          warehouseName: z.string().optional(),
+          warehouseAllocated: z.boolean().optional(),
+          warehouseUnallocated: z.boolean().optional(),
         })
         .optional(),
     )
@@ -140,12 +537,7 @@ export const executionRouter = router({
   contractByRef: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string() }))
     .query(({ input }) => {
-      syncAllLockedContracts();
-      let c = getContractByRef(input.tradeRef.trim());
-      if (!c) {
-        syncAllLockedContracts();
-        c = getContractByRef(input.tradeRef.trim());
-      }
+      const c = getContractByRef(input.tradeRef.trim());
       if (!c) throw new TRPCError({ code: "NOT_FOUND", message: "Contract not found or trade not locked yet" });
       return {
         contract: c,
@@ -161,10 +553,11 @@ export const executionRouter = router({
         from: z.coerce.date(),
         to: z.coerce.date(),
         profile: z.enum(EXECUTION_PROFILES).optional(),
+        incoterms: z.string().optional(),
       }),
     )
     .mutation(({ input }) => {
-      const csv = exportLockedContractsCsv(input.from, input.to, input.profile);
+      const csv = exportLockedContractsCsv(input.from, input.to, input.profile, input.incoterms);
       return {
         csv,
         filename: `locked-trades-${input.from.toISOString().slice(0, 10)}.csv`,
@@ -198,7 +591,7 @@ export const executionRouter = router({
         fifoOverrideReason: z.string().optional(),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(({ ctx, input }) => {
       try {
         return createInboundReceipt({
           ...input,
@@ -206,6 +599,7 @@ export const executionRouter = router({
           bags: input.bags ?? null,
           allocatedQtyMt: 0,
           fifoOverrideReason: input.fifoOverrideReason ?? null,
+          allowOutsideWindow: ctx.session.user.isHead,
         });
       } catch (e) {
         throw new TRPCError({
@@ -247,13 +641,16 @@ export const executionRouter = router({
         fifoOverrideReason: z.string().optional(),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(({ ctx, input }) => {
       try {
-        return createOutboundDispatch({
-          ...input,
-          doRef: null,
-          fifoOverrideReason: input.fifoOverrideReason ?? null,
-        });
+        return createOutboundDispatch(
+          {
+            ...input,
+            doRef: null,
+            fifoOverrideReason: input.fifoOverrideReason ?? null,
+          },
+          { allowOutsideWindow: ctx.session.user.isHead },
+        );
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -389,25 +786,43 @@ export const executionRouter = router({
     .input(
       z.object({
         counterpartyName: z.string().min(1),
-        brokerName: z.string().optional(),
         movementType: z.enum(["INBOUND", "OUTBOUND"]),
         warehouseName: z.string().min(1),
         truckNo: z.string().min(1),
-        driverName: z.string().optional(),
-        driverPhone: z.string().optional(),
+        transporterName: z.string().optional(),
+        transporterPhone: z.string().optional(),
         builtyDetails: z.string().min(1),
         commodityCode: z.string().min(1),
         commodityName: z.string().min(1),
         recordedByName: z.string().min(1),
-        weightKg: z.number().positive(),
-        bags: z.number().optional(),
+        quantityAsPerBuilty: z.string().optional(),
+        weightAsPerBuiltyKg: z.number().positive(),
+        weighBridgeName: z.string().optional(),
+        documentRefs: z.array(z.string().trim().min(1)).optional(),
+        warehouseWeightKg: z.number().nonnegative().optional(),
+        qualitySpecs: qualitySchema.optional(),
+        quantityBagsBales: z.number().nonnegative().optional(),
+        totalDeductionsKg: z.number().nonnegative().optional(),
         remarks: z.string().optional(),
         gatepassNo: z.string().optional(),
       }),
     )
     .mutation(({ input }) => {
       try {
-        return createPendingTruck(input);
+        return createPendingTruck({
+          ...input,
+          weightKg: input.weightAsPerBuiltyKg,
+          transporterName: input.transporterName || null,
+          transporterPhone: input.transporterPhone || null,
+          quantityAsPerBuilty: input.quantityAsPerBuilty || null,
+          weighBridgeName: input.weighBridgeName || null,
+          warehouseWeightKg: input.warehouseWeightKg ?? null,
+          qualitySpecs: input.qualitySpecs ?? null,
+          quantityBagsBales: input.quantityBagsBales ?? null,
+          totalDeductionsKg: input.totalDeductionsKg ?? null,
+          remarks: input.remarks || null,
+          gatepassNo: input.gatepassNo || null,
+        });
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -423,7 +838,13 @@ export const executionRouter = router({
     )
     .mutation(({ input }) => {
       try {
-        return assignTruckToTrade(input.truckId, input.tradeRef, input.overrideWeightKg);
+        // Physical gate receipt — record fulfilment even if booked delivery window has not opened yet.
+        return assignTruckToTrade(
+          input.truckId,
+          input.tradeRef,
+          input.overrideWeightKg,
+          true,
+        );
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -453,5 +874,37 @@ export const executionRouter = router({
       const csv = exportMovementsCsv(input ?? undefined);
       const today = new Date().toISOString().slice(0, 10);
       return { csv, filename: `movements-${today}.csv` };
+    }),
+
+  tradeFileOptions: roleProcedure([...execRoles, Role.TRADER]).query(() => tradeFileFilterOptions()),
+
+  tradeFilePreview: roleProcedure([...execRoles, Role.TRADER])
+    .input(tradeFileFilterSchema.optional())
+    .query(({ input }) => previewTradeFile(input ?? undefined)),
+
+  exportTradeFileCsv: roleProcedure([...execRoles, Role.TRADER])
+    .input(tradeFileFilterSchema.optional())
+    .mutation(({ input }) => {
+      const csv = exportTradeFileCsv(input ?? undefined);
+      const stamp = new Date().toISOString().slice(0, 10);
+      return { csv, filename: `trade-file-${stamp}.csv` };
+    }),
+
+  positionLedger: roleProcedure([...execRoles, Role.TRADER]).query(() => {
+    if (isMockMode()) seedExecutionDemoIfEmpty();
+    syncExecutionFromDisk();
+    return computePositionLedger();
+  }),
+
+  setPositionAdjustment: headProcedure("EXECUTION")
+    .input(
+      z.object({
+        commodityCode: z.string().min(1),
+        deltaMt: z.number(),
+      }),
+    )
+    .mutation(({ input }) => {
+      setPositionAdjustment(input.commodityCode, input.deltaMt);
+      return computePositionLedger();
     }),
 });

@@ -5,7 +5,7 @@ export default function ContractsPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-64 items-center justify-center text-sm text-zinc-500">
+        <div className="flex h-full min-h-0 flex-1 items-center justify-center text-sm text-subtle">
           Loading contracts…
         </div>
       }

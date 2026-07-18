@@ -1,22 +1,40 @@
 "use client";
 
 import type { CommodityOption } from "@/lib/execution-commodity-filter";
+import { cn } from "@/lib/utils";
 
 type Props = {
   commodities: CommodityOption[];
   value: string;
   onChange: (code: string) => void;
+  compact?: boolean;
 };
 
-export function CommodityFilterBar({ commodities, value, onChange }: Props) {
+export function CommodityFilterBar({ commodities, value, onChange, compact }: Props) {
   if (commodities.length === 0) return null;
 
+  if (compact) {
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-subtle">Commodity</span>
+        <FilterChip active={value === "ALL"} onClick={() => onChange("ALL")} label="All" compact />
+        {commodities.map((c) => (
+          <FilterChip
+            key={c.code}
+            active={value === c.code}
+            onClick={() => onChange(c.code)}
+            label={c.code}
+            compact
+            title={`${c.name} (${c.code})`}
+          />
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <section
-      className="rounded-2xl p-3"
-      style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.02)" }}
-    >
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+    <section className="exec-panel">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-subtle">
         Filter by commodity
       </div>
       <div className="flex flex-wrap gap-2">
@@ -38,21 +56,27 @@ function FilterChip({
   active,
   onClick,
   label,
+  compact,
+  title,
 }: {
   active: boolean;
   onClick: () => void;
   label: string;
+  compact?: boolean;
+  title?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="rounded-full px-3 py-1.5 text-xs font-medium transition-colors"
-      style={{
-        background: active ? "rgba(245,158,11,0.18)" : "rgba(255,255,255,0.04)",
-        border: `1px solid ${active ? "rgba(245,158,11,0.45)" : "rgba(255,255,255,0.08)"}`,
-        color: active ? "#fbbf24" : "#a1a1aa",
-      }}
+      title={title}
+      className={cn(
+        "rounded-full border font-medium transition-colors",
+        compact ? "px-2 py-0.5 text-[10px]" : "px-3 py-1.5 text-xs",
+        active
+          ? "border-accent bg-accent-muted font-semibold text-foreground"
+          : "border-border bg-card text-muted-foreground hover:border-brand/40 hover:text-foreground",
+      )}
     >
       {label}
     </button>

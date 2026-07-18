@@ -2,23 +2,172 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Kastros brand (logo / favicon) ─────────────────────────────────────────
+   Primary: Royal blue #2D3E9B
+   Accent:  Forest green #0F733C
+──────────────────────────────────────────────────────────────────────────── */
 :root {
-  --background: #0a0e1a;
-  --foreground: #f4f4f5;
-  --card: #1a1f2e;
-  --muted: #9ca3af;
-  --accent: #00c896;
-  --loss: #ff4d4f;
+  --brand: #2d3e9b;
+  --brand-dark: #1e2a6b;
+  --brand-light: #e8ebf8;
+  --brand-muted: rgba(45, 62, 155, 0.1);
+  --brand-ring: rgba(45, 62, 155, 0.28);
+  --brand-foreground: #ffffff;
+
+  --green: #0f733c;
+  --green-light: #e6f4ec;
+  --green-muted: rgba(15, 115, 60, 0.12);
+  --green-ring: rgba(15, 115, 60, 0.25);
+
+  --background: #f4f6fb;
+  --foreground: #141b33;
+  --card: #ffffff;
+  --card-foreground: #141b33;
+  --muted: #374151;
+  --muted-foreground: #374151;
+  --subtle: #374151;
+  --border: #dde3f0;
+  --input: #ffffff;
+  --ring: var(--brand);
+  --accent: var(--brand);
+  --accent-foreground: #ffffff;
+  --accent-muted: var(--brand-muted);
+  --accent-ring: var(--brand-ring);
+  --accent-secondary: var(--green);
+  --accent-secondary-muted: var(--green-muted);
+  --destructive: #dc2626;
+  --success: var(--green);
+  --warning: #d97706;
+  --info: #2563eb;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #334155;
+  --header: #ffffff;
+  --shadow: 0 1px 2px rgba(20, 27, 51, 0.06), 0 4px 12px rgba(20, 27, 51, 0.04);
+  --radius: 0.75rem;
+
+  --kastros-bg: var(--background);
+  --kastros-card: var(--card);
+  --kastros-border: var(--border);
+  --kastros-green: var(--green);
+  --kastros-red: var(--destructive);
+}
+
+.dark {
+  --brand: #4a5fc9;
+  --brand-dark: #2d3e9b;
+  --brand-light: rgba(74, 95, 201, 0.15);
+  --brand-muted: rgba(74, 95, 201, 0.18);
+  --brand-ring: rgba(74, 95, 201, 0.35);
+  --brand-foreground: #ffffff;
+
+  --green: #22a55b;
+  --green-light: rgba(34, 165, 91, 0.14);
+  --green-muted: rgba(34, 165, 91, 0.16);
+
+  --background: #0b1028;
+  --foreground: #f0f2f8;
+  --card: #141b3d;
+  --card-foreground: #f0f2f8;
+  --muted: #94a3b8;
+  --muted-foreground: #b8c0d4;
+  --subtle: #94a3b8;
+  --border: #252d52;
+  --input: #101632;
+  --sidebar: #0e1433;
+  --sidebar-foreground: #d4daf0;
+  --header: #0e1433;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+
+  --accent: var(--brand);
+  --accent-muted: var(--brand-muted);
+  --accent-ring: var(--brand-ring);
+  --accent-secondary: var(--green);
+  --accent-secondary-muted: var(--green-muted);
+  --success: var(--green);
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 html,
 body {
   height: 100%;
+  overflow: hidden;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
+}
+
+@layer components {
+  /* Viewport-locked desk: shell fills height; pages scroll inside panels only. */
+  .kastros-desk-host {
+    @apply flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden;
+  }
+
+  /* Fallback scroll for pages that are not yet on the desk-page pattern. */
+  .kastros-desk-host-scroll {
+    @apply flex min-h-0 flex-1 flex-col overflow-auto;
+  }
+
+  .kastros-desk-host-scroll > .kastros-desk-page {
+    @apply min-h-0 flex-1;
+  }
+
+  .kastros-desk-page {
+    @apply flex min-h-0 flex-1 flex-col gap-4 overflow-hidden;
+  }
+
+  /* Form / overview pages without an inner scroll region scroll as a whole. */
+  .kastros-desk-page:not(:has(> .kastros-desk-scroll)):not(:has(> .kastros-panel-scroll)):not(
+      :has(> .kastros-table-wrap)
+    ) {
+    @apply overflow-auto;
+  }
+
+  .kastros-desk-toolbar {
+    @apply shrink-0;
+  }
+
+  .kastros-desk-scroll,
+  .kastros-scroll-panel {
+    @apply min-h-0 flex-1 overflow-auto;
+  }
+
+  /* Primary table on list pages — grows and scrolls internally. */
+  .kastros-desk-page > .kastros-table-wrap {
+    @apply min-h-0 flex-1 overflow-auto;
+  }
+
+  .kastros-desk-page > .kastros-table-wrap thead th {
+    @apply sticky top-0 z-10;
+    background-color: var(--brand-muted);
+  }
+
+  .kastros-panel-scroll {
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card;
+    box-shadow: var(--shadow);
+  }
+
+  .kastros-panel-scroll-body {
+    @apply min-h-0 flex-1 overflow-auto;
+  }
+
+  .kastros-panel-scroll-body thead th {
+    @apply sticky top-0 z-10 bg-card;
+  }
+
+  /* Optional card shell for list pages — use instead of overflow-hidden + rounded-lg. */
+  .kastros-list-card {
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card;
+    box-shadow: var(--shadow);
+  }
 }
 
 .tabular-nums {
@@ -28,6 +177,410 @@ body {
 .data-grid {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-variant-numeric: tabular-nums;
+}
+
+@layer base {
+  select,
+  textarea,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]) {
+    color-scheme: inherit;
+  }
+
+  select {
+    color: var(--foreground);
+    -webkit-text-fill-color: var(--foreground);
+  }
+
+  select option,
+  select optgroup {
+    background-color: var(--card);
+    color: var(--foreground);
+  }
+
+  select option:checked,
+  select option:hover,
+  select option:focus {
+    background-color: var(--brand-muted);
+    color: var(--foreground);
+  }
+
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"],
+  input[type="month"],
+  input[type="week"] {
+    color: var(--foreground);
+    background-color: var(--input);
+  }
+
+  ::placeholder {
+    color: var(--muted-foreground);
+    opacity: 1;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted-foreground);
+    opacity: 1;
+  }
+}
+
+@layer components {
+  .kastros-brand-bar {
+    background: var(--brand);
+    color: var(--brand-foreground);
+  }
+
+  .kastros-card {
+    @apply rounded-xl border border-border bg-card text-card-foreground;
+    box-shadow: var(--shadow);
+  }
+
+  .kastros-panel {
+    @apply rounded-xl border border-border bg-card;
+  }
+
+  .kastros-select {
+    @apply rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground outline-none transition-colors;
+  }
+
+  .kastros-select:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 2px var(--brand-ring);
+  }
+
+  .kastros-select-sm {
+    @apply px-2 py-1.5 text-xs;
+  }
+
+  .kastros-input {
+    @apply rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground outline-none transition-colors;
+  }
+
+  .kastros-input::placeholder {
+    color: var(--muted-foreground);
+  }
+
+  .kastros-input:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 2px var(--brand-ring);
+  }
+
+  .kastros-input-sm {
+    @apply px-2 py-1.5 text-xs;
+  }
+
+  .kastros-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .kastros-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--brand-ring);
+  }
+
+  .kastros-btn-primary {
+    @apply kastros-btn text-white;
+    background-color: var(--brand);
+  }
+
+  .kastros-btn-primary:hover {
+    background-color: var(--brand-dark);
+  }
+
+  .kastros-btn-secondary {
+    @apply kastros-btn border border-border bg-card text-foreground;
+  }
+
+  .kastros-btn-secondary:hover {
+    background-color: var(--brand-muted);
+  }
+
+  .kastros-btn-ghost {
+    @apply kastros-btn text-muted-foreground;
+  }
+
+  .kastros-btn-ghost:hover {
+    background-color: var(--brand-muted);
+    color: var(--foreground);
+  }
+
+  .kastros-nav-link {
+    @apply flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors;
+  }
+
+  .kastros-nav-link:hover {
+    background-color: var(--brand-muted);
+    color: var(--foreground);
+  }
+
+  .kastros-nav-link-active {
+    background-color: var(--brand-muted);
+    color: var(--brand);
+    font-weight: 600;
+  }
+
+  .dark .kastros-nav-link-active {
+    color: var(--brand);
+  }
+
+  .kastros-page-header {
+    @apply shrink-0 space-y-1;
+  }
+
+  .kastros-page-title {
+    @apply text-2xl font-semibold tracking-tight text-foreground;
+  }
+
+  .kastros-page-subtitle {
+    @apply text-sm text-muted-foreground;
+  }
+
+  .kastros-stat-chip {
+    @apply rounded-xl border border-border bg-card p-4 text-center;
+    box-shadow: var(--shadow);
+  }
+
+  .kastros-table-wrap {
+    @apply overflow-x-auto rounded-xl border border-border bg-card;
+    box-shadow: var(--shadow);
+  }
+
+  .kastros-table {
+    @apply w-full text-sm;
+  }
+
+  .kastros-table thead {
+    @apply border-b border-border;
+    background-color: var(--brand-muted);
+  }
+
+  .kastros-table th {
+    @apply px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground;
+  }
+
+  .kastros-table td {
+    @apply border-b px-4 py-3 text-foreground;
+    border-color: color-mix(in srgb, var(--border) 60%, transparent);
+  }
+
+  .kastros-table tbody tr:hover {
+    background-color: var(--brand-muted);
+  }
+
+  .text-brand {
+    color: var(--brand);
+  }
+
+  .text-brand-green {
+    color: var(--green);
+  }
+
+  /* Execution desk panels */
+  .exec-kpi {
+    @apply kastros-card flex flex-col gap-2 p-4;
+  }
+
+  .exec-kpi-value {
+    @apply text-2xl font-bold tabular-nums text-foreground;
+  }
+
+  .exec-kpi-label {
+    @apply text-xs font-semibold uppercase tracking-wider text-muted-foreground;
+  }
+
+  .exec-kpi-sub {
+    @apply text-[11px] text-muted-foreground;
+  }
+
+  .exec-segment {
+    @apply flex rounded-xl border border-border bg-card p-1;
+  }
+
+  .exec-segment-active {
+    background-color: var(--brand-muted);
+    border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent);
+    @apply rounded-lg font-semibold text-brand;
+  }
+
+  .exec-segment-item {
+    @apply rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground;
+  }
+
+  .exec-filter {
+    @apply kastros-select rounded-xl px-3 py-2 text-sm;
+  }
+
+  .exec-panel {
+    @apply kastros-card p-4;
+  }
+
+  .exec-stat {
+    @apply kastros-stat-chip;
+  }
+
+  .exec-stat-value-accent {
+    color: var(--brand);
+  }
+
+  .exec-stat-value-success {
+    color: var(--green);
+  }
+
+  .exec-stat-value-info {
+    color: var(--info);
+  }
+
+  .exec-stat-value-danger {
+    color: var(--destructive);
+  }
+
+  .exec-stat-value-muted {
+    color: var(--muted-foreground);
+  }
+
+  .exec-stat-accent {
+    background-color: var(--brand-muted);
+    border-color: color-mix(in srgb, var(--brand) 22%, transparent);
+  }
+
+  .exec-stat-success {
+    background-color: var(--green-muted);
+    border-color: color-mix(in srgb, var(--green) 22%, transparent);
+  }
+
+  .exec-stat-info {
+    background-color: color-mix(in srgb, var(--info) 10%, transparent);
+    border-color: color-mix(in srgb, var(--info) 22%, transparent);
+  }
+
+  .exec-stat-danger {
+    background-color: color-mix(in srgb, var(--destructive) 10%, transparent);
+    border-color: color-mix(in srgb, var(--destructive) 22%, transparent);
+  }
+
+  .exec-stat-muted {
+    @apply border-border bg-card;
+  }
+
+  .exec-alert-warning {
+    @apply rounded-xl border p-4;
+    background-color: color-mix(in srgb, var(--warning) 8%, transparent);
+    border-color: color-mix(in srgb, var(--warning) 22%, transparent);
+  }
+
+  .exec-alert-danger {
+    @apply rounded-xl border p-5;
+    background-color: color-mix(in srgb, var(--destructive) 6%, transparent);
+    border-color: color-mix(in srgb, var(--destructive) 18%, transparent);
+  }
+
+  .exec-empty {
+    @apply exec-panel text-center text-sm text-subtle;
+  }
+
+  .exec-truck-chip {
+    @apply rounded-xl border border-border bg-card px-4 py-3 text-left transition-colors;
+  }
+
+  .exec-truck-chip-active {
+    background-color: var(--brand-muted);
+    border-color: color-mix(in srgb, var(--brand) 30%, transparent);
+  }
+
+  .exec-truck-chip-active-success {
+    background-color: var(--green-muted);
+    border-color: color-mix(in srgb, var(--green) 30%, transparent);
+  }
+
+  .exec-truck-chip-active-info {
+    background-color: color-mix(in srgb, var(--info) 10%, transparent);
+    border-color: color-mix(in srgb, var(--info) 30%, transparent);
+  }
+
+  .exec-truck-detail {
+    @apply exec-panel;
+    background-color: var(--brand-muted);
+    border-color: color-mix(in srgb, var(--brand) 20%, transparent);
+  }
+
+  .exec-truck-detail-success {
+    background-color: var(--green-muted);
+    border-color: color-mix(in srgb, var(--green) 20%, transparent);
+  }
+
+  .exec-truck-detail-info {
+    background-color: color-mix(in srgb, var(--info) 6%, transparent);
+    border-color: color-mix(in srgb, var(--info) 20%, transparent);
+  }
+
+  .exec-kpi-accent {
+    background-color: var(--brand-muted);
+    border-color: color-mix(in srgb, var(--brand) 28%, transparent);
+  }
+
+  .exec-kpi-success {
+    background-color: var(--green-muted);
+    border-color: color-mix(in srgb, var(--green) 28%, transparent);
+  }
+
+  .exec-kpi-info {
+    background-color: color-mix(in srgb, var(--info) 10%, transparent);
+    border-color: color-mix(in srgb, var(--info) 28%, transparent);
+  }
+
+  .exec-kpi-danger {
+    background-color: color-mix(in srgb, var(--destructive) 10%, transparent);
+    border-color: color-mix(in srgb, var(--destructive) 28%, transparent);
+  }
+
+  .exec-kpi-muted {
+    @apply border-border bg-card;
+  }
+
+  .exec-row-highlight-success {
+    background-color: var(--green-muted);
+  }
+
+  .exec-row-highlight-warning {
+    background-color: var(--brand-muted);
+  }
+
+  .exec-row-highlight-info {
+    background-color: color-mix(in srgb, var(--info) 6%, transparent);
+  }
+
+  .exec-badge-local {
+    background-color: var(--green-muted);
+    color: var(--green);
+  }
+
+  .exec-badge-intl {
+    background-color: var(--brand-muted);
+    color: var(--brand);
+  }
+
+  .exec-badge-open {
+    background-color: var(--green-muted);
+    color: var(--green);
+  }
+
+  .exec-badge-closed {
+    background-color: color-mix(in srgb, var(--foreground) 5%, transparent);
+    color: var(--muted-foreground);
+  }
+
+  .exec-profile-purchase-delivered {
+    color: var(--green);
+  }
+
+  .exec-profile-purchase-spot {
+    color: var(--brand);
+  }
+
+  .exec-profile-sale {
+    color: var(--info);
+  }
 }
 
 @layer utilities {

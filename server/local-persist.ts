@@ -28,6 +28,16 @@ export function localDataPath(filename: string): string {
   return path.join(DATA_DIR, filename);
 }
 
+/** File mtime in ms, or 0 if missing. Cheap stat — no parse. */
+export function persistedFileMtime(filename: string): number {
+  if (!isLocalPersistEnabled()) return 0;
+  try {
+    return fs.statSync(localDataPath(filename)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 export function readPersisted<T>(filename: string): T | null {
   if (!isLocalPersistEnabled()) return null;
   ensureDataDir();

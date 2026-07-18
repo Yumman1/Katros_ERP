@@ -1,0 +1,35 @@
+flowchart TB
+  subgraph disk [data/local JSON]
+    BT[booked-trades.json]
+    ES[execution-state.json]
+    MD[master-data.json]
+    CR[change-requests.json]
+    MP[market-prices.json]
+    PA[position-adjustments.json]
+  end
+
+  subgraph booked [Trader book]
+    MTT[MockTraderTrade]
+  end
+
+  subgraph execution [Execution runtime]
+    EC[ExecutionContract]
+    PT[PendingTruck]
+    IR[InboundReceipt]
+    OD[OutboundDispatch]
+    SP[SpotPurchaseEvent]
+    PR[PaymentRequest]
+  end
+
+  BT --> MTT
+  MTT -->|lockOpenTrade| EC
+  ES --> EC
+  ES --> PT
+  ES --> IR
+  ES --> OD
+  ES --> SP
+  ES --> PR
+  MD --> MTT
+  CR --> Approvals[ChangeRequest queue]
+  MP --> Market[Desk prices]
+  PA --> Ledger[Position adjustments]

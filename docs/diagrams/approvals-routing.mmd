@@ -1,0 +1,9 @@
+flowchart TD
+  Submit[team.submitChangeRequest] --> Route{requiresCeoApproval}
+  Route -->|no| Head[status PENDING]
+  Route -->|yes direct| CEO[status PENDING_CEO]
+  Head -->|head resolve APPROVED| ApplyHead[applyApprovedChangeRequest]
+  Head -->|warehouse CREATE| CEO
+  CEO -->|ceo resolveApproval| ApplyCEO[applyApprovedChangeRequest]
+  Head -->|reject| Rejected[status REJECTED]
+  CEO -->|reject| Rejected

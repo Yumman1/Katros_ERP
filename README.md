@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Kastros CTRM
 
-## Getting Started
+Commodity Trading and Risk Management platform — Next.js 14, tRPC, Prisma, mock-first execution runtime.
 
-First, run the development server:
+## Quick start
 
 ```bash
+cd kastros-ctrm
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). Mock login password: `demo` or `Kastros123!`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Full recreation documentation
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Start here:** [docs/README.md](./docs/README.md)
 
-## Learn More
+Structured specs for rebuilding the entire application — data model (ERD), trade lifecycle, execution profiles, warehouse/gatepass, approvals, formulas, API reference, UI routes, and persistence.
 
-To learn more about Next.js, take a look at the following resources:
+| Doc | Topic |
+|-----|-------|
+| [docs/01-architecture.md](./docs/01-architecture.md) | System architecture |
+| [docs/02-data-model.md](./docs/02-data-model.md) | Prisma + mock runtime |
+| [docs/03-auth-and-roles.md](./docs/03-auth-and-roles.md) | Auth & RBAC |
+| [docs/04-trade-lifecycle.md](./docs/04-trade-lifecycle.md) | Draft → close |
+| [docs/05-execution-profiles.md](./docs/05-execution-profiles.md) | Physical pipelines |
+| [docs/06-warehouse-and-gatepass.md](./docs/06-warehouse-and-gatepass.md) | Warehouse & gate |
+| [docs/07-approvals-workflow.md](./docs/07-approvals-workflow.md) | Change requests |
+| [docs/08-formulas-and-calculations.md](./docs/08-formulas-and-calculations.md) | Business math |
+| [docs/09-api-reference.md](./docs/09-api-reference.md) | tRPC & REST |
+| [docs/10-ui-routes-and-components.md](./docs/10-ui-routes-and-components.md) | Pages & UI |
+| [docs/11-persistence-and-seeding.md](./docs/11-persistence-and-seeding.md) | JSON & seeds |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Local data
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Mock persistence: `data/local/*.json` — see [docs/11-persistence-and-seeding.md](./docs/11-persistence-and-seeding.md).
 
-## Deploy on Vercel
+Reset: `npm run data:reset`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Scripts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` | Development server |
+| `npm run build` | Production build |
+| `npm run data:reset` | Clear local JSON stores |
+| `npm run db:seed` | Seed PostgreSQL |

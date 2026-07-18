@@ -1,0 +1,46 @@
+erDiagram
+  User ||--o{ Commodity : creates
+  User ||--o{ Counterparty : creates
+  User ||--o{ Location : creates
+  User ||--o{ Trade : creates
+  User ||--o{ MarketPrice : creates
+  User ||--o{ Position : creates
+  User ||--o{ Inventory : creates
+  User ||--o{ ExecutionLog : acts
+
+  Commodity ||--o{ Trade : has
+  Commodity ||--o{ Position : has
+  Commodity ||--o{ Inventory : has
+  Commodity ||--o{ MarketPrice : has
+  Commodity ||--o{ TraceabilityRecord : has
+
+  Counterparty ||--o{ Trade : has
+  Counterparty ||--o{ Invoice : has
+
+  Location ||--o{ Inventory : has
+  Location ||--o{ Shipment : has
+  Location ||--o{ Trade : origin
+  Location ||--o{ Trade : destination
+
+  Trade ||--o{ Invoice : generates
+  Trade ||--o{ Shipment : has
+  Trade ||--o{ MTMValue : valued
+  Trade ||--o{ PositionLeg : contributes
+  Trade ||--o{ TradeTraceabilityLink : links
+
+  Position ||--o{ PositionLeg : has
+  PositionLeg }o--|| Trade : from
+
+  Inventory ||--o{ InventoryMovement : moves
+  Inventory ||--o{ Shipment : ships
+
+  Invoice ||--o{ Payment : paid_by
+
+  TraceabilityRecord ||--o{ TraceChainEntry : chain
+  TraceabilityRecord ||--o{ TradeTraceabilityLink : links
+
+  ExecutionLog ||--o{ Document : has
+  ExecutionLog ||--o| InventoryReceival : has
+  ExecutionLog ||--o| SpotPurchase : has
+  ExecutionLog ||--o| OutboundDispatch : has
+  ExecutionLog ||--o{ ExecutionPayment : has

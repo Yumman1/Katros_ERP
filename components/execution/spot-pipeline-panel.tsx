@@ -1,6 +1,8 @@
 "use client";
 
+import { ListPagination } from "@/components/ui/list-pagination";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
+import { useListPagination } from "@/lib/use-list-pagination";
 import Link from "next/link";
 
 const STATE_LABELS: Record<string, string> = {
@@ -51,15 +53,16 @@ type Props = {
 
 export function SpotPipelinePanel({ contracts, spotEvents, detailBasePath }: Props) {
   const spotByRef = new Map(spotEvents.map((s) => [s.tradeRef, s.state]));
+  const pagination = useListPagination(contracts);
 
   if (contracts.length === 0) return null;
 
   return (
     <section>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">
         Spot workflow — mandi to warehouse
       </h3>
-      <p className="mb-3 text-xs text-zinc-600">
+      <p className="mb-3 text-xs text-subtle">
         Gate allocation records warehouse receipt. Use the trade detail page to advance selector, DC, invoice, and
         on-the-way steps.
       </p>
@@ -69,7 +72,7 @@ export function SpotPipelinePanel({ contracts, spotEvents, detailBasePath }: Pro
       >
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-white/10 text-left text-[11px] uppercase tracking-wider text-zinc-500">
+            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-subtle">
               <th className="px-4 py-3">Order</th>
               <th className="px-4 py-3">Counterparty</th>
               <th className="px-4 py-3">Open</th>
@@ -79,12 +82,12 @@ export function SpotPipelinePanel({ contracts, spotEvents, detailBasePath }: Pro
             </tr>
           </thead>
           <tbody>
-            {contracts.map((c) => {
+            {pagination.items.map((c) => {
               const state = spotByRef.get(c.tradeRef) ?? "CONTRACT";
               const color = STATE_COLOR[state] ?? "#71717a";
               const stageIdx = PIPELINE.indexOf(state as (typeof PIPELINE)[number]);
               return (
-                <tr key={c.tradeRef} className="border-b border-white/5 hover:bg-white/[0.02]">
+                <tr key={c.tradeRef} className="border-b border-white/5 hover:bg-foreground/[0.02]">
                   <td className="px-4 py-3">
                     <Link
                       href={`${detailBasePath}/${encodeURIComponent(c.tradeRef)}`}
@@ -92,12 +95,12 @@ export function SpotPipelinePanel({ contracts, spotEvents, detailBasePath }: Pro
                     >
                       {c.tradeRef}
                     </Link>
-                    <div className="text-xs text-zinc-500">
+                    <div className="text-xs text-subtle">
                       {c.commodityName} ({c.commodityCode})
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-zinc-300">{c.counterpartyName}</td>
-                  <td className="px-4 py-3 font-semibold text-white">
+                  <td className="px-4 py-3 text-muted-foreground">{c.counterpartyName}</td>
+                  <td className="px-4 py-3 font-semibold text-foreground">
                     {formatQtyWithUnit(c.openQtyMt, c.quantityUnit, 2)}
                   </td>
                   <td className="px-4 py-3">
@@ -132,6 +135,14 @@ export function SpotPipelinePanel({ contracts, spotEvents, detailBasePath }: Pro
             })}
           </tbody>
         </table>
+        <ListPagination
+          page={pagination.page}
+          totalPages={pagination.totalPages}
+          totalItems={pagination.totalItems}
+          startIndex={pagination.startIndex}
+          endIndex={pagination.endIndex}
+          onPageChange={pagination.setPage}
+        />
       </div>
     </section>
   );

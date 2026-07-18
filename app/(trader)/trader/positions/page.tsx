@@ -1,23 +1,29 @@
 "use client";
 
 import { CommodityFilterBar } from "@/components/execution/commodity-filter-bar";
+import { PositionLegend, PositionLedgerTable } from "@/components/position/position-ledger-table";
 import { collectCommodityOptions } from "@/lib/execution-commodity-filter";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
+import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
 import { useMemo, useState } from "react";
 
 export default function TraderPositionsPage() {
   const [commodityFilter, setCommodityFilter] = useState("ALL");
-  const { data: exposure, isLoading } = trpc.trader.myExposure.useQuery();
+  const { data: exposure, isLoading: loadingExposure } = trpc.trader.myExposure.useQuery();
+  const { data: ledger, isLoading: loadingLedger } = trpc.trader.positionLedger.useQuery(undefined, {
+    refetchInterval: 20000,
+  });
   const { data: trades } = trpc.trader.myTrades.useQuery({});
 
-  const commodityOptions = useMemo(
-    () =>
-      collectCommodityOptions(
-        (exposure ?? []).map((e) => ({ commodityCode: e.code, commodityName: e.name })),
-      ),
-    [exposure],
-  );
+  const commodityOptions = useMemo(() => {
+    const fromExposure = (exposure ?? []).map((e) => ({ commodityCode: e.code, commodityName: e.name }));
+    const fromLedger = (ledger ?? []).map((r) => ({
+      commodityCode: r.commodityCode,
+      commodityName: r.commodityName,
+    }));
+    return collectCommodityOptions([...fromExposure, ...fromLedger]);
+  }, [exposure, ledger]);
 
   const filteredExposure = useMemo(
     () =>
@@ -27,53 +33,78 @@ export default function TraderPositionsPage() {
     [exposure, commodityFilter],
   );
 
-  if (isLoading) {
-    return <div className="animate-pulse text-zinc-500">Loading your book…</div>;
+  const filteredLedger = useMemo(
+    () =>
+      commodityFilter === "ALL"
+        ? (ledger ?? [])
+        : (ledger ?? []).filter((r) => r.commodityCode === commodityFilter),
+    [ledger, commodityFilter],
+  );
+
+  if (loadingExposure && loadingLedger) {
+    return <div className="animate-pulse text-muted-foreground">Loading your positions…</div>;
   }
 
   const totalMtm = filteredExposure.reduce((a, e) => a + e.mtm, 0);
   const activeTrades =
     trades?.filter((t) => ["CONFIRMED", "EXECUTED", "PENDING", "LOCKED"].includes(t.tradeStatus)) ?? [];
 
+  const paperNet = filteredLedger.reduce((a, r) => a + r.paperNet, 0);
+  const physicalNet = filteredLedger.reduce((a, r) => a + r.physicalNet, 0);
+
   return (
-    <div className="space-y-5">
+    <DeskPage>
+      <DeskScroll className="space-y-5 pb-6">
       <div>
-        <h1 className="text-2xl font-semibold text-white">My Book</h1>
-        <p className="text-sm text-zinc-500">Your net exposure and open trade legs by commodity.</p>
+        <h1 className="text-2xl font-semibold text-foreground">Positions</h1>
+        <p className="text-sm text-muted-foreground">
+          Paper exposure from your locked trades vs physical warehouse movements (daily in/out).
+        </p>
       </div>
 
       {commodityOptions.length > 0 && (
-        <CommodityFilterBar
-          commodities={commodityOptions}
-          value={commodityFilter}
-          onChange={setCommodityFilter}
-        />
+        <CommodityFilterBar commodities={commodityOptions} value={commodityFilter} onChange={setCommodityFilter} />
       )}
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-kastros-border bg-kastros-card px-4 py-3">
-          <div className="text-xs uppercase text-zinc-500">Active legs</div>
-          <div className="mt-1 text-2xl font-medium text-white">{activeTrades.length}</div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="rounded-lg border border-border bg-card px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Active legs</div>
+          <div className="mt-1 text-2xl font-medium text-foreground">{activeTrades.length}</div>
         </div>
-        <div className="rounded-lg border border-kastros-border bg-kastros-card px-4 py-3">
-          <div className="text-xs uppercase text-zinc-500">Commodities</div>
-          <div className="mt-1 text-2xl font-medium text-white">{filteredExposure.length}</div>
+        <div className="rounded-lg border border-border bg-card px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Commodities</div>
+          <div className="mt-1 text-2xl font-medium text-foreground">{filteredLedger.length || filteredExposure.length}</div>
         </div>
-        <div className="rounded-lg border border-kastros-border bg-kastros-card px-4 py-3">
-          <div className="text-xs uppercase text-zinc-500">Total open MTM</div>
-          <div className={`mt-1 text-2xl font-medium data-grid ${totalMtm >= 0 ? "text-kastros-green" : "text-kastros-red"}`}>
+        <div className="rounded-lg border border-border bg-card px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Paper net (MT)</div>
+          <div className="mt-1 text-2xl font-medium tabular-nums text-foreground">{formatQty(paperNet)}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-card px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Physical net (MT)</div>
+          <div className="mt-1 text-2xl font-medium tabular-nums text-foreground">{formatQty(physicalNet)}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-card px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Open MTM</div>
+          <div className={`mt-1 text-2xl font-medium data-grid ${totalMtm >= 0 ? "text-success" : "text-destructive"}`}>
             {formatCurrency(totalMtm)}
           </div>
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-kastros-border bg-kastros-card">
-        <div className="border-b border-kastros-border px-3 py-2 text-sm text-zinc-300">Exposure by commodity</div>
+      <PositionLegend />
+
+      <div>
+        <h2 className="mb-2 text-sm font-semibold text-foreground">Paper vs physical</h2>
+        <PositionLedgerTable rows={ledger ?? []} commodityFilter={commodityFilter} />
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="border-b border-border px-3 py-2 text-sm font-medium text-foreground">MTM exposure by commodity</div>
         <table className="w-full border-collapse text-sm">
-          <thead className="text-left text-xs uppercase text-zinc-500">
+          <thead className="text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             <tr>
               {["Commodity", "Long (MT)", "Short (MT)", "Net (MT)", "Market", "MTM P&L"].map((h) => (
-                <th key={h} className="border-b border-kastros-border px-3 py-2">
+                <th key={h} className="border-b border-border px-3 py-2">
                   {h}
                 </th>
               ))}
@@ -81,20 +112,20 @@ export default function TraderPositionsPage() {
           </thead>
           <tbody>
             {filteredExposure.map((e) => (
-              <tr key={e.code} className="border-b border-kastros-border/60">
-                <td className="px-3 py-2 font-medium text-white">
-                  {e.code} <span className="text-xs font-normal text-zinc-500">{e.name}</span>
+              <tr key={e.code} className="border-b border-border/60">
+                <td className="px-3 py-2 font-medium text-foreground">
+                  {e.code} <span className="text-xs font-normal text-muted-foreground">{e.name}</span>
                 </td>
-                <td className="px-3 py-2 data-grid text-kastros-green">{formatQty(e.long)}</td>
-                <td className="px-3 py-2 data-grid text-kastros-red">{formatQty(e.short)}</td>
-                <td className="px-3 py-2 data-grid">{formatQty(e.net)}</td>
-                <td className="px-3 py-2 data-grid">
+                <td className="px-3 py-2 data-grid text-success">{formatQty(e.long)}</td>
+                <td className="px-3 py-2 data-grid text-destructive">{formatQty(e.short)}</td>
+                <td className="px-3 py-2 data-grid text-foreground">{formatQty(e.net)}</td>
+                <td className="px-3 py-2 data-grid text-foreground">
                   {formatCurrency(e.marketPrice, e.marketCurrency ?? "USD")}
                   {e.marketUnit ? (
-                    <span className="text-xs text-zinc-600"> / {e.marketUnit}</span>
+                    <span className="text-xs text-muted-foreground"> / {e.marketUnit}</span>
                   ) : null}
                 </td>
-                <td className={`px-3 py-2 data-grid ${e.mtm >= 0 ? "text-kastros-green" : "text-kastros-red"}`}>
+                <td className={`px-3 py-2 data-grid ${e.mtm >= 0 ? "text-success" : "text-destructive"}`}>
                   {formatCurrency(e.mtm)}
                 </td>
               </tr>
@@ -102,6 +133,7 @@ export default function TraderPositionsPage() {
           </tbody>
         </table>
       </div>
-    </div>
+      </DeskScroll>
+    </DeskPage>
   );
 }

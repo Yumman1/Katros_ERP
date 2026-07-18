@@ -26,7 +26,7 @@ export function PriceTicker() {
 
   if (!ticks.length) {
     return (
-      <div className="animate-pulse truncate text-xs text-zinc-500">
+      <div className="animate-pulse truncate text-xs text-subtle">
         Desk prices not published yet
       </div>
     );
@@ -35,14 +35,14 @@ export function PriceTicker() {
   return (
     <div className="flex gap-6 overflow-x-auto whitespace-nowrap text-xs">
       {ticks.map((t) => (
-        <span key={t.code} className="font-mono text-zinc-300">
-          <span className="font-semibold text-white">{t.code}</span>{" "}
-          <span className="text-kastros-green">
+        <span key={t.code} className="font-mono text-muted-foreground">
+          <span className="font-semibold text-foreground">{t.code}</span>{" "}
+          <span className="text-accent">
             {t.ccy} {formatQty(t.price, 2)}
             {t.unit ? `/${t.unit}` : ""}
           </span>
           {t.chgPct != null && (
-            <span className={t.chgPct >= 0 ? "text-kastros-green" : "text-kastros-red"}>
+            <span className={t.chgPct >= 0 ? "text-success" : "text-destructive"}>
               {" "}
               ({t.chgPct >= 0 ? "+" : ""}
               {t.chgPct.toFixed(2)}%)

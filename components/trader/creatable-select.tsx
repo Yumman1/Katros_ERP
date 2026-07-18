@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formSelectClass } from "@/lib/form-controls";
 
 export type CreatableOption = { value: string; label: string };
 
@@ -32,9 +33,7 @@ export function CreatableSelect({
   const [busy, setBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  const selectClass =
-    className ??
-    "w-full rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-white";
+  const selectClass = className ?? formSelectClass;
 
   if (mode === "add") {
     return (
@@ -45,7 +44,7 @@ export function CreatableSelect({
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Enter name…"
             disabled={disabled || busy}
-            className="min-w-0 flex-1 rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-white"
+            className="kastros-input min-w-0 flex-1"
           />
           <button
             type="button"
@@ -64,7 +63,7 @@ export function CreatableSelect({
                 setBusy(false);
               }
             }}
-            className="shrink-0 rounded-md bg-kastros-green px-3 py-2 text-xs font-semibold text-kastros-bg disabled:opacity-50"
+            className="shrink-0 rounded-md bg-brand px-3 py-2 text-xs font-semibold text-kastros-bg disabled:opacity-50"
           >
             {busy ? "…" : "Add"}
           </button>
@@ -76,7 +75,7 @@ export function CreatableSelect({
               setDraft("");
               setAddError(null);
             }}
-            className="shrink-0 rounded-md border border-kastros-border px-3 py-2 text-xs text-zinc-400"
+            className="shrink-0 rounded-md border border-kastros-border px-3 py-2 text-xs text-muted-foreground"
           >
             Cancel
           </button>

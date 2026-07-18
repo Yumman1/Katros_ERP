@@ -12,7 +12,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import * as XLSX from "xlsx";
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -33,8 +32,9 @@ export default function PositionsPage() {
       short: -c.shortQty,
     })) ?? [];
 
-  const exportXlsx = () => {
+  const exportXlsx = async () => {
     if (!book.data?.length) return;
+    const XLSX = await import("xlsx");
     const ws = XLSX.utils.json_to_sheet(book.data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "PositionBook");
@@ -42,26 +42,26 @@ export default function PositionsPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="kastros-desk-page">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-white">Position dashboard</h1>
-          <p className="text-sm text-zinc-500">Live risk by commodity and trade leg.</p>
+          <h1 className="text-2xl font-semibold text-foreground">Position dashboard</h1>
+          <p className="text-sm text-subtle">Live risk by commodity and trade leg.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="text-xs text-zinc-400">
+          <label className="text-xs text-muted-foreground">
             As of
             <input
               type="date"
               value={asOf}
               onChange={(e) => setAsOf(e.target.value)}
-              className="ml-2 rounded border border-kastros-border bg-kastros-bg px-2 py-1 text-sm text-white"
+              className="ml-2 rounded border border-kastros-border bg-kastros-bg px-2 py-1 text-sm text-foreground"
             />
           </label>
           <button
             type="button"
             onClick={exportXlsx}
-            className="rounded-md bg-kastros-green px-3 py-1.5 text-sm font-medium text-kastros-bg"
+            className="rounded-md bg-brand px-3 py-1.5 text-sm font-medium text-kastros-bg"
           >
             Export Excel
           </button>
@@ -69,7 +69,7 @@ export default function PositionsPage() {
       </div>
 
       {summary.data && (
-        <div className="sticky top-0 z-20 flex flex-wrap gap-3 border-b border-kastros-border bg-kastros-bg/95 py-3 backdrop-blur">
+        <div className="flex shrink-0 flex-wrap gap-3 border-b border-kastros-border py-3">
           <Stat
             label="Net exposure (MT)"
             value={formatQty(summary.data.netExposure)}
@@ -98,15 +98,15 @@ export default function PositionsPage() {
             key={c.commodityId}
             className="rounded-lg border border-kastros-border bg-kastros-card p-3 text-sm"
           >
-            <div className="font-medium text-white">
+            <div className="font-medium text-foreground">
               {c.code}{" "}
-              <span className="text-xs font-normal text-zinc-500">{c.name}</span>
+              <span className="text-xs font-normal text-subtle">{c.name}</span>
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-zinc-400">
+            <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-muted-foreground">
               <span>Net {formatQty(c.netQty)}</span>
               <span>L {formatQty(c.longQty)} / S {formatQty(c.shortQty)}</span>
               <span>Mkt {formatCurrency(c.marketPrice)}</span>
-              <span className={c.dayChangePct >= 0 ? "text-kastros-green" : "text-kastros-red"}>
+              <span className={c.dayChangePct >= 0 ? "text-success" : "text-kastros-red"}>
                 Δ {((c.dayChangePct ?? 0) * 100).toFixed(2)}%
               </span>
             </div>
@@ -114,14 +114,14 @@ export default function PositionsPage() {
         ))}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_280px]">
-        <div className="overflow-hidden rounded-lg border border-kastros-border bg-kastros-card">
-          <div className="border-b border-kastros-border px-3 py-2 text-sm font-medium text-zinc-300">
+      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[1fr_280px]">
+        <div className="kastros-panel-scroll">
+          <div className="kastros-panel-scroll-head border-b border-kastros-border px-3 py-2 text-sm font-medium text-muted-foreground">
             Position book
           </div>
-          <div className="max-h-[480px] overflow-auto">
+          <div className="kastros-panel-scroll-body">
             <table className="w-full min-w-[960px] border-collapse text-sm">
-              <thead className="sticky top-0 z-10 bg-kastros-card text-left text-xs uppercase text-zinc-500">
+              <thead className="sticky top-0 z-10 bg-kastros-card text-left text-xs uppercase text-subtle">
                 <tr>
                   {[
                     "Commodity",
@@ -146,10 +146,10 @@ export default function PositionsPage() {
                     key={r.id}
                     className={cn(
                       "h-9 border-b border-kastros-border/80",
-                      r.mtmPnl >= 0 ? "bg-kastros-green/5" : "bg-kastros-red/5",
+                      r.mtmPnl >= 0 ? "bg-success/5" : "bg-kastros-red/5",
                     )}
                   >
-                    <td className="px-2 py-1 text-zinc-200">{r.commodity}</td>
+                    <td className="px-2 py-1 text-foreground">{r.commodity}</td>
                     <td className="px-2 py-1">{r.direction}</td>
                     <td className="px-2 py-1">{formatQty(r.quantity)}</td>
                     <td className="px-2 py-1">{formatCurrency(r.bookPrice, r.currency)}</td>
@@ -157,24 +157,24 @@ export default function PositionsPage() {
                     <td
                       className={cn(
                         "px-2 py-1",
-                        r.mtmPnl >= 0 ? "text-kastros-green" : "text-kastros-red",
+                        r.mtmPnl >= 0 ? "text-success" : "text-kastros-red",
                       )}
                     >
                       {formatCurrency(r.mtmPnl, r.currency)}
                     </td>
                     <td className="px-2 py-1">{(r.pctChange * 100).toFixed(2)}%</td>
-                    <td className="px-2 py-1 text-zinc-400">{r.tradeRef}</td>
-                    <td className="max-w-[140px] truncate px-2 py-1 text-zinc-500">{r.counterparty}</td>
+                    <td className="px-2 py-1 text-muted-foreground">{r.tradeRef}</td>
+                    <td className="max-w-[140px] truncate px-2 py-1 text-subtle">{r.counterparty}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
-        <aside className="space-y-3">
+        <aside className="kastros-desk-scroll space-y-3">
           <div className="rounded-lg border border-kastros-border bg-kastros-card p-3">
-            <div className="text-sm font-medium text-zinc-300">Top exposure (abs MTM)</div>
-            <ol className="mt-2 space-y-1 text-xs text-zinc-400">
+            <div className="text-sm font-medium text-muted-foreground">Top exposure (abs MTM)</div>
+            <ol className="mt-2 space-y-1 text-xs text-muted-foreground">
               {book.data
                 ?.slice()
                 .sort((a, b) => Math.abs(b.mtmPnl) - Math.abs(a.mtmPnl))
@@ -185,7 +185,7 @@ export default function PositionsPage() {
                       {i + 1}. {r.commodity} {r.tradeRef}
                     </span>
                     <span
-                      className={r.mtmPnl >= 0 ? "text-kastros-green" : "text-kastros-red"}
+                      className={r.mtmPnl >= 0 ? "text-success" : "text-kastros-red"}
                     >
                       {formatCurrency(r.mtmPnl, r.currency)}
                     </span>
@@ -193,14 +193,14 @@ export default function PositionsPage() {
                 ))}
             </ol>
           </div>
-          <div className="rounded-lg border border-kastros-border bg-kastros-card p-3 text-xs text-zinc-500">
+          <div className="rounded-lg border border-kastros-border bg-kastros-card p-3 text-xs text-subtle">
             Price alerts panel — wire threshold rules in Phase 1.5.
           </div>
         </aside>
       </div>
 
-      <div className="h-64 rounded-lg border border-kastros-border bg-kastros-card p-3">
-        <div className="mb-2 text-sm font-medium text-zinc-300">Long vs short by commodity</div>
+      <div className="h-48 shrink-0 rounded-lg border border-kastros-border bg-kastros-card p-3">
+        <div className="mb-2 text-sm font-medium text-muted-foreground">Long vs short by commodity</div>
         <ResponsiveContainer width="100%" height="90%">
           <BarChart data={chartData} stackOffset="sign">
             <CartesianGrid strokeDasharray="3 3" stroke="#2a3142" />
@@ -231,13 +231,13 @@ function Stat({
 }) {
   return (
     <div className="rounded-md border border-kastros-border bg-kastros-card px-3 py-2">
-      <div className="text-xs text-zinc-500">{label}</div>
+      <div className="text-xs text-subtle">{label}</div>
       <div
         className={cn(
           "data-grid text-lg font-semibold",
-          tone === "up" && "text-kastros-green",
+          tone === "up" && "text-success",
           tone === "down" && "text-kastros-red",
-          tone === "neutral" && "text-white",
+          tone === "neutral" && "text-foreground",
         )}
       >
         {value}

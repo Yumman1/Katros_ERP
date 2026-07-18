@@ -1,5 +1,6 @@
 "use client";
 
+import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency } from "@/lib/formatters/numbers";
 import { format } from "date-fns";
@@ -24,7 +25,7 @@ function parseOptionalPositive(raw: string): number | null {
 export default function ExecutionDailyPricesPage() {
   const utils = trpc.useUtils();
   const { data: rows, isLoading } = trpc.market.dailyPrices.useQuery(undefined, {
-    refetchInterval: 15_000,
+    refetchInterval: 60_000,
   });
   const { data: options } = trpc.market.options.useQuery();
   const upsert = trpc.market.upsertDailyPrice.useMutation({
@@ -39,7 +40,7 @@ export default function ExecutionDailyPricesPage() {
   const today = format(new Date(), "yyyy-MM-dd");
 
   const currencies = options?.currencies ?? ["USD", "PKR", "MYR"];
-  const units = options?.units ?? ["MT", "KG", "MAUND"];
+  const units = options?.units ?? ["MT", "KG", "MAUND_40", "MAUND_37"];
 
   const draftFor = (row: NonNullable<typeof rows>[number]): RowDraft => {
     const existing = drafts[row.code];
@@ -133,80 +134,79 @@ export default function ExecutionDailyPricesPage() {
   );
 
   return (
-    <div className="space-y-5">
+    <DeskPage>
+      <DeskScroll className="space-y-5 pb-6">
       <div>
-        <h1 className="text-2xl font-semibold text-white">Daily Market Prices</h1>
-        <p className="text-sm text-zinc-500">
-          CNF is optional — only enter it where you have an import/CNF level. Yesterday&apos;s local price can use a
-          different currency and unit (e.g. CNF in USD/MT, yesterday in PKR/MT).
+        <h1 className="text-2xl font-semibold text-foreground">Daily Market Prices</h1>
+        <p className="text-sm text-muted-foreground">
+          Enter CNF (optional) and yesterday&apos;s local price per commodity, then click{" "}
+          <strong className="text-foreground">Publish</strong> on that row. CNF and yesterday can use
+          different currencies and units.
         </p>
-        <p className="mt-1 text-xs text-zinc-600">
+        <p className="mt-1 text-xs text-muted-foreground">
           {publishedCount} of {rows?.length ?? 0} commodities with desk prices ({today})
         </p>
         {(formError || upsert.error) && (
-          <p className="mt-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+          <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {formError ?? upsert.error?.message}
           </p>
         )}
       </div>
 
       {isLoading ? (
-        <div className="text-zinc-500">Loading commodities…</div>
+        <div className="text-muted-foreground">Loading commodities…</div>
+      ) : !rows?.length ? (
+        <div className="exec-empty py-10">
+          No commodities registered yet. Add commodities on the trader desk first, then return here to
+          publish daily prices.
+        </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-white/10 bg-white/[0.02]">
-          <table className="w-full min-w-[1100px] border-collapse text-sm">
-            <thead className="text-left text-xs uppercase text-zinc-500">
+        <div className="kastros-table-wrap">
+          <table className="kastros-table min-w-[1100px] text-sm">
+            <thead>
               <tr>
-                <th className="border-b border-white/10 px-3 py-3">Commodity</th>
-                <th className="border-b border-white/10 px-3 py-3" colSpan={3}>
-                  CNF (optional)
-                </th>
-                <th className="border-b border-white/10 px-3 py-3" colSpan={3}>
-                  Yesterday local
-                </th>
-                <th className="border-b border-white/10 px-3 py-3">Published</th>
-                <th className="border-b border-white/10 px-3 py-3" />
+                <th rowSpan={2}>Commodity</th>
+                <th colSpan={3}>CNF (optional)</th>
+                <th colSpan={3}>Yesterday local</th>
+                <th rowSpan={2}>Published</th>
+                <th rowSpan={2} />
               </tr>
               <tr>
-                <th className="border-b border-white/10 px-3 py-2" />
-                <th className="border-b border-white/10 px-3 py-2">Rate</th>
-                <th className="border-b border-white/10 px-3 py-2">CCY</th>
-                <th className="border-b border-white/10 px-3 py-2">Unit</th>
-                <th className="border-b border-white/10 px-3 py-2">Rate</th>
-                <th className="border-b border-white/10 px-3 py-2">CCY</th>
-                <th className="border-b border-white/10 px-3 py-2">Unit</th>
-                <th className="border-b border-white/10 px-3 py-2">Last update</th>
-                <th className="border-b border-white/10 px-3 py-2" />
+                <th>Rate</th>
+                <th>CCY</th>
+                <th>Unit</th>
+                <th>Rate</th>
+                <th>CCY</th>
+                <th>Unit</th>
               </tr>
             </thead>
             <tbody>
-              {rows?.map((row) => {
+              {rows.map((row) => {
                 const d = draftFor(row);
                 const hasCnf = row.cnf != null;
                 const hasYesterday = row.yesterdayRate != null;
-                const canSave =
-                  d.cnf.trim() !== "" || d.yesterdayRate.trim() !== "";
+                const canSave = d.cnf.trim() !== "" || d.yesterdayRate.trim() !== "";
                 return (
-                  <tr key={row.code} className="border-b border-white/5">
-                    <td className="px-3 py-3">
-                      <div className="font-medium text-white">{row.code}</div>
-                      <div className="text-xs text-zinc-500">{row.name}</div>
+                  <tr key={row.code}>
+                    <td>
+                      <div className="font-medium text-foreground">{row.code}</div>
+                      <div className="text-xs text-muted-foreground">{row.name}</div>
                     </td>
-                    <td className="px-3 py-3">
+                    <td>
                       <input
                         type="number"
                         step="0.01"
                         placeholder={hasCnf ? String(row.cnf) : "Optional"}
                         value={d.cnf}
                         onChange={(e) => setDraft(row.code, { cnf: e.target.value })}
-                        className="w-24 rounded-lg border border-white/10 bg-black/30 px-2 py-2 text-sm text-white data-grid"
+                        className="kastros-input kastros-input-sm w-24 data-grid"
                       />
                     </td>
-                    <td className="px-3 py-3">
+                    <td>
                       <select
                         value={d.cnfCurrency}
                         onChange={(e) => setDraft(row.code, { cnfCurrency: e.target.value })}
-                        className="rounded-lg border border-white/10 bg-black/30 px-2 py-2 text-sm text-white"
+                        className="kastros-select kastros-select-sm"
                       >
                         {currencies.map((c) => (
                           <option key={c} value={c}>
@@ -215,11 +215,11 @@ export default function ExecutionDailyPricesPage() {
                         ))}
                       </select>
                     </td>
-                    <td className="px-3 py-3">
+                    <td>
                       <select
                         value={d.cnfUnit}
                         onChange={(e) => setDraft(row.code, { cnfUnit: e.target.value })}
-                        className="rounded-lg border border-white/10 bg-black/30 px-2 py-2 text-sm text-white"
+                        className="kastros-select kastros-select-sm"
                       >
                         {units.map((u) => (
                           <option key={u} value={u}>
@@ -228,21 +228,21 @@ export default function ExecutionDailyPricesPage() {
                         ))}
                       </select>
                     </td>
-                    <td className="px-3 py-3">
+                    <td>
                       <input
                         type="number"
                         step="0.01"
                         placeholder={hasYesterday ? String(row.yesterdayRate) : "Local"}
                         value={d.yesterdayRate}
                         onChange={(e) => setDraft(row.code, { yesterdayRate: e.target.value })}
-                        className="w-24 rounded-lg border border-white/10 bg-black/30 px-2 py-2 text-sm text-white data-grid"
+                        className="kastros-input kastros-input-sm w-24 data-grid"
                       />
                     </td>
-                    <td className="px-3 py-3">
+                    <td>
                       <select
                         value={d.yesterdayCurrency}
                         onChange={(e) => setDraft(row.code, { yesterdayCurrency: e.target.value })}
-                        className="rounded-lg border border-white/10 bg-black/30 px-2 py-2 text-sm text-white"
+                        className="kastros-select kastros-select-sm"
                       >
                         {currencies.map((c) => (
                           <option key={c} value={c}>
@@ -251,11 +251,11 @@ export default function ExecutionDailyPricesPage() {
                         ))}
                       </select>
                     </td>
-                    <td className="px-3 py-3">
+                    <td>
                       <select
                         value={d.yesterdayUnit}
                         onChange={(e) => setDraft(row.code, { yesterdayUnit: e.target.value })}
-                        className="rounded-lg border border-white/10 bg-black/30 px-2 py-2 text-sm text-white"
+                        className="kastros-select kastros-select-sm"
                       >
                         {units.map((u) => (
                           <option key={u} value={u}>
@@ -264,21 +264,21 @@ export default function ExecutionDailyPricesPage() {
                         ))}
                       </select>
                     </td>
-                    <td className="px-3 py-3 text-xs text-zinc-500 whitespace-nowrap">
+                    <td className="whitespace-nowrap text-xs">
                       {hasCnf || hasYesterday ? (
                         <>
                           {hasCnf && (
-                            <div>
+                            <div className="font-medium text-foreground">
                               CNF {formatCurrency(row.cnf!, row.cnfCurrency)} / {row.cnfUnit}
                             </div>
                           )}
                           {hasYesterday && (
-                            <div className="text-zinc-400">
+                            <div className="font-medium text-foreground">
                               Yday {formatCurrency(row.yesterdayRate!, row.yesterdayCurrency)} /{" "}
                               {row.yesterdayUnit}
                             </div>
                           )}
-                          <div className="mt-1 text-zinc-600">
+                          <div className="mt-1 text-muted-foreground">
                             {row.updatedAt ? row.updatedAt.slice(0, 16).replace("T", " ") : ""}
                             {row.updatedBy ? ` · ${row.updatedBy}` : ""}
                           </div>
@@ -287,13 +287,12 @@ export default function ExecutionDailyPricesPage() {
                         "Not set"
                       )}
                     </td>
-                    <td className="px-3 py-3">
+                    <td>
                       <button
                         type="button"
                         disabled={upsert.isPending || !canSave}
                         onClick={() => onSave(row.code)}
-                        className="rounded-lg px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-40"
-                        style={{ background: "linear-gradient(135deg,#fbbf24,#f59e0b)" }}
+                        className="kastros-btn-primary px-3 py-1.5 text-xs disabled:opacity-40"
                       >
                         Publish
                       </button>
@@ -305,6 +304,7 @@ export default function ExecutionDailyPricesPage() {
           </table>
         </div>
       )}
-    </div>
+      </DeskScroll>
+    </DeskPage>
   );
 }

@@ -3,38 +3,41 @@
 import { TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
+import {
+  isTraderDraft,
+  traderCanEditTrade,
+  traderListStatusLabel,
+} from "@/lib/trade-lifecycle";
 import Link from "next/link";
 import { TradeStatus } from "@prisma/client";
 import { endOfMonth, startOfMonth } from "date-fns";
+import { PenLine } from "lucide-react";
 import { useState } from "react";
+import { TradeEditModal } from "@/components/trader/trade-edit-modal";
 
-type TradeFilter = "ALL" | "DRAFTS" | "LOCKED" | "CONFIRMED" | "CLOSED";
+type TradeFilter = "ALL" | "DRAFTS" | "LOCKED" | "CLOSED";
 
-const FILTERS: TradeFilter[] = ["ALL", "DRAFTS", "LOCKED", "CONFIRMED", "CLOSED"];
+const FILTERS: TradeFilter[] = ["ALL", "DRAFTS", "LOCKED", "CLOSED"];
 
 const statusStyle: Partial<Record<TradeStatus, string>> = {
-  PENDING: "bg-amber-500/20 text-amber-400",
+  PENDING: "bg-warning/20 text-warning",
   LOCKED: "bg-purple-500/20 text-purple-300",
-  CONFIRMED: "bg-blue-500/20 text-blue-400",
-  EXECUTED: "bg-zinc-500/20 text-zinc-400",
-  SETTLED: "bg-zinc-500/20 text-zinc-400",
+  CONFIRMED: "bg-purple-500/20 text-purple-300",
+  EXECUTED: "bg-zinc-500/20 text-muted-foreground",
+  SETTLED: "bg-zinc-500/20 text-muted-foreground",
 };
-
-function displayStatus(status: TradeStatus): string {
-  if (status === TradeStatus.PENDING) return "Draft";
-  if (status === TradeStatus.EXECUTED || status === TradeStatus.SETTLED) return "Closed";
-  return status;
-}
 
 function filterInput(filter: TradeFilter) {
   if (filter === "DRAFTS") return { bucket: "DRAFTS" as const };
   if (filter === "CLOSED") return { bucket: "CLOSED" as const };
+  if (filter === "LOCKED") return { bucket: "LOCKED" as const };
   if (filter === "ALL") return {};
-  return { status: filter as TradeStatus };
+  return {};
 }
 
 export default function MyTradesPage() {
   const [filter, setFilter] = useState<TradeFilter>("ALL");
+  const [editRef, setEditRef] = useState<string | null>(null);
   const exportCsv = trpc.trader.exportLockedTrades.useMutation({
     onSuccess: (res) => {
       const blob = new Blob([res.csv], { type: "text/csv;charset=utf-8" });
@@ -49,11 +52,16 @@ export default function MyTradesPage() {
   const { data: trades, isLoading } = trpc.trader.myTrades.useQuery(filterInput(filter));
 
   return (
-    <div className="space-y-4">
+    <div className="kastros-desk-page">
+      <TradeEditModal tradeRef={editRef} open={editRef != null} onClose={() => setEditRef(null)} />
+
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-white">My Trades</h1>
-          <p className="text-sm text-zinc-500">All trades you have booked on the desk.</p>
+          <h1 className="text-2xl font-semibold text-foreground">My Trades</h1>
+          <p className="text-sm text-subtle">
+            Use <span className="text-foreground">Edit</span> on draft or unreviewed trades only — locked
+            contracts cannot change price, quantity, or commission.
+          </p>
         </div>
         <div className="flex gap-2">
           <button
@@ -64,13 +72,13 @@ export default function MyTradesPage() {
                 to: endOfMonth(new Date()),
               })
             }
-            className="rounded-md border border-kastros-border px-4 py-2 text-sm text-zinc-300 hover:bg-white/5"
+            className="rounded-md border border-kastros-border px-4 py-2 text-sm text-muted-foreground hover:bg-foreground/5"
           >
             Export locked (month)
           </button>
           <Link
             href="/trader/trades/new"
-            className="rounded-md bg-kastros-green px-4 py-2 text-sm font-semibold text-kastros-bg"
+            className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-kastros-bg"
           >
             + Book Trade
           </Link>
@@ -85,24 +93,24 @@ export default function MyTradesPage() {
             onClick={() => setFilter(f)}
             className={`rounded-md border px-3 py-1 text-xs ${
               filter === f
-                ? "border-kastros-green bg-kastros-green/10 text-kastros-green"
-                : "border-kastros-border text-zinc-400 hover:bg-white/5"
+                ? "border-success bg-success/10 text-success"
+                : "border-kastros-border text-muted-foreground hover:bg-foreground/5"
             }`}
           >
-            {f === "DRAFTS" ? "Drafts" : f === "CLOSED" ? "Closed" : f === "ALL" ? "All" : f}
+            {f === "DRAFTS" ? "Drafts" : f === "CLOSED" ? "Closed" : f === "ALL" ? "All" : "Locked"}
           </button>
         ))}
       </div>
 
       {isLoading ? (
-        <div className="text-zinc-500">Loading trades…</div>
+        <div className="text-subtle">Loading trades…</div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-kastros-border bg-kastros-card">
-          <div className="max-h-[560px] overflow-auto text-sm">
+      <div className="kastros-table-wrap text-sm">
             <table className="w-full border-collapse">
-              <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-zinc-500">
+              <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-subtle">
                 <tr>
                   {[
+                    "Edit",
                     "Trade ref",
                     "Date",
                     "Market",
@@ -112,10 +120,7 @@ export default function MyTradesPage() {
                     "Price",
                     "Notional",
                     "Counterparty",
-                    "Origin → Dest",
                     "Delivery",
-                    "Payment",
-                    "MTM",
                     "Status",
                   ].map((h) => (
                     <th key={h} className="border-b border-kastros-border px-2 py-2 whitespace-nowrap">
@@ -126,16 +131,35 @@ export default function MyTradesPage() {
               </thead>
               <tbody>
                 {trades?.map((t) => (
-                  <tr key={t.id} className="border-b border-kastros-border/60 hover:bg-white/[0.02]">
+                  <tr key={t.id} className="border-b border-kastros-border/60 hover:bg-foreground/[0.02]">
+                    <td className="px-2 py-2">
+                      {traderCanEditTrade(t) ? (
+                        <button
+                          type="button"
+                          onClick={() => setEditRef(t.tradeRef)}
+                          className="inline-flex items-center gap-1 rounded-md border border-brand/40 bg-brand/10 px-2 py-1 text-[11px] font-semibold text-brand hover:bg-brand/20"
+                          title={
+                            isTraderDraft(t)
+                              ? "Edit draft (saves directly)"
+                              : "Propose changes (CEO approval required)"
+                          }
+                        >
+                          <PenLine className="h-3 w-3" />
+                          Edit
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-subtle">—</span>
+                      )}
+                    </td>
                     <td className="px-2 py-2">
                       <Link
                         href={`/trader/trades/${encodeURIComponent(t.tradeRef)}`}
-                        className="font-mono text-xs text-kastros-green hover:underline"
+                        className="font-mono text-xs text-success hover:underline"
                       >
                         {t.tradeRef}
                       </Link>
                     </td>
-                    <td className="px-2 py-2 text-xs text-zinc-500">{t.tradeDate.toISOString().slice(0, 10)}</td>
+                    <td className="px-2 py-2 text-xs text-subtle">{t.tradeDate.toISOString().slice(0, 10)}</td>
                     <td className="px-2 py-2">
                       <span
                         className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
@@ -147,7 +171,7 @@ export default function MyTradesPage() {
                         {TRADE_SCOPE_LABELS[t.tradeScope ?? "LOCAL"]}
                       </span>
                     </td>
-                    <td className={`px-2 py-2 text-xs font-medium ${t.direction === "BUY" ? "text-kastros-green" : "text-kastros-red"}`}>
+                    <td className={`px-2 py-2 text-xs font-medium ${t.direction === "BUY" ? "text-success" : "text-kastros-red"}`}>
                       {t.direction}
                     </td>
                     <td className="px-2 py-2">{t.commodity.code}</td>
@@ -156,30 +180,24 @@ export default function MyTradesPage() {
                     </td>
                     <td className="px-2 py-2 data-grid">
                       {formatCurrency(t.price, t.currency)}
-                      <span className="text-zinc-600"> /{t.quantityUnit ?? t.commodity.unit}</span>
+                      <span className="text-subtle"> /{t.quantityUnit ?? t.commodity.unit}</span>
                     </td>
                     <td className="px-2 py-2 data-grid">{formatCurrency(t.quantity * t.price, t.currency)}</td>
-                    <td className="px-2 py-2 text-xs text-zinc-400">{t.counterparty.name}</td>
-                    <td className="px-2 py-2 text-xs text-zinc-500 max-w-[140px]">
-                      {t.originName.split(",")[0]} → {t.destName.split(",")[0]}
+                    <td className="px-2 py-2 text-xs text-muted-foreground max-w-[120px] truncate">
+                      {t.counterparty.name}
                     </td>
-                    <td className="px-2 py-2 text-xs text-zinc-500">
+                    <td className="px-2 py-2 text-xs text-subtle">
                       {t.deliveryStart.toISOString().slice(0, 10)}
-                    </td>
-                    <td className="px-2 py-2 text-xs text-zinc-500">{t.paymentTerms}</td>
-                    <td className={`px-2 py-2 data-grid ${t.mtmPnl >= 0 ? "text-kastros-green" : "text-kastros-red"}`}>
-                      {formatCurrency(t.mtmPnl, t.currency)}
                     </td>
                     <td className="px-2 py-2">
                       <span className={`rounded px-1.5 py-0.5 text-xs ${statusStyle[t.tradeStatus] ?? ""}`}>
-                        {displayStatus(t.tradeStatus)}
+                        {traderListStatusLabel(t)}
                       </span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
         </div>
       )}
     </div>

@@ -41,7 +41,7 @@ export default function PurchaseSpotDetailPage() {
   const [receiveKg, setReceiveKg] = useState("");
   const [notes, setNotes] = useState("");
 
-  if (!data?.contract) return <div className="flex h-64 items-center justify-center text-sm text-zinc-500">Loading…</div>;
+  if (!data?.contract) return <div className="flex h-64 items-center justify-center text-sm text-subtle">Loading…</div>;
 
   const c = data.contract;
   const unit = c.quantityUnit;
@@ -69,11 +69,11 @@ export default function PurchaseSpotDetailPage() {
   const variance = spot?.weightVarianceKg ?? null;
 
   return (
-    <div className="space-y-6">
+    <div className="kastros-desk-page">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-xs" style={{ color: "#71717a" }}>
-        <Link href="/execution" className="hover:text-white">Desk</Link><span>/</span>
-        <Link href="/execution/purchase-spot" className="hover:text-white">Purchase (Spot)</Link><span>/</span>
+        <Link href="/execution" className="hover:text-foreground">Desk</Link><span>/</span>
+        <Link href="/execution/purchase-spot" className="hover:text-foreground">Purchase (Spot)</Link><span>/</span>
         <span style={{ color: "#a1a1aa" }}>{tradeRef}</span>
       </div>
 
@@ -82,7 +82,7 @@ export default function PurchaseSpotDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="font-mono text-xl font-bold" style={{ color: "#60a5fa" }}>{c.tradeRef}</h1>
-            <p className="mt-0.5 text-sm font-medium text-white">{c.counterpartyName}</p>
+            <p className="mt-0.5 text-sm font-medium text-foreground">{c.counterpartyName}</p>
             <p className="mt-0.5 text-xs" style={{ color: "#71717a" }}>
               {formatQtyWithUnit(c.contractualQtyMt, unit, 2)} · {c.warehouseDefault ?? "—"} · PKR {c.ratePerMaund?.toFixed(0) ?? "—"}/Maund
             </p>
@@ -147,7 +147,7 @@ export default function PurchaseSpotDetailPage() {
 
       {/* Advance actions */}
       <div className="rounded-2xl p-5" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
-        <h2 className="mb-4 text-sm font-semibold text-white">Advance Stage</h2>
+        <h2 className="mb-4 text-sm font-semibold text-foreground">Advance Stage</h2>
 
         {/* Context-sensitive fields */}
         <div className="mb-4 grid gap-3 sm:grid-cols-2">
@@ -195,7 +195,7 @@ export default function PurchaseSpotDetailPage() {
             {/* Allow jumping to any future state */}
             {PIPELINE.slice(currentIdx + 2).map((s) => (
               <button key={s.key} onClick={() => handleAdvance(s.key)} disabled={advance.isPending}
-                className="rounded-xl border px-3 py-2 text-xs font-medium text-zinc-400 transition-all hover:text-white"
+                className="rounded-xl border px-3 py-2 text-xs font-medium text-muted-foreground transition-all hover:text-foreground"
                 style={{ borderColor: "rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.03)" }}>
                 → {s.label}
               </button>
@@ -248,7 +248,7 @@ function Inp({ label, placeholder, value, onChange, type = "text" }: {
       <label className="mb-1 block text-[11px] font-medium" style={{ color: "#a1a1aa" }}>{label}</label>
       <input type={type} placeholder={placeholder} value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none"
+        className="w-full rounded-lg px-3 py-2 text-sm text-foreground outline-none"
         style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }} />
     </div>
   );

@@ -1,0 +1,18 @@
+stateDiagram-v2
+  [*] --> Draft: trader.bookTrade
+  Draft --> Unreviewed: trader.submitTradeToExecution
+  Unreviewed --> Unreviewed: execution.updateOpenTrade
+  Unreviewed --> AwaitingPrice: unfixed basis submitted
+  AwaitingPrice --> Unreviewed: trader.completeTradePrice
+  Unreviewed --> AwaitingTraderReview: execution edits trade
+  AwaitingTraderReview --> Locked: trader.lockTrade
+  Unreviewed --> Locked: execution.lockOpenTrade
+  Locked --> Executed: autoClose received gt contract plus tolerance
+  Locked --> PendingClose: trader.submitChangeRequest CLOSE
+  PendingClose --> Executed: ceo.resolveApproval
+  Executed --> [*]
+
+  note right of Unreviewed
+    warehouseSplitApproved required
+    before lock when warehouse profile
+  end note

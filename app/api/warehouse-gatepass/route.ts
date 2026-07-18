@@ -1,68 +1,97 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { gatepassSchema } from "@/lib/gatepass-schema";
 import {
   createPendingTruck,
   getLiveCounterpartiesForGatepass,
   isAllowedGatepassCommodity,
   isAllowedGatepassCounterparty,
+  previewNextGatepassNo,
   seedExecutionDemoIfEmpty,
+  updatePendingTruck,
 } from "@/server/execution-store";
-import { getMergedLocations } from "@/server/trader-master-data";
+import { saveGatepassDocuments } from "@/server/gatepass-documents";
+import { getCompanyWarehouses, getMergedLocations } from "@/server/trader-master-data";
 
-const gatepassSchema = z.object({
-  movementType: z.enum(["INBOUND", "OUTBOUND"]),
-  counterpartyName: z.string().trim().min(1, "Counterparty is required"),
-  brokerName: z.string().trim().optional(),
-  warehouseName: z.string().trim().min(1, "Warehouse is required"),
-  truckNo: z.string().trim().min(1, "Truck number is required"),
-  driverName: z.string().trim().optional(),
-  driverPhone: z.string().trim().optional(),
-  builtyDetails: z.string().trim().min(1, "Builty details are required"),
-  commodityCode: z.string().trim().min(1, "Commodity is required"),
-  commodityName: z.string().trim().min(1, "Commodity is required"),
-  recordedByName: z.string().trim().min(1, "Your name is required"),
-  weightKg: z.coerce.number().positive("Weight must be greater than 0"),
-  bags: z.coerce.number().min(0).optional(),
-  remarks: z.string().trim().optional(),
-  gatepassNo: z.string().trim().optional(),
-});
+async function parseGatepassRequest(request: Request) {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const formData = await request.formData();
+    const payloadRaw = formData.get("payload");
+    if (typeof payloadRaw !== "string") {
+      return { error: "Invalid multipart payload" as const };
+    }
+    let payloadJson: unknown;
+    try {
+      payloadJson = JSON.parse(payloadRaw);
+    } catch {
+      return { error: "Invalid JSON in multipart payload" as const };
+    }
+    const parsed = gatepassSchema.safeParse(payloadJson);
+    if (!parsed.success) {
+      return {
+        error: parsed.error.issues[0]?.message ?? "Invalid gatepass payload",
+      } as const;
+    }
+    const files = formData
+      .getAll("documents")
+      .filter((f): f is File => f instanceof File && f.size > 0);
+    return { data: parsed.data, files };
+  }
 
-export async function GET() {
+  const body = await request.json().catch(() => null);
+  if (!body) return { error: "Invalid JSON payload" as const };
+  const parsed = gatepassSchema.safeParse(body);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid gatepass payload" } as const;
+  }
+  return { data: parsed.data, files: [] as File[] };
+}
+
+export async function GET(request: Request) {
   seedExecutionDemoIfEmpty();
+  const url = new URL(request.url);
+  const warehouse = url.searchParams.get("warehouse")?.trim() || undefined;
+  const movementType = url.searchParams.get("movementType");
+  const movement =
+    movementType === "INBOUND" || movementType === "OUTBOUND" ? movementType : undefined;
+
+  const companyNames = new Set(getCompanyWarehouses().map((w) => w.name));
   const warehouseSet = new Set<string>();
-  for (const loc of getMergedLocations()) warehouseSet.add(loc.name);
+  for (const loc of getMergedLocations()) {
+    if (companyNames.has(loc.name)) warehouseSet.add(loc.name);
+  }
+
+  // Always return both lists so the form can explain when the selected movement
+  // type has no trades but the opposite direction does (e.g. sale ex-warehouse → Gate Out).
+  const inboundCounterparties = getLiveCounterpartiesForGatepass("INBOUND", warehouse);
+  const outboundCounterparties = getLiveCounterpartiesForGatepass("OUTBOUND", warehouse);
+
   return NextResponse.json({
     warehouses: Array.from(warehouseSet).sort((a, b) => a.localeCompare(b)),
-    inboundCounterparties: getLiveCounterpartiesForGatepass("INBOUND"),
-    outboundCounterparties: getLiveCounterpartiesForGatepass("OUTBOUND"),
+    inboundCounterparties,
+    outboundCounterparties,
+    nextGatepassNo: movement ? previewNextGatepassNo(movement) : undefined,
   });
 }
 
 export async function POST(request: Request) {
   seedExecutionDemoIfEmpty();
 
-  const body = await request.json().catch(() => null);
-  if (!body) {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
-
-  const parsed = gatepassSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid gatepass payload" },
-      { status: 400 },
-    );
+  const parsed = await parseGatepassRequest(request);
+  if ("error" in parsed) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
   const input = parsed.data;
+  const weightKg = input.weightAsPerBuiltyKg;
 
-  if (!isAllowedGatepassCounterparty(input.movementType, input.counterpartyName)) {
+  if (!isAllowedGatepassCounterparty(input.movementType, input.counterpartyName, input.warehouseName)) {
     return NextResponse.json(
       {
         error:
           input.movementType === "INBOUND"
-            ? "Select a supplier from the live purchase-delivered trade list"
-            : "Select a buyer from the live sale trade list",
+            ? "Select a supplier with an open purchase trade at this warehouse"
+            : "Select a buyer with an open sale trade at this warehouse",
       },
       { status: 400 },
     );
@@ -73,10 +102,11 @@ export async function POST(request: Request) {
       input.movementType,
       input.counterpartyName,
       input.commodityCode,
+      input.warehouseName,
     )
   ) {
     return NextResponse.json(
-      { error: "Select a commodity from the counterparty's open trades" },
+      { error: "Select a commodity from the counterparty's open trades at this warehouse" },
       { status: 400 },
     );
   }
@@ -84,21 +114,33 @@ export async function POST(request: Request) {
   try {
     const truck = createPendingTruck({
       counterpartyName: input.counterpartyName,
-      brokerName: input.brokerName || null,
       movementType: input.movementType,
       warehouseName: input.warehouseName,
       truckNo: input.truckNo,
-      driverName: input.driverName || null,
-      driverPhone: input.driverPhone || null,
+      transporterName: input.transporterName || null,
+      transporterPhone: input.transporterPhone || null,
       builtyDetails: input.builtyDetails,
       commodityCode: input.commodityCode,
       commodityName: input.commodityName,
       recordedByName: input.recordedByName,
-      weightKg: input.weightKg,
-      bags: input.bags ?? null,
+      quantityAsPerBuilty: input.quantityAsPerBuilty || null,
+      weightAsPerBuiltyKg: input.weightAsPerBuiltyKg,
+      weighBridgeName: input.weighBridgeName || null,
+      documentRefs: input.documentRefs ?? [],
+      warehouseWeightKg: input.warehouseWeightKg ?? null,
+      qualitySpecs: input.qualitySpecs ?? null,
+      quantityBagsBales: input.quantityBagsBales ?? null,
+      totalDeductionsKg: input.totalDeductionsKg ?? null,
+      weightKg,
       remarks: input.remarks || null,
-      gatepassNo: input.gatepassNo || null,
     });
+
+    if (parsed.files.length) {
+      const uploaded = await saveGatepassDocuments(parsed.files, truck.gatepassNo);
+      updatePendingTruck(truck.id, {
+        documentRefs: [...(truck.documentRefs ?? []), ...uploaded],
+      });
+    }
 
     return NextResponse.json({
       ok: true,

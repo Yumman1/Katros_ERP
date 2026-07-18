@@ -70,17 +70,17 @@ export default function InventoryPage() {
   }, [list.data]);
 
   return (
-    <div className="space-y-4">
+    <div className="kastros-desk-page">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-white">Inventory Management</h1>
-          <p className="text-sm text-zinc-500">
+          <h1 className="text-2xl font-semibold text-foreground">Inventory Management</h1>
+          <p className="text-sm text-subtle">
             Lot-level stock, movements, aging, and availability across warehouses and ports.
           </p>
         </div>
         <Link
           href="/supply-chain"
-          className="rounded-md border border-kastros-border px-3 py-1.5 text-xs text-kastros-green hover:bg-white/5"
+          className="rounded-md border border-kastros-border px-3 py-1.5 text-xs text-success hover:bg-foreground/5"
         >
           Supply chain overview →
         </Link>
@@ -95,8 +95,8 @@ export default function InventoryPage() {
           { label: "Total value", value: formatCurrency(totals.value) },
         ].map((t) => (
           <div key={t.label} className="rounded-lg border border-kastros-border bg-kastros-card px-3 py-2">
-            <div className="text-xs uppercase tracking-wide text-zinc-500">{t.label}</div>
-            <div className="mt-0.5 data-grid text-base font-medium text-white">{t.value}</div>
+            <div className="text-xs uppercase tracking-wide text-subtle">{t.label}</div>
+            <div className="mt-0.5 data-grid text-base font-medium text-foreground">{t.value}</div>
           </div>
         ))}
       </div>
@@ -104,8 +104,8 @@ export default function InventoryPage() {
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {summ.data?.map((s) => (
           <div key={s.code} className="rounded-lg border border-kastros-border bg-kastros-card p-3 text-sm">
-            <div className="font-medium text-white">{s.code}</div>
-            <div className="mt-1 space-y-0.5 text-xs text-zinc-400">
+            <div className="font-medium text-foreground">{s.code}</div>
+            <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
               <div className="flex justify-between">
                 <span>On hand</span>
                 <span className="data-grid">{formatQty(s.onHand)}</span>
@@ -118,7 +118,7 @@ export default function InventoryPage() {
                 <span>In transit</span>
                 <span className="data-grid">{formatQty(s.transit)}</span>
               </div>
-              <div className="flex justify-between text-kastros-green">
+              <div className="flex justify-between text-success">
                 <span>Value</span>
                 <span className="data-grid">{formatCurrency(s.value)}</span>
               </div>
@@ -129,7 +129,7 @@ export default function InventoryPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="h-48 rounded-lg border border-kastros-border bg-kastros-card p-3">
-          <div className="text-sm text-zinc-300">Quantity by location</div>
+          <div className="text-sm text-muted-foreground">Quantity by location</div>
           <ResponsiveContainer width="100%" height="88%">
             <BarChart data={chart}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a3142" />
@@ -141,7 +141,7 @@ export default function InventoryPage() {
           </ResponsiveContainer>
         </div>
         <div className="h-48 rounded-lg border border-kastros-border bg-kastros-card p-3">
-          <div className="text-sm text-zinc-300">Stock aging distribution</div>
+          <div className="text-sm text-muted-foreground">Stock aging distribution</div>
           <ResponsiveContainer width="100%" height="88%">
             <BarChart data={agingChart}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a3142" />
@@ -162,7 +162,7 @@ export default function InventoryPage() {
               type="button"
               onClick={() => setTab(t)}
               className={`rounded-md px-3 py-1 text-xs capitalize ${
-                tab === t ? "bg-kastros-green/20 text-kastros-green" : "text-zinc-400 hover:text-white"
+                tab === t ? "bg-success/20 text-success" : "text-muted-foreground hover:text-foreground"
               }`}
             >
               {t}
@@ -173,7 +173,7 @@ export default function InventoryPage() {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as InventoryStatus | "ALL")}
-            className="rounded-md border border-kastros-border bg-kastros-bg px-2 py-1 text-xs text-zinc-300"
+            className="kastros-select kastros-select-sm"
           >
             {STATUS_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -186,7 +186,7 @@ export default function InventoryPage() {
           <button
             type="button"
             onClick={() => setSelectedLot(null)}
-            className="text-xs text-zinc-500 hover:text-white"
+            className="text-xs text-subtle hover:text-foreground"
           >
             Clear lot filter ×
           </button>
@@ -195,12 +195,12 @@ export default function InventoryPage() {
 
       {tab === "stock" && (
         <div className="overflow-hidden rounded-lg border border-kastros-border bg-kastros-card">
-          <div className="border-b border-kastros-border px-3 py-2 text-sm text-zinc-300">
+          <div className="border-b border-kastros-border px-3 py-2 text-sm text-muted-foreground">
             Stock lots — click a row to view movements
           </div>
-          <div className="max-h-[420px] overflow-auto text-sm">
+          <div className="min-h-0 flex-1 overflow-auto text-sm">
             <table className="w-full border-collapse">
-              <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-zinc-500">
+              <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-subtle">
                 <tr>
                   {[
                     "Lot ref",
@@ -233,20 +233,20 @@ export default function InventoryPage() {
                         setSelectedLot(r.id);
                         setTab("movements");
                       }}
-                      className="cursor-pointer border-b border-kastros-border/60 hover:bg-white/[0.03]"
+                      className="cursor-pointer border-b border-kastros-border/60 hover:bg-foreground/[0.03]"
                     >
-                      <td className="px-2 py-1.5 font-mono text-xs text-kastros-green">{r.warehouseRef ?? "—"}</td>
+                      <td className="px-2 py-1.5 font-mono text-xs text-success">{r.warehouseRef ?? "—"}</td>
                       <td className="px-2 py-1.5">{r.commodity.code}</td>
-                      <td className="px-2 py-1.5 text-zinc-400">{r.location.name}</td>
+                      <td className="px-2 py-1.5 text-muted-foreground">{r.location.name}</td>
                       <td className="px-2 py-1.5 data-grid">{formatQty(Number(r.quantity))}</td>
-                      <td className="px-2 py-1.5 data-grid text-kastros-green">{formatQty(available)}</td>
-                      <td className="px-2 py-1.5 data-grid text-amber-400/80">{formatQty(Number(r.reservedQty))}</td>
+                      <td className="px-2 py-1.5 data-grid text-success">{formatQty(available)}</td>
+                      <td className="px-2 py-1.5 data-grid text-warning/80">{formatQty(Number(r.reservedQty))}</td>
                       <td className="px-2 py-1.5 data-grid text-blue-400/80">{formatQty(Number(r.inTransitQty))}</td>
-                      <td className="px-2 py-1.5 text-zinc-500">{r.qualityGrade ?? "—"}</td>
-                      <td className="px-2 py-1.5 text-xs text-zinc-500">
+                      <td className="px-2 py-1.5 text-subtle">{r.qualityGrade ?? "—"}</td>
+                      <td className="px-2 py-1.5 text-xs text-subtle">
                         {r.arrivalDate ? r.arrivalDate.toISOString().slice(0, 10) : "—"}
                       </td>
-                      <td className="px-2 py-1.5 text-xs text-zinc-500">
+                      <td className="px-2 py-1.5 text-xs text-subtle">
                         {r.expiryDate ? r.expiryDate.toISOString().slice(0, 10) : "—"}
                       </td>
                       <td className="px-2 py-1.5 data-grid">{formatCurrency(Number(r.valuationPrice))}</td>
@@ -265,12 +265,12 @@ export default function InventoryPage() {
 
       {tab === "movements" && (
         <div className="overflow-hidden rounded-lg border border-kastros-border bg-kastros-card">
-          <div className="border-b border-kastros-border px-3 py-2 text-sm text-zinc-300">
+          <div className="border-b border-kastros-border px-3 py-2 text-sm text-muted-foreground">
             Inventory movements {selectedLot ? `(filtered to lot)` : "(all lots)"}
           </div>
-          <div className="max-h-[420px] overflow-auto text-sm">
+          <div className="min-h-0 flex-1 overflow-auto text-sm">
             <table className="w-full border-collapse">
-              <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-zinc-500">
+              <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-subtle">
                 <tr>
                   {["Date", "Type", "Qty (MT)", "Reference", "Notes", "Lot", "Location"].map((h) => (
                     <th key={h} className="border-b border-kastros-border px-2 py-2">
@@ -287,22 +287,22 @@ export default function InventoryPage() {
                       <span
                         className={`rounded px-1.5 py-0.5 text-xs ${
                           mv.movementType === "IN"
-                            ? "bg-kastros-green/20 text-kastros-green"
+                            ? "bg-success/20 text-success"
                             : mv.movementType === "OUT"
                               ? "bg-red-500/20 text-red-400"
                               : mv.movementType === "TRANSFER"
-                                ? "bg-blue-500/20 text-blue-400"
-                                : "bg-amber-500/20 text-amber-400"
+                                ? "bg-backgroundlue-500/20 text-blue-400"
+                                : "bg-warning/20 text-warning"
                         }`}
                       >
                         {mv.movementType}
                       </span>
                     </td>
                     <td className="px-2 py-1.5 data-grid">{formatQty(Number(mv.quantity))}</td>
-                    <td className="px-2 py-1.5 font-mono text-xs text-zinc-500">{mv.reference ?? "—"}</td>
-                    <td className="px-2 py-1.5 text-xs text-zinc-500 max-w-[200px]">{mv.notes ?? "—"}</td>
+                    <td className="px-2 py-1.5 font-mono text-xs text-subtle">{mv.reference ?? "—"}</td>
+                    <td className="px-2 py-1.5 text-xs text-subtle max-w-[200px]">{mv.notes ?? "—"}</td>
                     <td className="px-2 py-1.5 text-xs">{mv.inventory.commodity.code}</td>
-                    <td className="px-2 py-1.5 text-xs text-zinc-500">{mv.inventory.location.name}</td>
+                    <td className="px-2 py-1.5 text-xs text-subtle">{mv.inventory.location.name}</td>
                   </tr>
                 ))}
               </tbody>
@@ -313,12 +313,12 @@ export default function InventoryPage() {
 
       {tab === "aging" && (
         <div className="overflow-hidden rounded-lg border border-kastros-border bg-kastros-card">
-          <div className="border-b border-kastros-border px-3 py-2 text-sm text-zinc-300">
+          <div className="border-b border-kastros-border px-3 py-2 text-sm text-muted-foreground">
             Stock aging — dwell time and expiry tracking
           </div>
-          <div className="max-h-[420px] overflow-auto text-sm">
+          <div className="min-h-0 flex-1 overflow-auto text-sm">
             <table className="w-full border-collapse">
-              <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-zinc-500">
+              <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-subtle">
                 <tr>
                   {[
                     "Lot ref",
@@ -342,7 +342,7 @@ export default function InventoryPage() {
                   <tr key={a.id} className="border-b border-kastros-border/60">
                     <td className="px-2 py-1.5 font-mono text-xs">{a.warehouseRef ?? "—"}</td>
                     <td className="px-2 py-1.5">{a.commodity}</td>
-                    <td className="px-2 py-1.5 text-zinc-400">{a.location}</td>
+                    <td className="px-2 py-1.5 text-muted-foreground">{a.location}</td>
                     <td className="px-2 py-1.5 data-grid">{formatQty(a.quantity)}</td>
                     <td className="px-2 py-1.5 data-grid">{formatQty(a.available)}</td>
                     <td className="px-2 py-1.5 data-grid">{a.daysInStorage}</td>
@@ -352,15 +352,15 @@ export default function InventoryPage() {
                           a.agingBucket === "90d+"
                             ? "bg-red-500/20 text-red-400"
                             : a.agingBucket === "61-90d"
-                              ? "bg-amber-500/20 text-amber-400"
-                              : "bg-zinc-500/20 text-zinc-400"
+                              ? "bg-warning/20 text-warning"
+                              : "bg-zinc-500/20 text-muted-foreground"
                         }`}
                       >
                         {a.agingBucket}
                       </span>
                     </td>
-                    <td className="px-2 py-1.5 text-zinc-500">{a.qualityGrade ?? "—"}</td>
-                    <td className="px-2 py-1.5 text-xs text-zinc-500">
+                    <td className="px-2 py-1.5 text-subtle">{a.qualityGrade ?? "—"}</td>
+                    <td className="px-2 py-1.5 text-xs text-subtle">
                       {a.expiryDate
                         ? a.expiryDate instanceof Date
                           ? a.expiryDate.toISOString().slice(0, 10)
@@ -376,7 +376,7 @@ export default function InventoryPage() {
       )}
 
       {locations.data && (
-        <div className="rounded-lg border border-kastros-border bg-kastros-card p-3 text-xs text-zinc-500">
+        <div className="rounded-lg border border-kastros-border bg-kastros-card p-3 text-xs text-subtle">
           Network: {locations.data.length} sites ·{" "}
           {formatQty(locations.data.reduce((a, l) => a + l.onHand, 0))} MT on hand ·{" "}
           {formatQty(locations.data.reduce((a, l) => a + l.availableCapacity, 0))} MT spare capacity

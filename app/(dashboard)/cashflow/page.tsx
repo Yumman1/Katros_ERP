@@ -33,19 +33,19 @@ export default function CashflowPage() {
   }, [data]);
 
   return (
-    <div className="space-y-4">
+    <div className="kastros-desk-page">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-white">Cash flow</h1>
-          <p className="text-sm text-zinc-500">Projected vs actual liquidity.</p>
+          <h1 className="text-2xl font-semibold text-foreground">Cash flow</h1>
+          <p className="text-sm text-subtle">Projected vs actual liquidity.</p>
         </div>
-        <label className="text-xs text-zinc-400">
+        <label className="text-xs text-muted-foreground">
           Month
           <input
             type="month"
             value={month}
             onChange={(e) => setMonth(e.target.value)}
-            className="ml-2 rounded border border-kastros-border bg-kastros-bg px-2 py-1 text-sm text-white"
+            className="ml-2 rounded border border-kastros-border bg-kastros-bg px-2 py-1 text-sm text-foreground"
           />
         </label>
       </div>
@@ -61,7 +61,7 @@ export default function CashflowPage() {
 
       <div className="grid gap-4 xl:grid-cols-[1fr_300px]">
         <div className="h-64 rounded-lg border border-kastros-border bg-kastros-card p-3">
-          <div className="text-sm text-zinc-300">Daily net (selected month)</div>
+          <div className="text-sm text-muted-foreground">Daily net (selected month)</div>
           <ResponsiveContainer width="100%" height="90%">
             <BarChart data={weekly}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a3142" />
@@ -76,8 +76,8 @@ export default function CashflowPage() {
           </ResponsiveContainer>
         </div>
         <div className="rounded-lg border border-kastros-border bg-kastros-card p-3 text-sm">
-          <div className="font-medium text-zinc-300">Upcoming invoices</div>
-          <ul className="mt-2 max-h-56 space-y-2 overflow-auto text-xs text-zinc-400">
+          <div className="font-medium text-muted-foreground">Upcoming invoices</div>
+          <ul className="mt-2 max-h-56 space-y-2 overflow-auto text-xs text-muted-foreground">
             {upcoming.data?.map((inv) => (
               <li key={inv.id} className="flex justify-between gap-2 border-b border-kastros-border/50 pb-1">
                 <span className="truncate">{inv.invoiceRef}</span>
@@ -89,10 +89,10 @@ export default function CashflowPage() {
       </div>
 
       <div className="overflow-hidden rounded-lg border border-kastros-border bg-kastros-card">
-        <div className="border-b border-kastros-border px-3 py-2 text-sm text-zinc-300">Ledger</div>
-        <div className="max-h-[440px] overflow-auto">
+        <div className="border-b border-kastros-border px-3 py-2 text-sm text-muted-foreground">Ledger</div>
+        <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-zinc-500">
+            <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-subtle">
               <tr>
                 {["Value date", "Type", "Description", "Amount", "Run", "Mode"].map((h) => (
                   <th key={h} className="border-b border-kastros-border px-2 py-2">
@@ -104,7 +104,7 @@ export default function CashflowPage() {
             <tbody className="data-grid">
               {data?.rows.map((r) => (
                 <tr key={r.id} className="h-9 border-b border-kastros-border/60">
-                  <td className={cn("px-2 py-1", r.isProjected && "italic text-zinc-500")}>
+                  <td className={cn("px-2 py-1", r.isProjected && "italic text-subtle")}>
                     {r.valueDate.slice(0, 10)}
                   </td>
                   <td className="px-2 py-1">{r.type}</td>
@@ -112,13 +112,13 @@ export default function CashflowPage() {
                   <td
                     className={cn(
                       "px-2 py-1",
-                      r.amount >= 0 ? "text-kastros-green" : "text-kastros-red",
+                      r.amount >= 0 ? "text-success" : "text-kastros-red",
                     )}
                   >
                     {formatCurrency(r.amount, r.currency)}
                   </td>
                   <td className="px-2 py-1">{formatCurrency(r.running, r.currency)}</td>
-                  <td className="px-2 py-1 text-xs text-zinc-500">
+                  <td className="px-2 py-1 text-xs text-subtle">
                     {r.isProjected ? "Projected" : "Actual"}
                   </td>
                 </tr>
@@ -135,11 +135,11 @@ function CashCard({ label, value }: { label: string; value: number }) {
   const pos = value >= 0;
   return (
     <div className="rounded-lg border border-kastros-border bg-kastros-card px-3 py-2">
-      <div className="text-xs text-zinc-500">{label}</div>
+      <div className="text-xs text-subtle">{label}</div>
       <div
         className={cn(
           "data-grid text-lg font-semibold",
-          pos ? "text-kastros-green" : "text-kastros-red",
+          pos ? "text-success" : "text-kastros-red",
         )}
       >
         {formatCurrency(value)}

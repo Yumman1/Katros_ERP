@@ -4,7 +4,6 @@ import { isMockMode } from "@/server/mock-mode";
 import {
   mockCounterpartiesScm,
   mockLocationsDetail,
-  mockPositionVsInventory,
   mockSupplyChainOverview,
 } from "@/server/dummy-data";
 
@@ -78,6 +77,11 @@ export const supplyChainRouter = router({
         code: cp.code,
         type: cp.type,
         country: cp.country,
+        kycStatus: "VERIFIED" as const,
+        companyNameNtn: null as string | null,
+        ntn: null as string | null,
+        address: null as string | null,
+        bankDetails: null as string | null,
         creditLimit: Number(cp.creditLimit ?? 0),
         activeTrades: 0,
         openShipments: 0,
@@ -89,7 +93,20 @@ export const supplyChainRouter = router({
     }),
 
   positionVsInventory: protectedProcedure.query(async ({ ctx }) => {
-    if (isMockMode()) return mockPositionVsInventory();
+    if (isMockMode()) {
+      const { computePositionLedger } = await import("@/server/position-ledger");
+      const rows = computePositionLedger();
+      return rows.map((r) => ({
+        commodity: r.commodityName,
+        code: r.commodityCode,
+        positionNet: r.paperNet,
+        physicalOnHand: r.physicalNet,
+        physicalAvailable: r.adjustedPhysical,
+        variance: r.variance,
+        variancePct: r.physicalNet !== 0 ? r.variance / r.physicalNet : 0,
+        status: Math.abs(r.variance) < 1 ? ("MATCHED" as const) : ("BREAK" as const),
+      }));
+    }
     const positions = await ctx.prisma.position.findMany({
       include: { commodity: true },
       orderBy: { positionDate: "desc" },

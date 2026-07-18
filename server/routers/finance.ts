@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { roleProcedure, router } from "@/server/trpc/trpc";
-import { approvePayment, listPaymentRequests, rejectPayment } from "@/server/execution-store";
+import { headProcedure, roleProcedure, router } from "@/server/trpc/trpc";
+import {
+  approvePayment,
+  deletePaymentRequest,
+  listPaymentRequests,
+  rejectPayment,
+} from "@/server/execution-store";
 
 export const financeRouter = router({
   pendingPayments: roleProcedure(["FINANCE", "ADMIN"]).query(() =>
@@ -31,6 +36,17 @@ export const financeRouter = router({
     .mutation(({ input }) => {
       try {
         return rejectPayment(input.paymentId, input.comment);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  // Head-of-finance direct deletion of an erroneous payment request.
+  deletePayment: headProcedure("FINANCE")
+    .input(z.object({ paymentId: z.string() }))
+    .mutation(({ input }) => {
+      try {
+        return deletePaymentRequest(input.paymentId);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }

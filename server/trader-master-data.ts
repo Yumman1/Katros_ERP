@@ -1,7 +1,18 @@
-import { addDays } from "date-fns";
 import { CommodityCategory, CounterpartyType } from "@prisma/client";
-import { DEFAULT_GRADES, INCOTERMS, incotermsForDirection, QUANTITY_UNITS } from "@/lib/trade-constants";
+import { DEFAULT_GRADES, INCOTERMS, incotermsForDirection, QUANTITY_UNITS, isCornCommodity, isGrainCommodityCode } from "@/lib/trade-constants";
+import { defaultCategoryForCommodityCode } from "@/lib/commodity-category";
 import type { KycStatus } from "@/lib/trade-constants";
+import type { TradeParamDefinition } from "@/lib/trade-parameters";
+import {
+  canonicalKgPerUnitOf,
+  PRICE_CURRENCIES,
+  PRICE_WEIGHT_UNITS,
+  resolvePriceBasis,
+  type CommodityPriceUnits,
+  type PriceBasis,
+} from "@/lib/price-units";
+import { mergeUnitRegistry, type UnitDefinition } from "@/lib/unit-registry";
+import type { WarehouseLaborLine } from "@/lib/warehouse-costing";
 import {
   isLocalPersistEnabled,
   MASTER_DATA_FILE,
@@ -13,10 +24,17 @@ export type MockCommodityOption = {
   id: string;
   name: string;
   code: string;
+  /** Canonical quantity unit used throughout the app (default MT). */
   unit: string;
   exchange: string | null;
   tickerCode: string | null;
   category: CommodityCategory;
+  /** Kilograms per one canonical quantity unit (e.g. MT → 1000). Derived from `unit` if omitted. */
+  canonicalKgPerUnit?: number | null;
+  /** How this commodity is priced in each market. Falls back to canonical unit if omitted. */
+  priceUnits?: CommodityPriceUnits | null;
+  /** Extra booking fields specific to this commodity (merged with global + template params). */
+  tradeParameterDefs?: TradeParamDefinition[] | null;
 };
 
 export type MockCounterpartyOption = {
@@ -35,13 +53,6 @@ export type MockCounterpartyOption = {
   bankDetails: string | null;
 };
 
-const CP_EXTRA_DEFAULT = {
-  companyNameNtn: null,
-  ntn: null,
-  address: null,
-  bankDetails: null,
-} as const;
-
 export type MockLocationOption = {
   id: string;
   name: string;
@@ -54,87 +65,23 @@ export type MockLocationOption = {
   costPerSqFt?: number | null;
   balesDivisionSqFt?: number | null;
   grainDivisionSqFt?: number | null;
+  /** Warehousing service agreement start (ISO date). */
+  serviceStartDate?: string | null;
+  /** Estimated monthly tax on rental (PKR). */
+  rentalTaxPkr?: number | null;
+  /** Management fee as percentage of running cost. */
+  managementFeePct?: number | null;
+  /** Fixed hire period in months. */
+  hiringPeriodMonths?: number | null;
+  /** Fixed labor roles with headcount and monthly unit cost. */
+  laborLines?: WarehouseLaborLine[] | null;
 };
 
-const SEEDED_COMMODITIES: MockCommodityOption[] = [
-  { id: "c1", name: "Wheat", code: "WHT", unit: "MT", exchange: "CBOT", tickerCode: "ZW", category: CommodityCategory.GRAINS },
-  { id: "c2", name: "Palm Oil", code: "CPO", unit: "MT", exchange: "BMD", tickerCode: "FCPO", category: CommodityCategory.VEGOIL },
-  { id: "c3", name: "Sugar", code: "SUG", unit: "MT", exchange: "ICE", tickerCode: "SB", category: CommodityCategory.SOFTS },
-  { id: "c6", name: "Soybeans", code: "SOY", unit: "MT", exchange: "CBOT", tickerCode: "ZS", category: CommodityCategory.OILSEEDS },
-  { id: "c7", name: "Rice", code: "RCE", unit: "MT", exchange: "CBOT", tickerCode: "ZR", category: CommodityCategory.GRAINS },
-  { id: "c8", name: "Corn", code: "CRN", unit: "MT", exchange: "CBOT", tickerCode: "ZC", category: CommodityCategory.GRAINS },
-];
+const SEEDED_COMMODITIES: MockCommodityOption[] = [];
 
-const SEEDED_COUNTERPARTIES: MockCounterpartyOption[] = [
-  { id: "cp1", name: "Sindh Mills Corp", code: "SMC", type: CounterpartyType.SELLER, country: "PK", kycStatus: "VERIFIED", kycRef: "KYC-SMC-2025", kycExpires: addDays(new Date(), 180), ...CP_EXTRA_DEFAULT },
-  { id: "cp2", name: "Al Ghurair Resources", code: "AGR", type: CounterpartyType.SELLER, country: "AE", kycStatus: "VERIFIED", kycRef: "KYC-AGR-2024", kycExpires: addDays(new Date(), 90), ...CP_EXTRA_DEFAULT },
-  { id: "cp3", name: "Cargill Grain Asia", code: "CGA", type: CounterpartyType.SELLER, country: "SG", kycStatus: "VERIFIED", kycRef: "KYC-CGA-2025", kycExpires: addDays(new Date(), 240), ...CP_EXTRA_DEFAULT },
-  { id: "cp4", name: "Glencore Agri", code: "GLN", type: CounterpartyType.SELLER, country: "CH", kycStatus: "VERIFIED", kycRef: "KYC-GLN-2025", kycExpires: addDays(new Date(), 120), ...CP_EXTRA_DEFAULT },
-  { id: "cp5", name: "Universal Corporation", code: "UNV", type: CounterpartyType.SELLER, country: "US", kycStatus: "VERIFIED", kycRef: "KYC-UNV-2024", kycExpires: addDays(new Date(), 60), ...CP_EXTRA_DEFAULT },
-  { id: "cp6", name: "National Foods", code: "NAF", type: CounterpartyType.BUYER, country: "PK", kycStatus: "VERIFIED", kycRef: "KYC-NAF-2025", kycExpires: addDays(new Date(), 200), ...CP_EXTRA_DEFAULT },
-  { id: "cp7", name: "Engro Grain Terminal", code: "EGT", type: CounterpartyType.BUYER, country: "PK", kycStatus: "PENDING", kycRef: null, kycExpires: null, ...CP_EXTRA_DEFAULT },
-  { id: "cp8", name: "FFC Agricultural", code: "FFC", type: CounterpartyType.SELLER, country: "PK", kycStatus: "EXPIRED", kycRef: "KYC-FFC-2023", kycExpires: addDays(new Date(), -30), ...CP_EXTRA_DEFAULT },
-];
+const SEEDED_COUNTERPARTIES: MockCounterpartyOption[] = [];
 
-const SEEDED_LOCATIONS: MockLocationOption[] = [
-  {
-    id: "l1",
-    name: "K001-Al Amin WH SWL",
-    code: "K001",
-    lsp: "Hellmann",
-    address: "12 KM Sahiwal Arifwala, Bahawalnagar Road Sahiwal",
-    city: "Sahiwal",
-    province: "Punjab",
-    capacitySqFt: 38680,
-    costPerSqFt: 36,
-    balesDivisionSqFt: 4.5,
-    grainDivisionSqFt: 6.0413,
-  },
-  {
-    id: "l2",
-    name: "K002-Abdullah wh",
-    code: "K002",
-    lsp: "Hellmann",
-    address: "Adullah textile mill, Chak No 85/15L vehari Road khanewal",
-    city: "Kacha Koh",
-    province: "Punjab",
-    capacitySqFt: 70000,
-    costPerSqFt: 25,
-    balesDivisionSqFt: 4,
-    grainDivisionSqFt: 10.311,
-  },
-  {
-    id: "l3",
-    name: "K003- Galaxy wh",
-    code: "K003",
-    lsp: "Hellmann",
-    address: "30km Sheikhupura Road Khuriwala FSB Punjab",
-    city: "Jhang",
-    province: "Punjab",
-    capacitySqFt: 100000,
-    costPerSqFt: 27.5,
-    balesDivisionSqFt: 4.5,
-    grainDivisionSqFt: 7.2,
-  },
-  {
-    id: "l4",
-    name: "K005-Shuja feed Wh",
-    code: "K005",
-    lsp: "Moventis",
-    address: "Shujaabad Feed, Jalalpur",
-    city: "Jalalpur",
-    province: "Punjab",
-    capacitySqFt: 53000,
-    costPerSqFt: 30,
-    balesDivisionSqFt: 4.5,
-    grainDivisionSqFt: 7.5,
-  },
-  { id: "l5", name: "Karachi Port" },
-  { id: "l6", name: "Port Qasim" },
-  { id: "l7", name: "Port Klang, Malaysia" },
-  { id: "l8", name: "New Orleans, USA" },
-  { id: "l9", name: "FOB Karachi" },
-];
+const SEEDED_LOCATIONS: MockLocationOption[] = [];
 
 type MasterDataSnapshot = {
   customCommodities: MockCommodityOption[];
@@ -145,6 +92,8 @@ type MasterDataSnapshot = {
   customLocationSeq: number;
   customCounterpartySeq: number;
   customQuantityUnits?: string[];
+  /** Custom units with kg conversion factors (replaces bare string list over time). */
+  customUnits?: UnitDefinition[];
   warehouseOverrides?: Record<string, Partial<MockLocationOption>>;
 };
 
@@ -166,6 +115,7 @@ function getMasterRuntime(): MasterRuntime {
       customLocationSeq: 100,
       customCounterpartySeq: 100,
       customQuantityUnits: [],
+      customUnits: [],
       warehouseOverrides: {},
     };
   }
@@ -188,6 +138,7 @@ function syncMasterDataFromDisk() {
   rt.customLocationSeq = snap.customLocationSeq;
   rt.customCounterpartySeq = snap.customCounterpartySeq;
   rt.customQuantityUnits = snap.customQuantityUnits ?? [];
+  rt.customUnits = snap.customUnits ?? [];
   rt.warehouseOverrides = snap.warehouseOverrides ?? {};
 }
 
@@ -202,18 +153,67 @@ function persistMasterData() {
     customLocationSeq: rt.customLocationSeq,
     customCounterpartySeq: rt.customCounterpartySeq,
     customQuantityUnits: rt.customQuantityUnits ?? [],
+    customUnits: rt.customUnits ?? [],
     warehouseOverrides: rt.warehouseOverrides ?? {},
   } satisfies MasterDataSnapshot);
 }
 
 function masterRt() {
   syncMasterDataFromDisk();
-  return getMasterRuntime();
+  const rt = getMasterRuntime();
+  ensureCounterpartyCodes(rt);
+  ensureCommodityCategories(rt);
+  return rt;
 }
 
 function norm(s: string) {
   return s.trim().toLowerCase();
 }
+
+/** Unique counterparty business key, e.g. CP-00101 */
+export function formatCounterpartyCode(seq: number): string {
+  return `CP-${String(seq).padStart(5, "0")}`;
+}
+
+function getMergedCounterpartiesFromRt(rt: MasterRuntime): MockCounterpartyOption[] {
+  return [...SEEDED_COUNTERPARTIES, ...rt.customCounterparties];
+}
+
+function nextCounterpartyCode(rt: MasterRuntime): string {
+  const existing = new Set(getMergedCounterpartiesFromRt(rt).map((c) => norm(c.code)));
+  for (let attempt = 0; attempt < 10_000; attempt += 1) {
+    rt.customCounterpartySeq += 1;
+    const code = formatCounterpartyCode(rt.customCounterpartySeq);
+    if (!existing.has(norm(code))) return code;
+  }
+  throw new Error("Could not allocate a unique counterparty code");
+}
+
+/** Assign backend codes to legacy counterparties that used name slugs. */
+function ensureCounterpartyCodes(rt: MasterRuntime) {
+  let changed = false;
+  for (const cp of rt.customCounterparties) {
+    if (/^CP-\d{5}$/i.test(cp.code)) continue;
+    cp.code = nextCounterpartyCode(rt);
+    changed = true;
+  }
+  if (changed) persistMasterData();
+}
+
+/** Persist grain category for corn and other grain codes (warehouse grain division). */
+function ensureCommodityCategories(rt: MasterRuntime) {
+  let changed = false;
+  for (const row of rt.customCommodities) {
+    const shouldBeGrain = isCornCommodity(row.code) || isGrainCommodityCode(row.code);
+    if (shouldBeGrain && row.category !== CommodityCategory.GRAINS) {
+      row.category = CommodityCategory.GRAINS;
+      changed = true;
+    }
+  }
+  if (changed) persistMasterData();
+}
+
+export { defaultCategoryForCommodityCode } from "@/lib/commodity-category";
 
 function uniqueUnits(values: string[]) {
   const seen = new Set<string>();
@@ -231,12 +231,38 @@ function uniqueUnits(values: string[]) {
 }
 
 function mergedQuantityUnits(rt = masterRt()) {
+  const fromRegistry = [...getMergedUnitRegistry(rt).values()].map((u) => u.code);
   return uniqueUnits([
     ...QUANTITY_UNITS,
+    ...fromRegistry,
     ...SEEDED_COMMODITIES.map((c) => c.unit),
     ...rt.customCommodities.map((c) => c.unit),
     ...((rt.customQuantityUnits) ?? []),
   ]);
+}
+
+/** All known units with kg-per-unit factors (built-in + custom). */
+export function getMergedUnitRegistry(rt = masterRt()): Map<string, UnitDefinition> {
+  return mergeUnitRegistry(rt.customUnits ?? []);
+}
+
+/** Register or update a custom unit's kg conversion factor. */
+export function registerCustomUnit(input: { code: string; kgPerUnit: number; label?: string }) {
+  const code = input.code.trim().toUpperCase();
+  if (!code || input.kgPerUnit <= 0) throw new Error("Unit code and positive kg per unit are required");
+  const rt = getMasterRuntime();
+  rt.customUnits = rt.customUnits ?? [];
+  const idx = rt.customUnits.findIndex((u) => norm(u.code) === norm(code));
+  const row: UnitDefinition = { code, kgPerUnit: input.kgPerUnit, label: input.label };
+  if (idx >= 0) rt.customUnits[idx] = row;
+  else rt.customUnits.push(row);
+  // Keep legacy string list in sync for older dropdowns
+  rt.customQuantityUnits = rt.customQuantityUnits ?? [];
+  if (!rt.customQuantityUnits.map(norm).includes(norm(code))) {
+    rt.customQuantityUnits.push(code);
+  }
+  persistMasterData();
+  return row;
 }
 
 function canonicalUnit(unit: string, rt: MasterRuntime) {
@@ -254,8 +280,7 @@ export function getCommodityById(id: string): MockCommodityOption | undefined {
 }
 
 export function getMergedCounterparties(): MockCounterpartyOption[] {
-  const rt = masterRt();
-  return [...SEEDED_COUNTERPARTIES, ...rt.customCounterparties];
+  return getMergedCounterpartiesFromRt(masterRt());
 }
 
 export function getCounterpartyById(id: string): MockCounterpartyOption | undefined {
@@ -279,6 +304,16 @@ export function getMergedLocations(): MockLocationOption[] {
 export function getLocationByName(name: string): MockLocationOption | undefined {
   const key = norm(name);
   return getMergedLocations().find((l) => norm(l.name) === key);
+}
+
+/** True for the company's own storage warehouses (have capacity or a K-coded id) vs. ports/FOB points. */
+export function isCompanyWarehouse(loc: MockLocationOption): boolean {
+  return loc.capacitySqFt != null || (loc.code?.trim().toUpperCase().startsWith("K") ?? false);
+}
+
+/** Company-owned warehouses the execution head can allocate contracts to. */
+export function getCompanyWarehouses(): MockLocationOption[] {
+  return getMergedLocations().filter(isCompanyWarehouse);
 }
 
 export function getMergedGrades(): Record<string, string[]> {
@@ -319,8 +354,25 @@ export function getTraderReferenceData() {
       SELL: [...incotermsForDirection("SELL")],
     },
     quantityUnits: mergedQuantityUnits(rt),
+    units: [...getMergedUnitRegistry(rt).values()].sort((a, b) => a.code.localeCompare(b.code)),
+    priceCurrencies: [...PRICE_CURRENCIES],
+    priceWeightUnits: uniqueUnits([...PRICE_WEIGHT_UNITS, ...mergedQuantityUnits(rt)]),
     grades: getMergedGrades(),
+    /** Company warehouses registered on Execution → Warehouses (for booking dropdown). */
+    companyWarehouses: getCompanyWarehouses().map((w) => ({
+      id: w.id,
+      name: w.name,
+      code: w.code ?? null,
+    })),
   };
+}
+
+/** Resolve the price basis for a commodity id + market scope (server-side). */
+export function getCommodityPriceBasis(
+  commodityId: string,
+  scope: "LOCAL" | "INTERNATIONAL",
+): PriceBasis {
+  return resolvePriceBasis(getCommodityById(commodityId), scope);
 }
 
 export function addCustomCommodity(input: {
@@ -328,6 +380,9 @@ export function addCustomCommodity(input: {
   code: string;
   unit: string;
   category?: CommodityCategory;
+  canonicalKgPerUnit?: number | null;
+  priceUnits?: CommodityPriceUnits | null;
+  tradeParameterDefs?: TradeParamDefinition[] | null;
 }) {
   const code = input.code.trim().toUpperCase();
   const name = input.name.trim();
@@ -338,6 +393,9 @@ export function addCustomCommodity(input: {
   }
   const rt = getMasterRuntime();
   const unit = canonicalUnit(unitInput, rt);
+  const kgPerCanonical =
+    input.canonicalKgPerUnit ?? canonicalKgPerUnitOf({ unit });
+  registerCustomUnit({ code: unit, kgPerUnit: kgPerCanonical });
   rt.customCommoditySeq += 1;
   const row: MockCommodityOption = {
     id: `cc-${rt.customCommoditySeq}`,
@@ -346,7 +404,10 @@ export function addCustomCommodity(input: {
     unit,
     exchange: null,
     tickerCode: null,
-    category: input.category ?? CommodityCategory.OTHER,
+    category: input.category ?? defaultCategoryForCommodityCode(code),
+    canonicalKgPerUnit: kgPerCanonical,
+    priceUnits: input.priceUnits ?? null,
+    tradeParameterDefs: input.tradeParameterDefs ?? null,
   };
   rt.customCommodities.push(row);
   // If commodity unit is new, persist it so dropdowns include it
@@ -357,6 +418,18 @@ export function addCustomCommodity(input: {
   }
   persistMasterData();
   return row;
+}
+
+export function deleteCustomCommodity(id: string): { ok: boolean; code: string; name: string } {
+  const rt = masterRt();
+  const idx = rt.customCommodities.findIndex((c) => c.id === id);
+  if (idx < 0) {
+    throw new Error("Commodity not found or cannot be deleted");
+  }
+  const row = rt.customCommodities[idx]!;
+  rt.customCommodities.splice(idx, 1);
+  persistMasterData();
+  return { ok: true, code: row.code, name: row.name };
 }
 
 export function addCustomGrade(commodityCode: string, grade: string) {
@@ -384,6 +457,11 @@ export function addCustomLocation(input: {
   costPerSqFt?: number;
   balesDivisionSqFt?: number;
   grainDivisionSqFt?: number;
+  serviceStartDate?: string;
+  rentalTaxPkr?: number;
+  managementFeePct?: number;
+  hiringPeriodMonths?: number;
+  laborLines?: WarehouseLaborLine[];
 }) {
   const rt = getMasterRuntime();
   const n = input.name.trim();
@@ -404,6 +482,11 @@ export function addCustomLocation(input: {
     costPerSqFt: input.costPerSqFt ?? null,
     balesDivisionSqFt: input.balesDivisionSqFt ?? 4.5,
     grainDivisionSqFt: input.grainDivisionSqFt ?? 7,
+    serviceStartDate: input.serviceStartDate?.trim() || null,
+    rentalTaxPkr: input.rentalTaxPkr ?? null,
+    managementFeePct: input.managementFeePct ?? null,
+    hiringPeriodMonths: input.hiringPeriodMonths ?? null,
+    laborLines: input.laborLines?.length ? input.laborLines : null,
   };
   rt.customLocations.push(row);
   persistMasterData();
@@ -432,10 +515,22 @@ export function updateWarehouseLocation(
   return getMergedLocations().find((l) => l.id === id)!;
 }
 
+export function deleteWarehouseLocation(id: string): { ok: boolean; name: string } {
+  const rt = getMasterRuntime();
+  const idx = rt.customLocations.findIndex((l) => l.id === id);
+  if (idx < 0) {
+    throw new Error("Only custom warehouses can be deleted. Seeded warehouses cannot be removed.");
+  }
+  const name = rt.customLocations[idx]!.name;
+  rt.customLocations.splice(idx, 1);
+  persistMasterData();
+  return { ok: true, name };
+}
+
 export function addCustomCounterparty(input: {
   name: string;
-  code: string;
-  type: CounterpartyType;
+  code?: string;
+  type?: CounterpartyType;
   country: string;
   kycStatus?: KycStatus;
   kycRef?: string | null;
@@ -445,21 +540,26 @@ export function addCustomCounterparty(input: {
   address?: string | null;
   bankDetails?: string | null;
 }) {
-  const code = input.code.trim().toUpperCase();
   const name = input.name.trim();
-  if (!code || !name) throw new Error("Name and code are required");
-  if (getMergedCounterparties().some((c) => norm(c.code) === norm(code))) {
-    throw new Error(`Counterparty code ${code} already exists`);
-  }
+  if (!name) throw new Error("Name is required");
   const rt = getMasterRuntime();
-  rt.customCounterpartySeq += 1;
+  let code: string;
+  if (input.code?.trim()) {
+    code = input.code.trim().toUpperCase();
+    if (getMergedCounterpartiesFromRt(rt).some((c) => norm(c.code) === norm(code))) {
+      throw new Error(`Counterparty code ${code} already exists`);
+    }
+    rt.customCounterpartySeq += 1;
+  } else {
+    code = nextCounterpartyCode(rt);
+  }
   const row: MockCounterpartyOption = {
     id: `ccp-${rt.customCounterpartySeq}`,
     name,
     code,
-    type: input.type,
+    type: input.type ?? CounterpartyType.TRADING_PARTNER,
     country: input.country.trim(),
-    kycStatus: input.kycStatus ?? "VERIFIED",
+    kycStatus: input.kycStatus ?? "PENDING",
     kycRef: input.kycRef?.trim() || null,
     kycExpires: input.kycExpires ?? null,
     companyNameNtn: input.companyNameNtn?.trim() || null,
@@ -468,6 +568,50 @@ export function addCustomCounterparty(input: {
     bankDetails: input.bankDetails?.trim() || null,
   };
   rt.customCounterparties.push(row);
+  persistMasterData();
+  return row;
+}
+
+export function updateCustomCounterparty(
+  id: string,
+  patch: Partial<
+    Pick<
+      MockCounterpartyOption,
+      | "name"
+      | "type"
+      | "country"
+      | "kycStatus"
+      | "kycRef"
+      | "kycExpires"
+      | "companyNameNtn"
+      | "ntn"
+      | "address"
+      | "bankDetails"
+    >
+  >,
+): MockCounterpartyOption {
+  syncMasterDataFromDisk();
+  const rt = getMasterRuntime();
+  const idx = rt.customCounterparties.findIndex((c) => c.id === id);
+  if (idx < 0) {
+    throw new Error("Counterparty not found or cannot be edited");
+  }
+  const row = rt.customCounterparties[idx]!;
+  if (patch.name != null) {
+    const name = patch.name.trim();
+    if (!name) throw new Error("Counterparty name is required");
+    row.name = name;
+  }
+  if (patch.type != null) row.type = patch.type;
+  if (patch.country != null) row.country = patch.country.trim();
+  if (patch.kycStatus != null) row.kycStatus = patch.kycStatus;
+  if (patch.kycRef !== undefined) row.kycRef = patch.kycRef?.trim() || null;
+  if (patch.kycExpires !== undefined) row.kycExpires = patch.kycExpires ?? null;
+  if (patch.companyNameNtn !== undefined) row.companyNameNtn = patch.companyNameNtn?.trim() || null;
+  if (patch.ntn !== undefined) row.ntn = patch.ntn?.trim() || null;
+  if (patch.address !== undefined) row.address = patch.address?.trim() || null;
+  if (patch.bankDetails !== undefined) row.bankDetails = patch.bankDetails?.trim() || null;
+  rt.customCounterparties[idx] = row;
   persistMasterData();
   return row;
 }

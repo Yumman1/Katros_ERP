@@ -1,5 +1,7 @@
 /** Warehouse capacity & utilization — mirrors Inventory Sheet Summary tab formulas. */
 
+import { isGrainCommodityCode } from "@/lib/trade-constants";
+
 export type WarehouseCapacityInput = {
   capacitySqFt: number;
   balesDivisionSqFt: number;
@@ -148,12 +150,135 @@ export function warehouseUtilizationSummary(
   };
 }
 
+/** Convert remaining bale balance to grain MT using warehouse sq ft divisions. */
+export function baleBalanceAsGrainMt(
+  balanceBales: number,
+  capacity: Pick<WarehouseCapacityInput, "balesDivisionSqFt" | "grainDivisionSqFt">,
+): number {
+  if (balanceBales <= 0 || capacity.grainDivisionSqFt <= 0 || capacity.balesDivisionSqFt <= 0) {
+    return 0;
+  }
+  return (balanceBales * capacity.balesDivisionSqFt) / capacity.grainDivisionSqFt;
+}
+
+/** Unified view for execution utilization + trader booking (same formulas). */
+export type WarehouseUtilizationView = {
+  grainDivisionSqFt: number;
+  balesDivisionSqFt: number;
+  capacitySqFt: number;
+  stockMt: number;
+  stockBales: number;
+  utilizationPct: number;
+  availabilityPct: number;
+  remainingSqFt: number;
+  consumedSqFt: number;
+  theoreticalMaxMt: number;
+  theoreticalMaxBales: number;
+  /** Free room if storing grain (uses grain division sq ft / MT). */
+  availableGrainMt: number;
+  /** Free bale balance expressed as grain MT (bales division → grain division). */
+  availableBaleAsGrainMt: number;
+  /** Raw bale slots still free (for reference). */
+  balanceBales: number;
+  /** % of theoretical grain capacity (MT) still free — uses grain division only. */
+  grainAvailabilityPct: number | null;
+  /** % of theoretical bale capacity still free — uses bale division only. */
+  baleAvailabilityPct: number | null;
+};
+
+export function buildWarehouseUtilizationView(
+  loc: {
+    capacitySqFt?: number | null;
+    balesDivisionSqFt?: number | null;
+    grainDivisionSqFt?: number | null;
+  },
+  stock: WarehouseStockInput,
+): WarehouseUtilizationView | null {
+  const capacitySqFt = loc.capacitySqFt ?? 0;
+  if (capacitySqFt <= 0) return null;
+
+  const capacity: WarehouseCapacityInput = {
+    capacitySqFt,
+    balesDivisionSqFt: loc.balesDivisionSqFt ?? 4.5,
+    grainDivisionSqFt: loc.grainDivisionSqFt ?? 7,
+  };
+  const util = warehouseUtilizationSummary(stock, capacity);
+  const usedPct = Math.min(util.utilizationPct, 1) * 100;
+
+  return {
+    grainDivisionSqFt: capacity.grainDivisionSqFt,
+    balesDivisionSqFt: capacity.balesDivisionSqFt,
+    capacitySqFt,
+    stockMt: stock.stockMt,
+    stockBales: stock.stockBales,
+    utilizationPct: Math.round(usedPct * 10) / 10,
+    availabilityPct: Math.round(Math.max(0, 100 - usedPct) * 10) / 10,
+    remainingSqFt: util.remainingSqFt,
+    consumedSqFt: util.consumedSqFt,
+    theoreticalMaxMt: util.theoreticalMaxMt,
+    theoreticalMaxBales: util.theoreticalMaxBales,
+    availableGrainMt: util.balanceMt,
+    availableBaleAsGrainMt: baleBalanceAsGrainMt(util.balanceBales, capacity),
+    balanceBales: util.balanceBales,
+    grainAvailabilityPct: divisionAvailabilityPct(util.balanceMt, util.theoreticalMaxMt),
+    baleAvailabilityPct: divisionAvailabilityPct(util.balanceBales, util.theoreticalMaxBales),
+  };
+}
+
 /** Commodities stored/count in bales rather than grain MT buckets. */
 export function isBaleCommodity(commodityCode: string, quantityUnit?: string): boolean {
   const code = commodityCode.trim().toUpperCase();
   const unit = (quantityUnit ?? "").trim().toUpperCase();
   if (unit === "BALE" || unit === "BAG") return true;
   return ["CTN", "COT", "COTTON", "AFC"].includes(code);
+}
+
+export type WarehouseStorageDivision = "grain" | "bale";
+
+/** Which warehouse floor division applies when storing this commodity. */
+export function warehouseStorageDivisionForCommodity(input: {
+  commodityCode?: string | null;
+  quantityUnit?: string | null;
+  category?: string | null;
+}): WarehouseStorageDivision {
+  const code = input.commodityCode ?? "";
+  const unit = input.quantityUnit ?? "MT";
+  if (isBaleCommodity(code, unit)) return "bale";
+  if (input.category === "GRAINS" || input.category === "OILSEEDS") return "grain";
+  if (isGrainCommodityCode(code)) return "grain";
+  return "grain";
+}
+
+function divisionAvailabilityPct(available: number, theoreticalMax: number): number | null {
+  if (theoreticalMax <= 0 || !Number.isFinite(theoreticalMax)) return null;
+  return Math.round(Math.max(0, (available / theoreticalMax) * 100) * 10) / 10;
+}
+
+/** Pick availability % and free MT for the commodity's warehouse division. */
+export function warehouseCapacityForDivision(
+  view: Pick<
+    WarehouseUtilizationView,
+    | "grainAvailabilityPct"
+    | "baleAvailabilityPct"
+    | "availableGrainMt"
+    | "availableBaleAsGrainMt"
+    | "balanceBales"
+    | "theoreticalMaxBales"
+  >,
+  division: WarehouseStorageDivision,
+): { availabilityPct: number | null; availableMt: number | null; label: string } {
+  if (division === "bale") {
+    return {
+      availabilityPct: view.baleAvailabilityPct,
+      availableMt: view.availableBaleAsGrainMt,
+      label: "bale division",
+    };
+  }
+  return {
+    availabilityPct: view.grainAvailabilityPct,
+    availableMt: view.availableGrainMt,
+    label: "grain division",
+  };
 }
 
 export function stockFromMovement(

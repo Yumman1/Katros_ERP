@@ -1,0 +1,54 @@
+"use client";
+
+import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
+import { AppShell } from "@/components/layout/app-shell";
+import { ShellHeader } from "@/components/layout/shell-header";
+import { trpc } from "@/lib/trpc/client";
+
+const nav = [
+  { href: "/ceo", label: "Overview", exact: true },
+  { href: "/ceo/commodities", label: "Commodities" },
+  { href: "/ceo/approvals", label: "Approvals" },
+];
+
+export function CeoShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const pending = trpc.ceo.pendingApprovals.useQuery(undefined, {
+    refetchInterval: 60_000,
+    retry: false,
+  });
+
+  const appNav = nav.map((item) => ({
+    ...item,
+    badge:
+      item.href === "/ceo/approvals" && pending.data
+        ? (
+            <span className="rounded-full bg-warning/20 px-2 py-0.5 text-[10px] font-bold text-warning">
+              {pending.data}
+            </span>
+          )
+        : undefined,
+  }));
+
+  return (
+    <AppShell
+      brandSubtitle="Executive Office"
+      pathname={pathname}
+      nav={appNav}
+      header={
+        <ShellHeader
+          left={new Date().toLocaleString("en-PK", {
+            weekday: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+            day: "numeric",
+            month: "short",
+          })}
+        />
+      }
+    >
+      {children}
+    </AppShell>
+  );
+}

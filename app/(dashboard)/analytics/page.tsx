@@ -29,10 +29,10 @@ export default function AnalyticsPage() {
   const flow = Array.from(byCmdty.entries()).map(([code, v]) => ({ code, ...v }));
 
   return (
-    <div className="space-y-6">
+    <div className="kastros-desk-page">
       <div>
-        <h1 className="text-2xl font-semibold text-white">Analytics</h1>
-        <p className="text-sm text-zinc-500">Cross-module KPIs and flow.</p>
+        <h1 className="text-2xl font-semibold text-foreground">Analytics</h1>
+        <p className="text-sm text-subtle">Cross-module KPIs and flow.</p>
       </div>
       {kpis.data && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -44,7 +44,7 @@ export default function AnalyticsPage() {
       )}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="h-64 rounded-lg border border-kastros-border bg-kastros-card p-3">
-          <div className="text-sm text-zinc-300">MTM trend (6 mo daily)</div>
+          <div className="text-sm text-muted-foreground">MTM trend (6 mo daily)</div>
           <ResponsiveContainer width="100%" height="90%">
             <LineChart data={curve.data ?? []}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a3142" />
@@ -59,7 +59,7 @@ export default function AnalyticsPage() {
           </ResponsiveContainer>
         </div>
         <div className="h-64 rounded-lg border border-kastros-border bg-kastros-card p-3">
-          <div className="text-sm text-zinc-300">Buy vs sell volume (blotter sample)</div>
+          <div className="text-sm text-muted-foreground">Buy vs sell volume (blotter sample)</div>
           <ResponsiveContainer width="100%" height="90%">
             <BarChart data={flow}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a3142" />
@@ -79,8 +79,8 @@ export default function AnalyticsPage() {
 function Tile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-kastros-border bg-kastros-card px-3 py-2">
-      <div className="text-xs text-zinc-500">{label}</div>
-      <div className="data-grid text-lg font-semibold text-white">{value}</div>
+      <div className="text-xs text-subtle">{label}</div>
+      <div className="data-grid text-lg font-semibold text-foreground">{value}</div>
     </div>
   );
 }

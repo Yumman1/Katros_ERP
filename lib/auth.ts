@@ -35,6 +35,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: user.name ?? undefined,
           role: user.role,
+          isHead: user.role === "ADMIN" || user.role === "CEO",
         };
       },
     }),
@@ -43,6 +44,7 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.role = user.role;
+        token.isHead = user.isHead ?? false;
         token.sub = user.id;
         token.name = user.name;
         token.email = user.email;
@@ -52,9 +54,10 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       if (session.user && token.sub) {
         session.user.id = token.sub;
-        session.user.role = token.role!;
-        if (token.name) session.user.name = token.name;
-        if (token.email) session.user.email = token.email;
+        session.user.role = token.role ?? "READ_ONLY";
+        session.user.isHead = token.isHead ?? false;
+        if (token.name) session.user.name = token.name as string;
+        if (token.email) session.user.email = token.email as string;
       }
       return session;
     },

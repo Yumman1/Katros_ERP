@@ -1,36 +1,40 @@
 "use client";
 
+import { ThemeToggle } from "@/components/theme/theme-toggle";
+import {
+  CornSpecificationFields,
+  defaultCornSpecifications,
+} from "@/components/trader/corn-specification-fields";
+import {
+  GatepassCommoditySelect as CommoditySelect,
+  GatepassCounterpartySelect as CounterpartySelect,
+  GatepassField as Field,
+  GatepassFormSection as FormSection,
+  GatepassModeButton as ModeButton,
+  gatepassInputClass as inputClass,
+  type GatepassCounterparty,
+} from "@/components/warehouse/gatepass-form-fields";
+import type { QualityTolerances } from "@/lib/trade-constants";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
   CheckCircle2,
-  ChevronDown,
   ClipboardList,
   Loader2,
   Truck,
   User,
   Warehouse,
+  Upload,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const RECORDED_BY_KEY = "kastros-gatepass-recorded-by";
-
-type GatepassCommodity = {
-  code: string;
-  name: string;
-};
-
-type GatepassCounterparty = {
-  name: string;
-  code: string;
-  openTradeCount: number;
-  commodities: GatepassCommodity[];
-};
 
 type ReferenceData = {
   warehouses: string[];
   inboundCounterparties: GatepassCounterparty[];
   outboundCounterparties: GatepassCounterparty[];
+  nextGatepassNo?: string;
 };
 
 type MovementType = "INBOUND" | "OUTBOUND";
@@ -40,26 +44,33 @@ const emptyForm = {
   recordedByName: "",
   counterpartyName: "",
   commodityCode: "",
-  brokerName: "",
   builtyDetails: "",
   warehouseName: "",
-  gatepassNo: "",
   truckNo: "",
-  driverName: "",
-  driverPhone: "",
-  weightKg: "",
-  bags: "",
+  transporterName: "",
+  transporterPhone: "",
+  quantityAsPerBuilty: "",
+  weightAsPerBuiltyKg: "",
+  weighBridgeName: "",
+  warehouseWeightKg: "",
+  quantityBagsBales: "",
+  totalDeductionsKg: "",
   remarks: "",
 };
-
-const inputClass =
-  "w-full rounded-xl border border-white/10 bg-[#161a22] px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-amber-400/50 transition-colors placeholder:text-zinc-500";
 
 function formatGateTimestamp(d: Date) {
   return d.toLocaleString("en-PK", {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+function digitsOnly(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function integerString(value: string) {
+  return value.replace(/[^\d]/g, "");
 }
 
 export default function WarehouseGatepassPage() {
@@ -69,12 +80,15 @@ export default function WarehouseGatepassPage() {
     outboundCounterparties: [],
   });
   const [form, setForm] = useState(emptyForm);
+  const [qualitySpecs, setQualitySpecs] = useState<QualityTolerances>(() => defaultCornSpecifications());
+  const [documents, setDocuments] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ gatepassNo: string; truckNo: string; at: string } | null>(
     null,
   );
+  const [previewTick, setPreviewTick] = useState(0);
   const gateTimestamp = useMemo(() => new Date(), []);
 
   useEffect(() => {
@@ -84,7 +98,11 @@ export default function WarehouseGatepassPage() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/warehouse-gatepass")
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (form.warehouseName.trim()) params.set("warehouse", form.warehouseName.trim());
+    params.set("movementType", form.movementType);
+    fetch(`/api/warehouse-gatepass?${params.toString()}`)
       .then(async (res) => {
         if (!res.ok) throw new Error("Could not load reference data");
         return res.json() as Promise<ReferenceData>;
@@ -98,6 +116,25 @@ export default function WarehouseGatepassPage() {
       .finally(() => {
         if (active) setLoading(false);
       });
+    return () => {
+      active = false;
+    };
+  }, [form.warehouseName, form.movementType, previewTick]);
+
+  // Initial warehouse list (no warehouse filter yet)
+  useEffect(() => {
+    let active = true;
+    fetch("/api/warehouse-gatepass")
+      .then(async (res) => res.json() as Promise<ReferenceData>)
+      .then((data) => {
+        if (active) {
+          setReference((prev) => ({
+            ...prev,
+            warehouses: data.warehouses.length ? data.warehouses : prev.warehouses,
+          }));
+        }
+      })
+      .catch(() => {});
     return () => {
       active = false;
     };
@@ -118,6 +155,16 @@ export default function WarehouseGatepassPage() {
     setSuccess(null);
   }
 
+  function setWarehouse(name: string) {
+    setForm((s) => ({
+      ...s,
+      warehouseName: name,
+      counterpartyName: "",
+      commodityCode: "",
+    }));
+    setSuccess(null);
+  }
+
   function setCounterparty(name: string) {
     setForm((s) => ({ ...s, counterpartyName: name, commodityCode: "" }));
     setSuccess(null);
@@ -127,6 +174,20 @@ export default function WarehouseGatepassPage() {
     form.movementType === "INBOUND"
       ? reference.inboundCounterparties
       : reference.outboundCounterparties;
+
+  const alternateCounterpartyOptions =
+    form.movementType === "INBOUND"
+      ? reference.outboundCounterparties
+      : reference.inboundCounterparties;
+
+  const counterpartyEmptyHint =
+    form.warehouseName.trim() && counterpartyOptions.length === 0
+      ? alternateCounterpartyOptions.length > 0
+        ? form.movementType === "INBOUND"
+          ? `Only open sale (ex-warehouse) trades exist at this warehouse — use Gate Out for buyers such as ${alternateCounterpartyOptions.map((c) => c.name).join(", ")}.`
+          : `Only open purchase (delivered) trades exist at this warehouse — use Gate In for suppliers such as ${alternateCounterpartyOptions.map((c) => c.name).join(", ")}.`
+        : "No open locked trades are allocated to this warehouse for gatepass."
+      : null;
 
   const selectedCounterparty = counterpartyOptions.find((c) => c.name === form.counterpartyName);
   const commodityOptions = selectedCounterparty?.commodities ?? [];
@@ -139,31 +200,61 @@ export default function WarehouseGatepassPage() {
     const payload = {
       movementType: form.movementType,
       counterpartyName: form.counterpartyName,
-      brokerName: form.brokerName.trim() || undefined,
       warehouseName: form.warehouseName,
       truckNo: form.truckNo,
-      driverName: form.driverName.trim() || undefined,
-      driverPhone: form.driverPhone.trim() || undefined,
+      transporterName: form.transporterName.trim() || undefined,
+      transporterPhone: form.transporterPhone.trim() || undefined,
       builtyDetails: form.builtyDetails.trim(),
       commodityCode: form.commodityCode,
       commodityName: selectedCommodity?.name ?? form.commodityCode,
       recordedByName: form.recordedByName.trim(),
-      weightKg: parseFloat(form.weightKg) || 0,
-      bags: form.bags ? parseInt(form.bags, 10) : undefined,
+      quantityAsPerBuilty:
+        form.movementType === "INBOUND" && form.quantityBagsBales.trim()
+          ? `${form.quantityBagsBales.trim()} bags`
+          : form.quantityAsPerBuilty.trim() || undefined,
+      weightAsPerBuiltyKg: parseFloat(form.weightAsPerBuiltyKg) || 0,
+      weighBridgeName: form.weighBridgeName.trim() || undefined,
+      warehouseWeightKg:
+        form.movementType === "INBOUND" && form.warehouseWeightKg.trim()
+          ? parseFloat(form.warehouseWeightKg)
+          : undefined,
+      qualitySpecs: form.movementType === "INBOUND" ? qualitySpecs : undefined,
+      quantityBagsBales:
+        form.movementType === "INBOUND" && form.quantityBagsBales.trim()
+          ? parseInt(form.quantityBagsBales, 10)
+          : undefined,
+      totalDeductionsKg:
+        form.movementType === "INBOUND" && form.totalDeductionsKg.trim()
+          ? parseFloat(form.totalDeductionsKg)
+          : undefined,
       remarks: form.remarks.trim() || undefined,
-      gatepassNo: form.gatepassNo.trim() || undefined,
     };
     try {
-      const res = await fetch("/api/warehouse-gatepass", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      let res: Response;
+      if (documents.length > 0) {
+        const body = new FormData();
+        body.append("payload", JSON.stringify(payload));
+        for (const file of documents) body.append("documents", file);
+        res = await fetch("/api/warehouse-gatepass", { method: "POST", body });
+      } else {
+        res = await fetch("/api/warehouse-gatepass", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not save gatepass");
       localStorage.setItem(RECORDED_BY_KEY, form.recordedByName.trim());
       const at = formatGateTimestamp(new Date());
-      setSuccess({ gatepassNo: data.gatepassNo, truckNo: form.truckNo, at });
+      setSuccess({
+        gatepassNo: data.gatepassNo,
+        truckNo: form.truckNo,
+        at,
+      });
+      setPreviewTick((t) => t + 1);
+      setDocuments([]);
+      setQualitySpecs(defaultCornSpecifications());
       setForm((s) => ({
         ...emptyForm,
         movementType: s.movementType,
@@ -179,19 +270,22 @@ export default function WarehouseGatepassPage() {
 
   const canSubmit =
     Boolean(form.recordedByName.trim()) &&
+    Boolean(form.warehouseName.trim()) &&
     Boolean(form.counterpartyName.trim()) &&
     Boolean(form.commodityCode.trim()) &&
     Boolean(form.builtyDetails.trim()) &&
-    Boolean(form.warehouseName.trim()) &&
     Boolean(form.truckNo.trim()) &&
-    parseFloat(form.weightKg) > 0;
+    parseFloat(form.weightAsPerBuiltyKg) > 0;
 
   const accentColor = form.movementType === "INBOUND" ? "#34d399" : "#a78bfa";
 
   return (
-    <main className="min-h-screen bg-[#0b0d11] px-4 py-5 text-white sm:px-6">
+    <main className="bg-background px-4 py-5 pb-8 text-foreground sm:px-6">
       <div className="mx-auto max-w-2xl space-y-5">
-        <header className="border-b border-white/10 pb-4">
+        <div className="flex justify-end">
+          <ThemeToggle />
+        </div>
+        <header className="border-b border-border pb-4">
           <div
             className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider"
             style={{ color: "#f59e0b" }}
@@ -200,19 +294,19 @@ export default function WarehouseGatepassPage() {
             Kastros Supply Chain
           </div>
           <h1 className="mt-2 text-2xl font-bold">Warehouse Gate Register</h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Log gate in / gate out trucks. Counterparty and commodity must match live trades.
+          <p className="mt-1 text-sm text-subtle">
+            Select warehouse first — only counterparties with open trades at that warehouse appear.
           </p>
         </header>
 
         {loading ? (
-          <div className="flex h-48 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.02] text-sm text-zinc-500">
+          <div className="flex h-48 items-center justify-center rounded-2xl border border-border bg-foreground/[0.02] text-sm text-subtle">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             Loading…
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="flex rounded-2xl border border-white/10 bg-white/[0.03] p-1.5 gap-1.5">
+            <div className="flex rounded-2xl border border-border bg-foreground/[0.03] p-1.5 gap-1.5">
               <ModeButton
                 active={form.movementType === "INBOUND"}
                 icon={<ArrowDownToLine className="h-4 w-4" />}
@@ -230,8 +324,8 @@ export default function WarehouseGatepassPage() {
             </div>
 
             <FormSection title="Register" icon={<User className="h-4 w-4" />} color="#f59e0b">
-              <div className="mb-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs text-zinc-400">
-                <span className="font-medium text-zinc-300">Gate date &amp; time</span> — recorded automatically on
+              <div className="mb-3 rounded-xl border border-border bg-foreground/[0.03] px-3 py-2.5 text-xs text-muted-foreground">
+                <span className="font-medium text-muted-foreground">Gate date &amp; time</span> — recorded automatically on
                 submit ({formatGateTimestamp(gateTimestamp)})
               </div>
               <Field label="Recorded by" required hint="warehouse manager or staff">
@@ -241,6 +335,23 @@ export default function WarehouseGatepassPage() {
                   placeholder="Your full name"
                   className={inputClass}
                 />
+              </Field>
+            </FormSection>
+
+            <FormSection title="Warehouse" icon={<Warehouse className="h-4 w-4" />} color={accentColor}>
+              <Field label="Warehouse" required hint="choose before counterparty">
+                <input
+                  list="gatepass-warehouses"
+                  value={form.warehouseName}
+                  onChange={(e) => setWarehouse(e.target.value)}
+                  placeholder="Select warehouse…"
+                  className={inputClass}
+                />
+                <datalist id="gatepass-warehouses">
+                  {reference.warehouses.map((w) => (
+                    <option key={w} value={w} />
+                  ))}
+                </datalist>
               </Field>
             </FormSection>
 
@@ -256,14 +367,34 @@ export default function WarehouseGatepassPage() {
                     onChange={setCounterparty}
                     options={counterpartyOptions}
                     placeholder={
-                      counterpartyOptions.length === 0
-                        ? "No open trades — contact office"
-                        : form.movementType === "INBOUND"
-                          ? "Select supplier…"
-                          : "Select buyer…"
+                      !form.warehouseName.trim()
+                        ? "Select warehouse first"
+                        : counterpartyOptions.length === 0
+                          ? form.movementType === "INBOUND"
+                            ? "No purchase trades for Gate In"
+                            : "No sale trades for Gate Out"
+                          : form.movementType === "INBOUND"
+                            ? "Select supplier…"
+                            : "Select buyer…"
                     }
-                    disabled={counterpartyOptions.length === 0}
+                    disabled={!form.warehouseName.trim() || counterpartyOptions.length === 0}
                   />
+                  {counterpartyEmptyHint ? (
+                    <div className="mt-2 space-y-2">
+                      <p className="text-xs text-amber-600 dark:text-amber-400">{counterpartyEmptyHint}</p>
+                      {alternateCounterpartyOptions.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMovementType(form.movementType === "INBOUND" ? "OUTBOUND" : "INBOUND")
+                          }
+                          className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                        >
+                          Switch to {form.movementType === "INBOUND" ? "Gate Out" : "Gate In"}
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </Field>
                 <Field label="Commodity" required>
                   <CommoditySelect
@@ -280,22 +411,6 @@ export default function WarehouseGatepassPage() {
                     disabled={!form.counterpartyName || commodityOptions.length === 0}
                   />
                 </Field>
-                <Field label="Broker / Agent" hint="optional">
-                  <input
-                    value={form.brokerName}
-                    onChange={(e) => update("brokerName", e.target.value)}
-                    placeholder="Commission agent (if any)"
-                    className={inputClass}
-                  />
-                </Field>
-                <Field label="Builty details" required hint="bilty no., route, consignee">
-                  <input
-                    value={form.builtyDetails}
-                    onChange={(e) => update("builtyDetails", e.target.value)}
-                    placeholder="e.g. BLT-8821 · Lahore → Karachi"
-                    className={inputClass}
-                  />
-                </Field>
               </div>
             </FormSection>
 
@@ -309,31 +424,31 @@ export default function WarehouseGatepassPage() {
                     className={inputClass}
                   />
                 </Field>
-                <Field label="Gatepass no." hint="auto if blank">
+                <Field label="Gatepass no.">
+                  <div className="rounded-xl border border-border bg-foreground/[0.03] px-3 py-2.5">
+                    <span className="font-mono text-sm font-semibold text-foreground">
+                      {reference.nextGatepassNo ?? "…"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-subtle">Auto-generated when you submit this entry.</p>
+                </Field>
+                <Field label="Transporter name">
                   <input
-                    value={form.gatepassNo}
-                    onChange={(e) => update("gatepassNo", e.target.value)}
-                    placeholder="Auto-generated"
+                    value={form.transporterName}
+                    onChange={(e) => update("transporterName", e.target.value)}
+                    placeholder="Transport company or agent"
                     className={inputClass}
                   />
                 </Field>
-                <Field label="Driver name" hint="optional">
+                <Field label="Transporter number">
                   <input
-                    value={form.driverName}
-                    onChange={(e) => update("driverName", e.target.value)}
-                    placeholder="Driver full name"
-                    className={inputClass}
-                  />
-                </Field>
-                <Field label="Driver phone" hint="optional">
-                  <input
-                    value={form.driverPhone}
-                    onChange={(e) => update("driverPhone", e.target.value)}
+                    value={form.transporterPhone}
+                    onChange={(e) => update("transporterPhone", e.target.value)}
                     placeholder="03xx-xxxxxxx"
                     className={inputClass}
                   />
                 </Field>
-                <Field label="Remarks" hint="optional" >
+                <Field label="Remarks" hint="optional">
                   <input
                     value={form.remarks}
                     onChange={(e) => update("remarks", e.target.value)}
@@ -344,68 +459,147 @@ export default function WarehouseGatepassPage() {
               </div>
             </FormSection>
 
-            <FormSection title="Weight & Location" icon={<Warehouse className="h-4 w-4" />} color={accentColor}>
-              <p className="mb-3 text-xs text-zinc-500">
-                {form.movementType === "INBOUND"
-                  ? "Record the gross weight unloaded from the truck at the gate. The execution team assigns this truck to purchase trades — contract received/open quantities are updated when that happens."
-                  : "Record the gross weight loaded onto the truck at the gate. The execution team assigns this truck to sale trades — contract fulfilled/open quantities are updated when that happens."}
-              </p>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="sm:col-span-3">
-                  <Field label="Warehouse" required>
+            {form.movementType === "INBOUND" ? (
+              <FormSection title="Inbound details" icon={<ArrowDownToLine className="h-4 w-4" />} color={accentColor}>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Builty number" required>
                     <input
-                      list="gatepass-warehouses"
-                      value={form.warehouseName}
-                      onChange={(e) => update("warehouseName", e.target.value)}
-                      placeholder="Select or type warehouse"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={form.builtyDetails}
+                      onChange={(e) => update("builtyDetails", digitsOnly(e.target.value))}
+                      placeholder="e.g. 8821"
                       className={inputClass}
                     />
-                    <datalist id="gatepass-warehouses">
-                      {reference.warehouses.map((w) => (
-                        <option key={w} value={w} />
-                      ))}
-                    </datalist>
                   </Field>
-                </div>
-                <div className="sm:col-span-2">
-                  <Field
-                    label={
-                      form.movementType === "INBOUND"
-                        ? "Weight unloaded from truck (kg)"
-                        : "Weight loaded onto truck (kg)"
-                    }
-                    required
-                  >
+                  <Field label="Weight as per seller (Kg)" required>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="1"
                       min="0"
-                      value={form.weightKg}
-                      onChange={(e) => update("weightKg", e.target.value)}
-                      placeholder={
-                        form.movementType === "INBOUND"
-                          ? "e.g. 21500 — goods offloaded at gate"
-                          : "e.g. 21500 — goods loaded for dispatch"
-                      }
+                      value={form.weightAsPerBuiltyKg}
+                      onChange={(e) => update("weightAsPerBuiltyKg", e.target.value)}
+                      placeholder="e.g. 21500"
                       className={inputClass}
                     />
-                    <p className="mt-1.5 text-[11px] text-zinc-600">
-                      Weighed at gate only. Trade allocation and contract balances are updated after office assignment.
-                    </p>
+                  </Field>
+                  <Field label="Weigh bridge name">
+                    <input
+                      value={form.weighBridgeName}
+                      onChange={(e) => update("weighBridgeName", e.target.value)}
+                      placeholder="e.g. Main gate weighbridge"
+                      className={inputClass}
+                    />
+                  </Field>
+                  <Field label="Warehouse weight (kg)" hint="after offload / warehouse weighment">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="1"
+                      min="0"
+                      value={form.warehouseWeightKg}
+                      onChange={(e) => update("warehouseWeightKg", e.target.value)}
+                      placeholder="e.g. 21200"
+                      className={inputClass}
+                    />
+                  </Field>
+                  <Field label="Number of bags">
+                    <input
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={form.quantityBagsBales}
+                      onChange={(e) => update("quantityBagsBales", integerString(e.target.value))}
+                      placeholder="e.g. 420"
+                      className={inputClass}
+                    />
+                  </Field>
+                  <Field label="Total deductions (kg)" hint="flat deduction in kgs">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0"
+                      value={form.totalDeductionsKg}
+                      onChange={(e) => update("totalDeductionsKg", e.target.value)}
+                      placeholder="e.g. 150"
+                      className={inputClass}
+                    />
                   </Field>
                 </div>
-                <Field label="No. of bags" hint="optional">
+                <div className="mt-4">
+                  <div className="mb-2 text-[11px] font-medium text-muted-foreground">Quality specs (%)</div>
+                  <CornSpecificationFields values={qualitySpecs} onChange={setQualitySpecs} />
+                </div>
+              </FormSection>
+            ) : (
+              <FormSection title="Outbound details" icon={<ArrowUpFromLine className="h-4 w-4" />} color={accentColor}>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Builty number" required>
+                    <input
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={form.builtyDetails}
+                      onChange={(e) => update("builtyDetails", digitsOnly(e.target.value))}
+                      placeholder="e.g. 8821"
+                      className={inputClass}
+                    />
+                  </Field>
+                  <Field label="Weight as per seller (Kg)" required>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="1"
+                      min="0"
+                      value={form.weightAsPerBuiltyKg}
+                      onChange={(e) => update("weightAsPerBuiltyKg", e.target.value)}
+                      placeholder="e.g. 21500"
+                      className={inputClass}
+                    />
+                  </Field>
+                  <Field label="Weigh bridge name">
+                    <input
+                      value={form.weighBridgeName}
+                      onChange={(e) => update("weighBridgeName", e.target.value)}
+                      placeholder="e.g. Main gate weighbridge"
+                      className={inputClass}
+                    />
+                  </Field>
+                </div>
+              </FormSection>
+            )}
+
+            <FormSection title="Documents" icon={<Upload className="h-4 w-4" />} color={accentColor}>
+              <Field label="Upload documents for gate pass" hint="builty, weigh slip, photos">
+                <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border bg-foreground/[0.03] px-3 py-2.5 text-xs text-muted-foreground hover:bg-foreground/[0.06]">
+                  <Upload className="h-4 w-4 flex-shrink-0" />
+                  <span className="truncate">
+                    {documents.length
+                      ? `${documents.length} file${documents.length !== 1 ? "s" : ""} selected`
+                      : "Choose files…"}
+                  </span>
                   <input
-                    type="number"
-                    step="1"
-                    min="0"
-                    value={form.bags}
-                    onChange={(e) => update("bags", e.target.value)}
-                    placeholder="e.g. 420"
-                    className={inputClass}
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf,.doc,.docx"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files ?? []);
+                      setDocuments(files);
+                      setSuccess(null);
+                    }}
                   />
-                </Field>
-              </div>
+                </label>
+                {documents.length > 0 && (
+                  <ul className="mt-2 space-y-1 text-[11px] text-subtle">
+                    {documents.map((f) => (
+                      <li key={`${f.name}-${f.size}`} className="truncate">
+                        {f.name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Field>
             </FormSection>
 
             {error && (
@@ -414,13 +608,19 @@ export default function WarehouseGatepassPage() {
               </div>
             )}
             {success && (
-              <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
-                <CheckCircle2 className="h-5 w-5 flex-shrink-0" />
-                <span>
-                  Truck <span className="font-mono font-bold">{success.truckNo}</span> logged at{" "}
-                  <span className="font-mono">{success.at}</span>. Gatepass:{" "}
-                  <span className="font-mono font-bold">{success.gatepassNo}</span>.
-                </span>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+                  <CheckCircle2 className="h-5 w-5 flex-shrink-0" />
+                  <span>
+                    Truck <span className="font-mono font-bold">{success.truckNo}</span> logged at{" "}
+                    <span className="font-mono">{success.at}</span>. Gatepass:{" "}
+                    <span className="font-mono font-bold">{success.gatepassNo}</span>.
+                  </span>
+                </div>
+                <p className="rounded-xl border border-border bg-foreground/[0.03] px-4 py-3 text-xs text-muted-foreground">
+                  Truck is queued for execution. Assign it to a trade on{" "}
+                  <strong className="text-muted-foreground">Execution → Purchase Delivered</strong> (Allocate max).
+                </p>
               </div>
             )}
 
@@ -446,217 +646,5 @@ export default function WarehouseGatepassPage() {
         )}
       </div>
     </main>
-  );
-}
-
-function ModeButton({
-  active,
-  icon,
-  label,
-  onClick,
-  color,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-  color: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all"
-      style={{ background: active ? `${color}20` : "transparent", color: active ? color : "#71717a" }}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function FormSection({
-  title,
-  icon,
-  children,
-  color,
-}: {
-  title: string;
-  icon: ReactNode;
-  children: ReactNode;
-  color: string;
-}) {
-  return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-      <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
-        <span style={{ color }}>{icon}</span>
-        {title}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Field({
-  label,
-  required,
-  hint,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  hint?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div>
-      <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-zinc-400">
-        {label}
-        {required && <span className="text-red-400">*</span>}
-        {hint && <span className="text-zinc-600">({hint})</span>}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-function CounterpartySelect({
-  value,
-  onChange,
-  options,
-  placeholder,
-  disabled,
-}: {
-  value: string;
-  onChange: (name: string) => void;
-  options: GatepassCounterparty[];
-  placeholder: string;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const selected = options.find((o) => o.name === value);
-
-  useEffect(() => {
-    if (!open) return;
-    function onPointerDown(e: MouseEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open]);
-
-  return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
-        className={`${inputClass} flex w-full items-center justify-between gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50`}
-      >
-        <span className={`min-w-0 truncate ${selected ? "text-zinc-100" : "text-zinc-500"}`}>
-          {selected
-            ? `${selected.name} (${selected.code})`
-            : placeholder}
-        </span>
-        <ChevronDown
-          className={`h-4 w-4 flex-shrink-0 text-zinc-500 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open && options.length > 0 && (
-        <ul
-          className="absolute z-30 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-white/15 bg-[#161a22] py-1 shadow-2xl"
-          role="listbox"
-        >
-          {options.map((cp) => (
-            <li key={cp.name} role="option" aria-selected={cp.name === value}>
-              <button
-                type="button"
-                className={`w-full px-3 py-2.5 text-left transition-colors hover:bg-white/10 ${
-                  cp.name === value ? "bg-amber-400/10" : ""
-                }`}
-                onClick={() => {
-                  onChange(cp.name);
-                  setOpen(false);
-                }}
-              >
-                <div className="text-sm font-medium text-zinc-100">{cp.name}</div>
-                <div className="text-xs text-zinc-400">
-                  {cp.code} · {cp.openTradeCount} open trade{cp.openTradeCount !== 1 ? "s" : ""}
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function CommoditySelect({
-  value,
-  onChange,
-  options,
-  placeholder,
-  disabled,
-}: {
-  value: string;
-  onChange: (code: string) => void;
-  options: GatepassCommodity[];
-  placeholder: string;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const selected = options.find((o) => o.code === value);
-
-  useEffect(() => {
-    if (!open) return;
-    function onPointerDown(e: MouseEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open]);
-
-  return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
-        className={`${inputClass} flex w-full items-center justify-between gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50`}
-      >
-        <span className={`min-w-0 truncate ${selected ? "text-zinc-100" : "text-zinc-500"}`}>
-          {selected ? `${selected.name} (${selected.code})` : placeholder}
-        </span>
-        <ChevronDown
-          className={`h-4 w-4 flex-shrink-0 text-zinc-500 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open && options.length > 0 && (
-        <ul
-          className="absolute z-30 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-white/15 bg-[#161a22] py-1 shadow-2xl"
-          role="listbox"
-        >
-          {options.map((c) => (
-            <li key={c.code} role="option" aria-selected={c.code === value}>
-              <button
-                type="button"
-                className={`w-full px-3 py-2.5 text-left text-sm text-zinc-100 transition-colors hover:bg-white/10 ${
-                  c.code === value ? "bg-amber-400/10" : ""
-                }`}
-                onClick={() => {
-                  onChange(c.code);
-                  setOpen(false);
-                }}
-              >
-                {c.name} <span className="text-zinc-500">({c.code})</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
   );
 }

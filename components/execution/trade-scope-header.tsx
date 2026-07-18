@@ -22,39 +22,32 @@ export function TradeScopeHeader({ scope, workflow, title, subtitle }: Props) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
-        <Link href="/execution" className="hover:text-white">
+      <div className="flex items-center gap-2 text-xs font-medium text-subtle">
+        <Link href="/execution" className="hover:text-foreground">
           Desk
         </Link>
         <span>/</span>
-        <span className="text-zinc-400">{TRADE_SCOPE_LABELS[scope]}</span>
+        <span className="text-muted-foreground">{TRADE_SCOPE_LABELS[scope]}</span>
         <span>/</span>
-        <span className="text-zinc-400">{title}</span>
+        <span className="text-muted-foreground">{title}</span>
       </div>
       <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">
+          <h1 className="kastros-page-title">
             {TRADE_SCOPE_LABELS[scope]} — {title}
           </h1>
-          <p className="mt-1 text-sm text-zinc-500">{subtitle}</p>
+          <p className="kastros-page-subtitle">{subtitle}</p>
         </div>
-        <div className="flex rounded-xl p-1" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+        <div className="exec-segment">
           {(["LOCAL", "INTERNATIONAL"] as TradeScope[]).map((s) => {
             const href = `/execution/${tradeScopeToPathSegment(s)}/${workflow}`;
-            const active = tradeScopeFromPathSegment(pathname.split("/")[2] ?? "") === s || scope === s;
+            const active =
+              tradeScopeFromPathSegment(pathname.split("/")[2] ?? "") === s || scope === s;
             return (
               <Link
                 key={s}
                 href={href}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
-                  active ? "text-amber-400" : "text-zinc-500 hover:text-white",
-                )}
-                style={
-                  active
-                    ? { background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.25)" }
-                    : undefined
-                }
+                className={cn("exec-segment-item", active && "exec-segment-active")}
               >
                 {TRADE_SCOPE_LABELS[s]}
               </Link>

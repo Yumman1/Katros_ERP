@@ -17,13 +17,13 @@ export default function PurchaseDeliveredDetailPage() {
   });
 
   if (isLoading) {
-    return <div className="flex h-64 items-center justify-center text-sm text-zinc-500">Loading contract…</div>;
+    return <div className="flex h-64 items-center justify-center text-sm text-subtle">Loading contract…</div>;
   }
 
   if (!data?.contract) {
     return (
       <div className="flex flex-col items-center py-16 text-center">
-        <p className="text-sm text-zinc-400">Contract not found or trade is not locked yet.</p>
+        <p className="text-sm text-muted-foreground">Contract not found or trade is not locked yet.</p>
         <Link href="/execution/purchase-delivered" className="mt-2 text-xs text-emerald-400 hover:underline">
           ← Purchase delivered queue
         </Link>
@@ -37,11 +37,11 @@ export default function PurchaseDeliveredDetailPage() {
   const tol = c.qualityTolerances;
 
   return (
-    <div className="space-y-6">
+    <div className="kastros-desk-page">
       <div className="flex items-center gap-2 text-xs" style={{ color: "#71717a" }}>
-        <Link href="/execution" className="hover:text-white">Desk</Link>
+        <Link href="/execution" className="hover:text-foreground">Desk</Link>
         <span>/</span>
-        <Link href="/execution/purchase-delivered" className="hover:text-white">Purchase (Delivered)</Link>
+        <Link href="/execution/purchase-delivered" className="hover:text-foreground">Purchase (Delivered)</Link>
         <span>/</span>
         <span style={{ color: "#a1a1aa" }}>{tradeRef}</span>
       </div>
@@ -50,7 +50,7 @@ export default function PurchaseDeliveredDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="font-mono text-xl font-bold" style={{ color: "#34d399" }}>{c.tradeRef}</h1>
-            <p className="mt-0.5 text-sm font-medium text-white">
+            <p className="mt-0.5 text-sm font-medium text-foreground">
               {c.counterpartyName}
               {c.counterpartyNtn && (
                 <span className="ml-2 text-xs" style={{ color: "#71717a" }}>NTN: {c.counterpartyNtn}</span>
@@ -99,8 +99,8 @@ export default function PurchaseDeliveredDetailPage() {
         style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.15)" }}
       >
         <div>
-          <p className="text-sm font-semibold text-amber-400">Trucks arrive via gatepass</p>
-          <p className="mt-0.5 text-xs text-zinc-500">
+          <p className="text-sm font-semibold text-warning">Trucks arrive via gatepass</p>
+          <p className="mt-0.5 text-xs text-subtle">
             Warehouse staff log trucks on the public link. Assign them to this trade from the fulfillment queue.
           </p>
         </div>
@@ -115,7 +115,7 @@ export default function PurchaseDeliveredDetailPage() {
           <Link
             href="/warehouse/gatepass"
             target="_blank"
-            className="inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-xs font-medium text-zinc-300 hover:text-white"
+            className="inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
             style={{ borderColor: "rgba(255,255,255,0.1)" }}
           >
             <ClipboardList className="h-3.5 w-3.5" />
@@ -126,13 +126,13 @@ export default function PurchaseDeliveredDetailPage() {
 
       <div className="rounded-2xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
         <div className="border-b px-5 py-4" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
-          <h2 className="text-sm font-semibold text-white">Inbound history (from gatepass assignment)</h2>
+          <h2 className="text-sm font-semibold text-foreground">Inbound history (from gatepass assignment)</h2>
           <p className="mt-0.5 text-xs" style={{ color: "#71717a" }}>
             {data.inbound.length} vehicle{data.inbound.length !== 1 ? "s" : ""} linked to this contract
           </p>
         </div>
         {data.inbound.length === 0 ? (
-          <div className="px-5 py-8 text-center text-sm text-zinc-500">
+          <div className="px-5 py-8 text-center text-sm text-subtle">
             No trucks assigned yet. Use the fulfillment queue to match gatepass trucks to this trade.
           </div>
         ) : (
@@ -141,9 +141,9 @@ export default function PurchaseDeliveredDetailPage() {
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
                 <div className="flex flex-wrap items-center gap-4 text-xs">
                   <span className="font-mono font-semibold text-emerald-400">{r.gatepassNo ?? r.kcsNo}</span>
-                  <span className="text-zinc-300">🚛 {r.truckNo}</span>
-                  {r.driverName && <span className="text-zinc-500">{r.driverName}</span>}
-                  <span className="text-zinc-300">{formatQtyWithUnit(r.allocatedQtyMt, unit, 3)}</span>
+                  <span className="text-muted-foreground">🚛 {r.truckNo}</span>
+                  {r.driverName && <span className="text-subtle">{r.driverName}</span>}
+                  <span className="text-muted-foreground">{formatQtyWithUnit(r.allocatedQtyMt, unit, 3)}</span>
                   <span style={{ color: "#f59e0b" }}>{new Intl.NumberFormat("en-PK").format(r.amountDue)} PKR</span>
                   <StatusBadge status={r.status} />
                 </div>

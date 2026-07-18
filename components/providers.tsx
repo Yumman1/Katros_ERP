@@ -1,5 +1,7 @@
 "use client";
 
+import { AuthBoundary } from "@/components/auth-guard";
+import { ThemeProvider } from "@/components/theme/theme-provider";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import { SessionProvider } from "next-auth/react";
@@ -13,7 +15,7 @@ export function Providers({ children }: { children: ReactNode }) {
     () =>
       new QueryClient({
         defaultOptions: {
-          queries: { staleTime: 15_000, refetchOnWindowFocus: false },
+          queries: { staleTime: 60_000, refetchOnWindowFocus: false },
         },
       }),
   );
@@ -29,10 +31,14 @@ export function Providers({ children }: { children: ReactNode }) {
   );
 
   return (
-    <SessionProvider>
-      <trpc.Provider client={trpcClient} queryClient={queryClient}>
-        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-      </trpc.Provider>
-    </SessionProvider>
+    <ThemeProvider>
+      <SessionProvider refetchOnWindowFocus={false} refetchInterval={0}>
+        <trpc.Provider client={trpcClient} queryClient={queryClient}>
+          <QueryClientProvider client={queryClient}>
+            <AuthBoundary>{children}</AuthBoundary>
+          </QueryClientProvider>
+        </trpc.Provider>
+      </SessionProvider>
+    </ThemeProvider>
   );
 }

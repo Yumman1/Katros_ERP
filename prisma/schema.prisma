@@ -13,6 +13,7 @@ datasource db {
 
 enum Role {
   ADMIN
+  CEO
   TRADER
   EXECUTION
   RISK_MANAGER
@@ -86,6 +87,7 @@ model Commodity {
 }
 
 enum CounterpartyType {
+  TRADING_PARTNER
   BUYER
   SELLER
   BROKER

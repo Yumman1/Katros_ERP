@@ -25,14 +25,14 @@ export default function SaleContractDetailPage() {
   const [doRefs, setDoRefs] = useState<Record<string, string>>({});
 
   if (isLoading) {
-    return <div className="flex h-64 items-center justify-center text-sm text-zinc-500">Loading…</div>;
+    return <div className="flex h-64 items-center justify-center text-sm text-subtle">Loading…</div>;
   }
 
   if (!data?.contract) {
     return (
       <div className="flex flex-col items-center py-16 text-center">
-        <p className="text-sm text-zinc-400">Contract not found or trade is not locked yet.</p>
-        <Link href="/execution/sales" className="mt-2 text-xs text-amber-400 hover:underline">
+        <p className="text-sm text-muted-foreground">Contract not found or trade is not locked yet.</p>
+        <Link href="/execution/sales" className="mt-2 text-xs text-warning hover:underline">
           ← Sales queue
         </Link>
       </div>
@@ -52,11 +52,11 @@ export default function SaleContractDetailPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="kastros-desk-page">
       <div className="flex items-center gap-2 text-xs" style={{ color: "#71717a" }}>
-        <Link href="/execution" className="hover:text-white">Desk</Link>
+        <Link href="/execution" className="hover:text-foreground">Desk</Link>
         <span>/</span>
-        <Link href="/execution/sales" className="hover:text-white">Sales</Link>
+        <Link href="/execution/sales" className="hover:text-foreground">Sales</Link>
         <span>/</span>
         <span style={{ color: "#a1a1aa" }}>{tradeRef}</span>
       </div>
@@ -65,7 +65,7 @@ export default function SaleContractDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="font-mono text-xl font-bold" style={{ color: "#a78bfa" }}>{c.tradeRef}</h1>
-            <p className="mt-0.5 text-sm font-medium text-white">{c.counterpartyName}</p>
+            <p className="mt-0.5 text-sm font-medium text-foreground">{c.counterpartyName}</p>
             <p className="mt-0.5 text-xs" style={{ color: "#71717a" }}>
               {c.warehouseDefault ?? "—"} · PKR {c.ratePerMaund?.toFixed(0) ?? "—"}/Maund
               {c.deliveryEnd && (
@@ -116,14 +116,14 @@ export default function SaleContractDetailPage() {
       >
         <div>
           <p className="text-sm font-semibold text-purple-300">Outbound trucks via gatepass</p>
-          <p className="mt-0.5 text-xs text-zinc-500">
+          <p className="mt-0.5 text-xs text-subtle">
             Assign gatepass trucks to this sale from the sales fulfillment queue, then request finance and issue DO here.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
             href={`/execution/sales?cp=${encodeURIComponent(c.counterpartyName)}`}
-            className="rounded-xl px-4 py-2 text-xs font-bold text-white"
+            className="rounded-xl px-4 py-2 text-xs font-bold text-foreground"
             style={{ background: "linear-gradient(135deg,#a78bfa,#7c3aed)" }}
           >
             Assign trucks →
@@ -131,7 +131,7 @@ export default function SaleContractDetailPage() {
           <Link
             href="/warehouse/gatepass"
             target="_blank"
-            className="inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-xs font-medium text-zinc-300 hover:text-white"
+            className="inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
             style={{ borderColor: "rgba(255,255,255,0.1)" }}
           >
             <ClipboardList className="h-3.5 w-3.5" />
@@ -142,13 +142,13 @@ export default function SaleContractDetailPage() {
 
       <div className="rounded-2xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
         <div className="border-b px-5 py-4" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
-          <h2 className="text-sm font-semibold text-white">Dispatch history</h2>
+          <h2 className="text-sm font-semibold text-foreground">Dispatch history</h2>
           <p className="mt-0.5 text-xs" style={{ color: "#71717a" }}>
             {data.outbound.length} truck{data.outbound.length !== 1 ? "s" : ""} from gatepass assignment
           </p>
         </div>
         {data.outbound.length === 0 ? (
-          <div className="px-5 py-8 text-center text-sm text-zinc-500">
+          <div className="px-5 py-8 text-center text-sm text-subtle">
             No outbound trucks linked yet. Assign from the sales queue after gatepass entry.
           </div>
         ) : (
@@ -157,8 +157,8 @@ export default function SaleContractDetailPage() {
               <div key={d.id} className="space-y-2 px-5 py-3">
                 <div className="flex flex-wrap items-center gap-3 text-xs">
                   <span className="font-mono font-semibold text-purple-300">🚛 {d.truckNo}</span>
-                  <span className="font-mono text-zinc-500">{d.gatepassNo ?? d.id}</span>
-                  <span className="text-zinc-300">{formatQtyWithUnit(d.allocatedQtyMt, unit, 3)}</span>
+                  <span className="font-mono text-subtle">{d.gatepassNo ?? d.id}</span>
+                  <span className="text-muted-foreground">{formatQtyWithUnit(d.allocatedQtyMt, unit, 3)}</span>
                   <span style={{ color: "#f59e0b" }}>{fmtPKR(d.amountDue)}</span>
                   {d.doRef && (
                     <span className="font-mono text-[10px]" style={{ color: "#34d399" }}>
@@ -191,7 +191,7 @@ export default function SaleContractDetailPage() {
                         placeholder="DO reference (after finance OK)"
                         value={doRefs[d.id] ?? ""}
                         onChange={(e) => setDoRefs((s) => ({ ...s, [d.id]: e.target.value }))}
-                        className="rounded-lg px-2.5 py-1.5 text-xs text-white"
+                        className="rounded-lg px-2.5 py-1.5 text-xs text-foreground"
                         style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
                       />
                       <button

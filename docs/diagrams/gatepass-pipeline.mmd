@@ -1,0 +1,10 @@
+flowchart LR
+  Staff[Warehouse staff] -->|POST gatepass| PT[PendingTruck PENDING]
+  PT -->|assignTruckToTrade| Assign[ASSIGNED]
+  Assign -->|BUY| IR[InboundReceipt]
+  Assign -->|SELL| OD[OutboundDispatch]
+  IR --> Fulfill[refreshContract receivedQtyMt]
+  OD --> Fulfill
+  Fulfill --> Auto{received gt threshold}
+  Auto -->|yes| Close[contractStatus Close]
+  Auto -->|no| Open[contractStatus Open]

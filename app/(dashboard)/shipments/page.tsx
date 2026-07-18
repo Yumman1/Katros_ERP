@@ -8,13 +8,13 @@ import { useState } from "react";
 const STATUSES = ["ALL", "PLANNED", "LOADING", "IN_TRANSIT", "AT_PORT", "DELIVERED", "DELAYED"] as const;
 
 const statusStyle: Record<string, string> = {
-  PLANNED: "bg-zinc-500/20 text-zinc-400",
+  PLANNED: "bg-zinc-500/20 text-muted-foreground",
   LOADING: "bg-purple-500/20 text-purple-400",
-  IN_TRANSIT: "bg-blue-500/20 text-blue-400",
+  IN_TRANSIT: "bg-backgroundlue-500/20 text-blue-400",
   AT_PORT: "bg-cyan-500/20 text-cyan-400",
-  DELIVERED: "bg-kastros-green/20 text-kastros-green",
+  DELIVERED: "bg-success/20 text-success",
   DELAYED: "bg-red-500/20 text-red-400",
-  CANCELLED: "bg-zinc-600/20 text-zinc-500",
+  CANCELLED: "bg-zinc-600/20 text-subtle",
 };
 
 export default function ShipmentsPage() {
@@ -25,10 +25,10 @@ export default function ShipmentsPage() {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="kastros-desk-page">
       <div>
-        <h1 className="text-2xl font-semibold text-white">Logistics & Shipments</h1>
-        <p className="text-sm text-zinc-500">
+        <h1 className="text-2xl font-semibold text-foreground">Logistics & Shipments</h1>
+        <p className="text-sm text-subtle">
           Vessel, rail, and road movements linked to trades and warehouse receipts.
         </p>
       </div>
@@ -42,8 +42,8 @@ export default function ShipmentsPage() {
           { label: "Qty in pipeline", value: summary ? `${formatQty(summary.totalQtyInPipeline)} MT` : "—" },
         ].map((t) => (
           <div key={t.label} className="rounded-lg border border-kastros-border bg-kastros-card px-3 py-2.5">
-            <div className="text-xs uppercase tracking-wide text-zinc-500">{t.label}</div>
-            <div className={`mt-1 text-lg font-medium ${"warn" in t && t.warn ? "text-red-400" : "text-white"}`}>
+            <div className="text-xs uppercase tracking-wide text-subtle">{t.label}</div>
+            <div className={`mt-1 text-lg font-medium ${"warn" in t && t.warn ? "text-red-400" : "text-foreground"}`}>
               {t.value}
             </div>
           </div>
@@ -58,8 +58,8 @@ export default function ShipmentsPage() {
             onClick={() => setStatusFilter(s)}
             className={`rounded-md border px-3 py-1 text-xs ${
               statusFilter === s
-                ? "border-kastros-green bg-kastros-green/10 text-kastros-green"
-                : "border-kastros-border text-zinc-400 hover:bg-white/5"
+                ? "border-success bg-success/10 text-success"
+                : "border-kastros-border text-muted-foreground hover:bg-foreground/5"
             }`}
           >
             {s.replace("_", " ")}
@@ -68,9 +68,9 @@ export default function ShipmentsPage() {
       </div>
 
       <div className="overflow-hidden rounded-lg border border-kastros-border bg-kastros-card">
-        <div className="max-h-[520px] overflow-auto text-sm">
+        <div className="min-h-0 flex-1 overflow-auto text-sm">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-zinc-500">
+            <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-subtle">
               <tr>
                 {[
                   "Shipment ref",
@@ -95,24 +95,24 @@ export default function ShipmentsPage() {
             </thead>
             <tbody>
               {(shipments as ShipmentListRow[] | undefined)?.map((s) => (
-                <tr key={s.id} className="border-b border-kastros-border/60 hover:bg-white/[0.02]">
-                  <td className="px-2 py-2 font-mono text-xs text-white">{s.reference}</td>
-                  <td className="px-2 py-2 font-mono text-xs text-zinc-500">{s.blRef ?? "—"}</td>
+                <tr key={s.id} className="border-b border-kastros-border/60 hover:bg-foreground/[0.02]">
+                  <td className="px-2 py-2 font-mono text-xs text-foreground">{s.reference}</td>
+                  <td className="px-2 py-2 font-mono text-xs text-subtle">{s.blRef ?? "—"}</td>
                   <td className="px-2 py-2 text-xs">{s.tradeRef ?? "—"}</td>
                   <td className="px-2 py-2">{s.commodity}</td>
-                  <td className="px-2 py-2 text-xs text-zinc-400">{s.counterparty}</td>
+                  <td className="px-2 py-2 text-xs text-muted-foreground">{s.counterparty}</td>
                   <td className="px-2 py-2 data-grid">{formatQty(s.quantity)}</td>
                   <td className="px-2 py-2 text-xs">
                     <div>{s.carrier}</div>
-                    <div className="text-zinc-500">{s.vesselName}</div>
+                    <div className="text-subtle">{s.vesselName}</div>
                   </td>
-                  <td className="px-2 py-2 text-xs text-zinc-400 max-w-[120px]">{s.originName}</td>
-                  <td className="px-2 py-2 text-xs text-zinc-400 max-w-[120px]">{s.destName}</td>
+                  <td className="px-2 py-2 text-xs text-muted-foreground max-w-[120px]">{s.originName}</td>
+                  <td className="px-2 py-2 text-xs text-muted-foreground max-w-[120px]">{s.destName}</td>
                   <td className="px-2 py-2 text-xs">{s.location.name}</td>
-                  <td className="px-2 py-2 text-xs text-zinc-500">
+                  <td className="px-2 py-2 text-xs text-subtle">
                     {s.shippedAt instanceof Date ? s.shippedAt.toISOString().slice(0, 10) : String(s.shippedAt).slice(0, 10)}
                   </td>
-                  <td className="px-2 py-2 text-xs text-zinc-500">
+                  <td className="px-2 py-2 text-xs text-subtle">
                     {s.eta instanceof Date ? s.eta.toISOString().slice(0, 10) : String(s.eta).slice(0, 10)}
                   </td>
                   <td className="px-2 py-2">
