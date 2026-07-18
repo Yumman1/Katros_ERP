@@ -421,6 +421,8 @@ export default function BookTradePage() {
     commissionPerUnit != null && commissionPerUnit > 0 ? commissionPerUnit * priceDenomCount : 0;
   const commissionInBase = commissionTotalQuoted * currencyToBaseFactor(priceCurrency);
   const netAfterCommission = Math.max(0, notional - commissionInBase);
+  /** Gross payable for finance — contract value plus broker commission. */
+  const totalWithCommission = notional + commissionInBase;
   const quotedPriceUnit = priceUnitLabel({ currency: priceCurrency, weightUnit: priceWeightUnit });
   const fmtBase = (v: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: baseCurrency }).format(v);
@@ -969,6 +971,12 @@ export default function BookTradePage() {
                 <div>
                   Net after commission:{" "}
                   <span className="data-grid text-success">{fmtBase(netAfterCommission)}</span>
+                </div>
+                <div>
+                  Total incl. commission (finance):{" "}
+                  <span className="data-grid font-semibold text-foreground">
+                    {fmtBase(totalWithCommission)}
+                  </span>
                 </div>
               </>
             )}

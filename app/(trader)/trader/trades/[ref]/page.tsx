@@ -104,6 +104,8 @@ export default function TradeDetailPage() {
       ? trade.commissionAmount * currencyToBaseFactor(commissionCurrency)
       : 0;
   const netAfterCommission = Math.max(0, notional - commissionInBase);
+  /** Gross payable for finance — contract value plus broker commission. */
+  const totalWithCommission = notional + commissionInBase;
 
   return (
     <div className="kastros-desk-page mx-auto w-full max-w-4xl">
@@ -230,6 +232,11 @@ export default function TradeDetailPage() {
                         label: "Net after commission",
                         value: formatCurrency(netAfterCommission, trade.currency),
                         tone: "text-success",
+                      },
+                      {
+                        label: "Total incl. commission",
+                        value: formatCurrency(totalWithCommission, trade.currency),
+                        tone: "font-semibold",
                       },
                     ]
                   : []),
