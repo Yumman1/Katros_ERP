@@ -12,8 +12,6 @@ import {
   PrismaClient,
   Role,
   CommodityCategory,
-  CounterpartyType,
-  KycStatus,
   LocationType,
 } from "@prisma/client";
 import bcrypt from "bcryptjs";
@@ -90,81 +88,6 @@ const COMMODITIES: CommoditySeed[] = [
     canonicalKgPerUnit: 1000,
     grades: ["Grade A", "Grade B", "Feed Grade"],
     priceUnits: { LOCAL: localMaund, INTERNATIONAL: intlMt },
-  },
-  {
-    name: "Wheat",
-    code: "WHEAT",
-    unit: "MT",
-    exchange: "CBOT",
-    tickerCode: "ZW",
-    category: CommodityCategory.GRAINS,
-    canonicalKgPerUnit: 1000,
-    grades: ["Grade A", "Grade B", "Milling", "Feed"],
-    priceUnits: { LOCAL: localMaund, INTERNATIONAL: intlMt },
-  },
-  {
-    name: "Rice (IRRI-6)",
-    code: "RICE",
-    unit: "MT",
-    exchange: "CBOT",
-    tickerCode: "ZR",
-    category: CommodityCategory.GRAINS,
-    canonicalKgPerUnit: 1000,
-    grades: ["IRRI-6", "Basmati 1121", "Super Kernel"],
-    priceUnits: { LOCAL: localMaund, INTERNATIONAL: intlMt },
-  },
-  {
-    name: "Soybean Meal",
-    code: "SBM",
-    unit: "MT",
-    exchange: "CBOT",
-    tickerCode: "ZM",
-    category: CommodityCategory.OILSEEDS,
-    canonicalKgPerUnit: 1000,
-    grades: ["Hi-Pro", "Normal Protein", "FAQ"],
-    priceUnits: { LOCAL: { currency: "PKR", weightUnit: "KG", kgPerUnit: 1 }, INTERNATIONAL: intlMt },
-  },
-  {
-    name: "Palm Oil",
-    code: "PALM",
-    unit: "MT",
-    exchange: "BMD",
-    tickerCode: "FCPO",
-    category: CommodityCategory.VEGOIL,
-    canonicalKgPerUnit: 1000,
-    grades: ["CP8", "CP10", "RBD Palm Olein"],
-    priceUnits: { LOCAL: { currency: "PKR", weightUnit: "MT", kgPerUnit: 1000 }, INTERNATIONAL: intlMt },
-  },
-  // Ported from the previous seed's commodity list (non-overlapping extras).
-  {
-    name: "Soybeans",
-    code: "SOY",
-    unit: "MT",
-    exchange: "CBOT",
-    tickerCode: "ZS",
-    category: CommodityCategory.OILSEEDS,
-    canonicalKgPerUnit: 1000,
-    grades: ["No.1 Yellow", "No.2 Yellow", "Non-GMO"],
-  },
-  {
-    name: "Sugar",
-    code: "SUG",
-    unit: "MT",
-    exchange: "ICE",
-    tickerCode: "SB",
-    category: CommodityCategory.SOFTS,
-    canonicalKgPerUnit: 1000,
-    grades: ["VHP", "Raw", "Refined", "ICUMSA 45"],
-  },
-  {
-    name: "Cotton",
-    code: "CTN",
-    unit: "MT",
-    exchange: "ICE",
-    tickerCode: "CT",
-    category: CommodityCategory.SOFTS,
-    canonicalKgPerUnit: 1000,
-    grades: ["Grade A", "FAQ", "Standard"],
   },
 ];
 
@@ -386,106 +309,6 @@ async function seedLocations(adminId: string) {
   return rows;
 }
 
-// ─── Counterparties ──────────────────────────────────────────────────────────
-
-type CounterpartySeed = {
-  name: string;
-  code: string;
-  type: CounterpartyType;
-  kycStatus: KycStatus;
-  ntn: string | null;
-  companyNameNtn: string | null;
-  address: string | null;
-  creditLimit: number;
-};
-
-const COUNTERPARTIES: CounterpartySeed[] = [
-  {
-    name: "Punjab Grain Traders",
-    code: "PGT",
-    type: CounterpartyType.TRADING_PARTNER,
-    kycStatus: KycStatus.VERIFIED,
-    ntn: "1234567-8",
-    companyNameNtn: "Punjab Grain Traders (Pvt) Ltd",
-    address: "Grain Market, Sahiwal, Punjab",
-    creditLimit: 250_000_000,
-  },
-  {
-    name: "Sadiq Feeds",
-    code: "SDF",
-    type: CounterpartyType.BUYER,
-    kycStatus: KycStatus.VERIFIED,
-    ntn: "2345678-9",
-    companyNameNtn: "Sadiq Feeds Limited",
-    address: "Vehari Road, Khanewal, Punjab",
-    creditLimit: 400_000_000,
-  },
-  {
-    name: "Indus AgriCorp",
-    code: "IAC",
-    type: CounterpartyType.SELLER,
-    kycStatus: KycStatus.PENDING,
-    ntn: "3456789-0",
-    companyNameNtn: "Indus AgriCorp (Pvt) Ltd",
-    address: "Site Area, Hyderabad, Sindh",
-    creditLimit: 150_000_000,
-  },
-  {
-    name: "Multan Commodity House",
-    code: "MCH",
-    type: CounterpartyType.SELLER,
-    kycStatus: KycStatus.VERIFIED,
-    ntn: "4567890-1",
-    companyNameNtn: "Multan Commodity House",
-    address: "Ghalla Mandi, Multan, Punjab",
-    creditLimit: 180_000_000,
-  },
-  {
-    name: "Hi-Tech Feed Mills",
-    code: "HTF",
-    type: CounterpartyType.BUYER,
-    kycStatus: KycStatus.PENDING,
-    ntn: "5678901-2",
-    companyNameNtn: "Hi-Tech Feed Mills (Pvt) Ltd",
-    address: "Raiwind Road, Lahore, Punjab",
-    creditLimit: 320_000_000,
-  },
-  {
-    name: "Karachi Grain Exchange Co",
-    code: "KGE",
-    type: CounterpartyType.TRADING_PARTNER,
-    kycStatus: KycStatus.VERIFIED,
-    ntn: "6789012-3",
-    companyNameNtn: "Karachi Grain Exchange Company",
-    address: "Jodia Bazar, Karachi, Sindh",
-    creditLimit: 500_000_000,
-  },
-];
-
-async function seedCounterparties(adminId: string) {
-  const rows = [];
-  for (const cp of COUNTERPARTIES) {
-    const data = {
-      name: cp.name,
-      type: cp.type,
-      country: "Pakistan",
-      kycStatus: cp.kycStatus,
-      ntn: cp.ntn,
-      companyNameNtn: cp.companyNameNtn,
-      address: cp.address,
-      creditLimit: d(cp.creditLimit),
-    };
-    rows.push(
-      await prisma.counterparty.upsert({
-        where: { code: cp.code },
-        create: { code: cp.code, ...data, createdById: adminId },
-        update: data,
-      }),
-    );
-  }
-  return rows;
-}
-
 // ─── Reference counters ──────────────────────────────────────────────────────
 // 'trade' starts at 10020 so the first booked trade ref is KAS-<year>-10021.
 // Other counters (kcs, gatepass, change-request, …) are created lazily at 0
@@ -515,7 +338,6 @@ async function main() {
   const commodities = await seedCommodities(admin.id);
   const unitCount = await seedUnitDefs();
   const locations = await seedLocations(admin.id);
-  const counterparties = await seedCounterparties(admin.id);
   await seedRefCounters();
 
   console.log("── Kastros seed complete ─────────────────────────────");
@@ -523,7 +345,6 @@ async function main() {
   console.log(`Commodities:    ${commodities.length} (${commodities.map((c) => c.code).join(", ")})`);
   console.log(`Unit defs:      ${unitCount} custom (${UNIT_DEFS.map((u) => u.code).join(", ")})`);
   console.log(`Locations:      ${locations.length} (${KASTROS_WAREHOUSES.length} warehouses + Port Qasim)`);
-  console.log(`Counterparties: ${counterparties.length}`);
   console.log("RefCounters:    trade=10020 (next ref KAS-<year>-10021), change-request=0");
   console.log("Login:          admin@kastros.com / " + DEFAULT_PASSWORD);
 }
