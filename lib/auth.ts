@@ -30,6 +30,7 @@ export const authOptions: NextAuthOptions = {
         }
 
         if (user) {
+          if (user.disabled) return null;
           const ok = await bcrypt.compare(password, user.passwordHash);
           if (!ok) return null;
           return {

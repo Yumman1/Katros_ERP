@@ -6,7 +6,7 @@
 
 -- Idempotent for the seed part; schema part expects a FRESH project.
 
--- Default password for all seeded users: Kastros123!
+-- Default password for all seeded users: Kastros123!  (top account: ceo@kastros.com)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -1218,7 +1218,8 @@ CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
     "applied_steps_count" integer NOT NULL DEFAULT 0
 );
 INSERT INTO "_prisma_migrations" ("id","checksum","finished_at","migration_name","applied_steps_count")
-VALUES (gen_random_uuid()::text, '', now(), '0_init', 1)
+VALUES (gen_random_uuid()::text, '', now(), '0_init', 1),
+       (gen_random_uuid()::text, '', now(), '20260718_user_presence_ceo_top', 1)
 ON CONFLICT DO NOTHING;
 
 -- ── 4. Storage bucket for gatepass documents ──
@@ -1230,7 +1231,6 @@ ON CONFLICT (id) DO NOTHING;
 -- ── 5. Seed data ──
 
 INSERT INTO "User" ("id","email","passwordHash","name","role","isHead","updatedAt") VALUES
-('usr_admin','admin@kastros.com','$2b$12$kPHAHRpawDy8YV3CNfy6FexSjsITEdECpCwqpROTmrRFhddpa0oxW','Kastros Admin','ADMIN',true,now()),
 ('usr_ceo','ceo@kastros.com','$2b$12$kPHAHRpawDy8YV3CNfy6FexSjsITEdECpCwqpROTmrRFhddpa0oxW','Executive Office','CEO',true,now()),
 ('usr_trader','trader@kastros.com','$2b$12$kPHAHRpawDy8YV3CNfy6FexSjsITEdECpCwqpROTmrRFhddpa0oxW','Ayesha Malik','TRADER',false,now()),
 ('usr_traderhead','traderhead@kastros.com','$2b$12$kPHAHRpawDy8YV3CNfy6FexSjsITEdECpCwqpROTmrRFhddpa0oxW','Trader Head','TRADER',true,now()),
@@ -1243,7 +1243,7 @@ INSERT INTO "User" ("id","email","passwordHash","name","role","isHead","updatedA
 ON CONFLICT ("email") DO UPDATE SET "name"=EXCLUDED."name","role"=EXCLUDED."role","isHead"=EXCLUDED."isHead","updatedAt"=now();
 
 INSERT INTO "Commodity" ("id","name","code","unit","exchange","tickerCode","category","canonicalKgPerUnit","grades","priceUnits","updatedAt","createdById") VALUES
-('cmd_corn','Corn (Maize)','CORN','MT','CBOT','ZC','GRAINS',1000,ARRAY['Grade A','Grade B','Feed Grade'],'{"LOCAL":{"currency":"PKR","weightUnit":"MAUND_40","kgPerUnit":40},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_admin')
+('cmd_corn','Corn (Maize)','CORN','MT','CBOT','ZC','GRAINS',1000,ARRAY['Grade A','Grade B','Feed Grade'],'{"LOCAL":{"currency":"PKR","weightUnit":"MAUND_40","kgPerUnit":40},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_ceo')
 ON CONFLICT ("code") DO UPDATE SET "name"=EXCLUDED."name","grades"=EXCLUDED."grades","priceUnits"=EXCLUDED."priceUnits","updatedAt"=now();
 
 INSERT INTO "UnitDef" ("code","label","kgPerUnit") VALUES
@@ -1251,16 +1251,16 @@ INSERT INTO "UnitDef" ("code","label","kgPerUnit") VALUES
 ON CONFLICT ("code") DO UPDATE SET "label"=EXCLUDED."label","kgPerUnit"=EXCLUDED."kgPerUnit";
 
 INSERT INTO "Location" ("id","name","code","type","country","lsp","address","city","province","capacitySqFt","costPerSqFt","balesDivisionSqFt","grainDivisionSqFt","updatedAt","createdById") VALUES
-('loc_k001','K001-Al Amin WH SWL','K001','WAREHOUSE','Pakistan','Hellmann','12 KM Sahiwal Arifwala, Bahawalnagar Road Sahiwal','Sahiwal','Punjab',38680,36,4.5,6.041,now(),'usr_admin'),
-('loc_k002','K002-Abdullah wh','K002','WAREHOUSE','Pakistan','Hellmann','Abdullah textile mill, Chak No 85/15L vehari Road khanewal','Kacha Koh','Punjab',70000,25,4,10.311,now(),'usr_admin'),
-('loc_k003','K003-Galaxy wh','K003','WAREHOUSE','Pakistan','Hellmann','30km Sheikhupura Road Khuriwala FSB Punjab pakistan','Jhang','Punjab',100000,28,4.5,7.2,now(),'usr_admin'),
-('loc_k004','K004-Hussain Wh','K004','WAREHOUSE','Pakistan','Hellmann','Galaxy textile mill Madhuki road near old bypass jhang','Kabirwala','Punjab',10000,16,4.5,8.067,now(),'usr_admin'),
-('loc_k005','K005-Shuja feed Wh','K005','WAREHOUSE','Pakistan','Moventis','Shujaabad Feed, Jalalpur','Jalalpur','Punjab',53000,18,4,7.5,now(),'usr_admin'),
-('loc_k006','K006-Faysal Wh','K006','WAREHOUSE','Pakistan','Moventis','17 KM khanewal mouza kohi wala kabirwala','Faisalabad','Punjab',25000,19,4.5,6.8,now(),'usr_admin'),
-('loc_k008','K008-Al-Amin Wh (Kotri)','K008','WAREHOUSE','Pakistan','Hellmann',NULL,'Kotri','Sindh',38000,NULL,3.878,8,now(),'usr_admin'),
-('loc_k009','K009-Kohisar Wh (Kotri)','K009','WAREHOUSE','Pakistan','Hellmann',NULL,'Kotri','Sindh',24000,NULL,3.627,8,now(),'usr_admin'),
-('loc_k010','K010-Fatima wh MG','K010','WAREHOUSE','Pakistan','Moventis',NULL,'MuzaffarGarh','Punjab',36000,NULL,3.375,8,now(),'usr_admin'),
-('loc_pq','Port Qasim','PQ','PORT','Pakistan','Hellmann','Port Qasim, Karachi','Karachi','Sindh',NULL,NULL,NULL,NULL,now(),'usr_admin')
+('loc_k001','K001-Al Amin WH SWL','K001','WAREHOUSE','Pakistan','Hellmann','12 KM Sahiwal Arifwala, Bahawalnagar Road Sahiwal','Sahiwal','Punjab',38680,36,4.5,6.041,now(),'usr_ceo'),
+('loc_k002','K002-Abdullah wh','K002','WAREHOUSE','Pakistan','Hellmann','Abdullah textile mill, Chak No 85/15L vehari Road khanewal','Kacha Koh','Punjab',70000,25,4,10.311,now(),'usr_ceo'),
+('loc_k003','K003-Galaxy wh','K003','WAREHOUSE','Pakistan','Hellmann','30km Sheikhupura Road Khuriwala FSB Punjab pakistan','Jhang','Punjab',100000,28,4.5,7.2,now(),'usr_ceo'),
+('loc_k004','K004-Hussain Wh','K004','WAREHOUSE','Pakistan','Hellmann','Galaxy textile mill Madhuki road near old bypass jhang','Kabirwala','Punjab',10000,16,4.5,8.067,now(),'usr_ceo'),
+('loc_k005','K005-Shuja feed Wh','K005','WAREHOUSE','Pakistan','Moventis','Shujaabad Feed, Jalalpur','Jalalpur','Punjab',53000,18,4,7.5,now(),'usr_ceo'),
+('loc_k006','K006-Faysal Wh','K006','WAREHOUSE','Pakistan','Moventis','17 KM khanewal mouza kohi wala kabirwala','Faisalabad','Punjab',25000,19,4.5,6.8,now(),'usr_ceo'),
+('loc_k008','K008-Al-Amin Wh (Kotri)','K008','WAREHOUSE','Pakistan','Hellmann',NULL,'Kotri','Sindh',38000,NULL,3.878,8,now(),'usr_ceo'),
+('loc_k009','K009-Kohisar Wh (Kotri)','K009','WAREHOUSE','Pakistan','Hellmann',NULL,'Kotri','Sindh',24000,NULL,3.627,8,now(),'usr_ceo'),
+('loc_k010','K010-Fatima wh MG','K010','WAREHOUSE','Pakistan','Moventis',NULL,'MuzaffarGarh','Punjab',36000,NULL,3.375,8,now(),'usr_ceo'),
+('loc_pq','Port Qasim','PQ','PORT','Pakistan','Hellmann','Port Qasim, Karachi','Karachi','Sindh',NULL,NULL,NULL,NULL,now(),'usr_ceo')
 ON CONFLICT ("name") DO NOTHING;
 
 -- (no sample counterparties — added by users in the app)
@@ -1268,4 +1268,4 @@ ON CONFLICT ("name") DO NOTHING;
 INSERT INTO "RefCounter" ("name","value") VALUES ('trade',10020),('change-request',0)
 ON CONFLICT ("name") DO NOTHING;
 
--- Done. Login: admin@kastros.com / Kastros123!
+-- Done. Login: ceo@kastros.com / Kastros123!

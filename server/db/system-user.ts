@@ -10,6 +10,7 @@ let cachedId: string | null = null;
 export async function getSystemUserId(): Promise<string> {
   if (cachedId) return cachedId;
   const admin =
+    (await prisma.user.findFirst({ where: { role: "CEO" }, select: { id: true } })) ??
     (await prisma.user.findFirst({ where: { role: "ADMIN" }, select: { id: true } })) ??
     (await prisma.user.findFirst({ select: { id: true } }));
   if (!admin) {

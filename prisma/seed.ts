@@ -32,7 +32,6 @@ type UserSeed = {
 };
 
 const USERS: UserSeed[] = [
-  { email: "admin@kastros.com", name: "Kastros Admin", role: Role.ADMIN, isHead: true },
   { email: "ceo@kastros.com", name: "Executive Office", role: Role.CEO, isHead: true },
   { email: "trader@kastros.com", name: "Ayesha Malik", role: Role.TRADER, isHead: false },
   { email: "traderhead@kastros.com", name: "Trader Head", role: Role.TRADER, isHead: true },
@@ -332,8 +331,8 @@ async function seedRefCounters() {
 
 async function main() {
   const users = await seedUsers();
-  const admin = users.find((u) => u.email === "admin@kastros.com");
-  if (!admin) throw new Error("admin@kastros.com missing after user seed");
+  const admin = users.find((u) => u.email === "ceo@kastros.com");
+  if (!admin) throw new Error("ceo@kastros.com missing after user seed");
 
   const commodities = await seedCommodities(admin.id);
   const unitCount = await seedUnitDefs();
@@ -346,7 +345,7 @@ async function main() {
   console.log(`Unit defs:      ${unitCount} custom (${UNIT_DEFS.map((u) => u.code).join(", ")})`);
   console.log(`Locations:      ${locations.length} (${KASTROS_WAREHOUSES.length} warehouses + Port Qasim)`);
   console.log("RefCounters:    trade=10020 (next ref KAS-<year>-10021), change-request=0");
-  console.log("Login:          admin@kastros.com / " + DEFAULT_PASSWORD);
+  console.log("Login:          ceo@kastros.com / " + DEFAULT_PASSWORD);
 }
 
 main()

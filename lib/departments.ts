@@ -42,9 +42,9 @@ export function rolesForDepartment(dept: Department): Role[] {
   }
 }
 
-/** Whether a (possibly head) user can act on a given department. ADMIN spans all departments. */
+/** Whether a (possibly head) user can act on a given department. CEO spans all departments. */
 export function canActOnDepartment(role: Role, isHead: boolean, dept: Department): boolean {
-  if (role === "ADMIN") return true;
+  if (role === "CEO" || role === "ADMIN") return true;
   return isHead && departmentForRole(role) === dept;
 }
 

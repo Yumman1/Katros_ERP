@@ -10,12 +10,17 @@ const nav = [
   { href: "/ceo", label: "Overview", exact: true },
   { href: "/ceo/commodities", label: "Commodities" },
   { href: "/ceo/approvals", label: "Approvals" },
+  { href: "/ceo/users", label: "Users" },
 ];
 
 export function CeoShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const pending = trpc.ceo.pendingApprovals.useQuery(undefined, {
     refetchInterval: 60_000,
+    retry: false,
+  });
+  const active = trpc.ceo.activeUsers.useQuery(undefined, {
+    refetchInterval: 30_000,
     retry: false,
   });
 
@@ -28,7 +33,13 @@ export function CeoShell({ children }: { children: ReactNode }) {
               {pending.data}
             </span>
           )
-        : undefined,
+        : item.href === "/ceo/users" && active.data
+          ? (
+              <span className="rounded-full bg-success/20 px-2 py-0.5 text-[10px] font-bold text-success">
+                {active.data.count}
+              </span>
+            )
+          : undefined,
   }));
 
   return (
