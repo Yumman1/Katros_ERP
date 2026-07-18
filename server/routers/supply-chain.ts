@@ -66,7 +66,7 @@ export const supplyChainRouter = router({
     .input(z.object({ type: z.enum(["BUYER", "SELLER", "ALL"]).optional() }).optional())
     .query(async ({ ctx, input }) => {
       if (isMockMode()) {
-        const all = mockCounterpartiesScm();
+        const all = await mockCounterpartiesScm();
         if (!input?.type || input.type === "ALL") return all;
         return all.filter((c) => c.type === input.type);
       }
@@ -95,7 +95,7 @@ export const supplyChainRouter = router({
   positionVsInventory: protectedProcedure.query(async ({ ctx }) => {
     if (isMockMode()) {
       const { computePositionLedger } = await import("@/server/position-ledger");
-      const rows = computePositionLedger();
+      const rows = await computePositionLedger();
       return rows.map((r) => ({
         commodity: r.commodityName,
         code: r.commodityCode,

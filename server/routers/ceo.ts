@@ -14,7 +14,6 @@ import {
   getLockedContracts,
   getOutboundDispatches,
   getPendingTrucks,
-  syncAllLockedContracts,
 } from "@/server/execution-store";
 import { buildLocationCommodityInventory } from "@/lib/inventory-stock";
 import {
@@ -24,9 +23,8 @@ import {
   getMergedCommodities,
   getMergedLocations,
 } from "@/server/trader-master-data";
-import { mockAllTraderTrades, mockTradeByRefGlobal, syncBookedTradesFromDisk } from "@/server/dummy-data";
+import { mockAllTraderTrades, mockTradeByRefGlobal } from "@/server/dummy-data";
 import { commodityCreateInputSchema } from "@/lib/commodity-registration";
-import { isMockMode } from "@/server/mock-mode";
 import {
   aggregateWarehouseStorageMetrics,
   computeWarehouseCosting,
@@ -42,12 +40,9 @@ export const ceoRouter = router({
 
   addCommodity: ceoProcedure()
     .input(commodityCreateInputSchema)
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Custom commodities only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       try {
-        return addCustomCommodity(input);
+        return await addCustomCommodity(input);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -58,16 +53,13 @@ export const ceoRouter = router({
 
   deleteCommodity: ceoProcedure()
     .input(z.object({ id: z.string() }))
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Custom commodities only in mock mode" });
-      }
-      const commodity = getCommodityById(input.id);
+    .mutation(async ({ input }) => {
+      const commodity = await getCommodityById(input.id);
       if (!commodity) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Commodity not found" });
       }
       const code = commodity.code.trim().toLowerCase();
-      const tradesUsing = mockAllTraderTrades().filter(
+      const tradesUsing = (await mockAllTraderTrades()).filter(
         (t) => t.commodity.code.trim().toLowerCase() === code,
       ).length;
       if (tradesUsing > 0) {
@@ -77,7 +69,7 @@ export const ceoRouter = router({
         });
       }
       try {
-        return deleteCustomCommodity(input.id);
+        return await deleteCustomCommodity(input.id);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -92,9 +84,8 @@ export const ceoRouter = router({
 
   tradeByRefForPreview: ceoProcedure()
     .input(z.object({ tradeRef: z.string() }))
-    .query(({ input }) => {
-      syncBookedTradesFromDisk();
-      return mockTradeByRefGlobal(input.tradeRef.trim()) ?? null;
+    .query(async ({ input }) => {
+      return (await mockTradeByRefGlobal(input.tradeRef.trim())) ?? null;
     }),
 
   resolveApproval: ceoProcedure()
@@ -105,8 +96,8 @@ export const ceoRouter = router({
         note: z.string().trim().optional(),
       }),
     )
-    .mutation(({ ctx, input }) => {
-      const req = getChangeRequest(input.id);
+    .mutation(async ({ ctx, input }) => {
+      const req = await getChangeRequest(input.id);
       if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Change request not found" });
       if (req.status !== "PENDING_CEO") {
         throw new TRPCError({ code: "BAD_REQUEST", message: "This item is not awaiting CEO approval" });
@@ -114,9 +105,9 @@ export const ceoRouter = router({
 
       let applied = false;
       if (input.decision === "APPROVED") {
-        applied = applyApprovedChangeRequest(req, actorName(ctx.session.user));
+        applied = await applyApprovedChangeRequest(req, actorName(ctx.session.user));
       }
-      const resolved = resolveChangeRequest(
+      const resolved = await resolveChangeRequest(
         input.id,
         input.decision,
         actorName(ctx.session.user),
@@ -124,24 +115,25 @@ export const ceoRouter = router({
         applied,
       );
       if (req.entityType === "TRADE" && (input.decision === "REJECTED" || req.action === "DELETE")) {
-        recordTradeChangeResolved(resolved, input.decision, actorName(ctx.session.user));
+        await recordTradeChangeResolved(resolved, input.decision, actorName(ctx.session.user));
       }
       return resolved;
     }),
 
-  dashboardSummary: ceoProcedure().query(() => {
-    syncAllLockedContracts();
-    const contracts = getLockedContracts({});
+  dashboardSummary: ceoProcedure().query(async () => {
+    const contracts = await getLockedContracts({});
     const openLocked = contracts.filter((c) => c.contractStatus === "Open");
-    const locations = getMergedLocations();
+    const locations = await getMergedLocations();
     const storageSummaries = locations
       .map((loc) => computeWarehouseCosting(costingInputFromLocation(loc)))
       .filter((s): s is NonNullable<typeof s> => s != null);
     const storageNetwork = aggregateWarehouseStorageMetrics(storageSummaries);
 
-    const inbound = getInboundReceipts();
-    const outbound = getOutboundDispatches();
-    const pendingTrucks = getPendingTrucks({});
+    const [inbound, outbound, pendingTrucks] = await Promise.all([
+      getInboundReceipts(),
+      getOutboundDispatches(),
+      getPendingTrucks({}),
+    ]);
     const contractByRef = new Map(contracts.map((c) => [c.tradeRef, c]));
     const inventoryRows = buildLocationCommodityInventory({
       inbound,
@@ -168,7 +160,7 @@ export const ceoRouter = router({
       warehouseCount: locations.length,
       lockedTradeCount: contracts.length,
       openLockedCount: openLocked.length,
-      pendingApprovals: countPendingCeoApprovals(),
+      pendingApprovals: await countPendingCeoApprovals(),
       totalNetMt,
       totalUnallocatedMt,
       avgFulfillmentPct: avgFulfillment,

@@ -184,8 +184,8 @@ function coreRow(t: MockTraderTrade): (string | number)[] {
 }
 
 /** Full trade file CSV — every booking field plus flattened tradeParams. */
-export function exportTradeFileCsv(filter?: TradeFileFilter): string {
-  const trades = filterTradesForTradeFile(mockAllTraderTrades(), filter);
+export async function exportTradeFileCsv(filter?: TradeFileFilter): Promise<string> {
+  const trades = filterTradesForTradeFile(await mockAllTraderTrades(), filter);
 
   const paramKeys = new Set<string>();
   for (const t of trades) {
@@ -209,8 +209,8 @@ export function exportTradeFileCsv(filter?: TradeFileFilter): string {
   return lines.join("\n");
 }
 
-export function tradeFileFilterOptions() {
-  const trades = mockAllTraderTrades();
+export async function tradeFileFilterOptions() {
+  const trades = await mockAllTraderTrades();
   const commodities = new Map<string, string>();
   const counterparties = new Map<string, string>();
   const traders = new Set<string>();
@@ -238,8 +238,8 @@ export function tradeFileFilterOptions() {
   };
 }
 
-export function previewTradeFile(filter?: TradeFileFilter) {
-  const trades = filterTradesForTradeFile(mockAllTraderTrades(), filter);
+export async function previewTradeFile(filter?: TradeFileFilter) {
+  const trades = filterTradesForTradeFile(await mockAllTraderTrades(), filter);
   return {
     count: trades.length,
     trades: trades.slice(0, 25).map((t) => ({

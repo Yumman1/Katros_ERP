@@ -1,14 +1,22 @@
-import { readPersisted, writePersisted } from "@/server/local-persist";
-import { syncAllLockedContracts, getLockedContracts, getInboundReceipts, getOutboundDispatches, syncExecutionFromDisk } from "@/server/execution-store";
+import { prisma } from "@/server/db";
+import { num } from "@/server/db/convert";
+import {
+  syncAllLockedContracts,
+  getLockedContracts,
+  getInboundReceipts,
+  getOutboundDispatches,
+  syncExecutionFromDisk,
+} from "@/server/execution-store";
 import { mockAllTraderTrades } from "@/server/dummy-data";
 import { inboundStockDelta, outboundStockDelta } from "@/lib/inventory-stock";
 
+/** @deprecated legacy JSON snapshot name — adjustments live in PositionAdjustment now. */
 export const POSITION_ADJUSTMENTS_FILE = "position-adjustments.json";
 
 type AdjustmentsStore = {
   /** Commodity code → manual delta added by execution head (MT equivalent). */
   byCommodity: Record<string, number>;
-  /** Optional per commodity+warehouse overrides. */
+  /** Optional per commodity+warehouse overrides (key `CODE::Warehouse name`). */
   byWarehouse?: Record<string, number>;
 };
 
@@ -16,21 +24,38 @@ function emptyAdjustments(): AdjustmentsStore {
   return { byCommodity: {}, byWarehouse: {} };
 }
 
-export function getPositionAdjustments(): AdjustmentsStore {
-  const snap = readPersisted<AdjustmentsStore>(POSITION_ADJUSTMENTS_FILE);
-  return snap ?? emptyAdjustments();
+export async function getPositionAdjustments(): Promise<AdjustmentsStore> {
+  const rows = await prisma.positionAdjustment.findMany();
+  const store = emptyAdjustments();
+  for (const row of rows) {
+    const code = row.commodityCode.trim().toUpperCase();
+    const delta = num(row.deltaMt);
+    if (row.warehouseName === "") {
+      store.byCommodity[code] = delta;
+    } else {
+      store.byWarehouse![`${code}::${row.warehouseName}`] = delta;
+    }
+  }
+  return store;
 }
 
-export function setPositionAdjustment(commodityCode: string, deltaMt: number) {
+export async function setPositionAdjustment(
+  commodityCode: string,
+  deltaMt: number,
+): Promise<AdjustmentsStore> {
   const code = commodityCode.trim().toUpperCase();
-  const store = getPositionAdjustments();
   if (!Number.isFinite(deltaMt) || deltaMt === 0) {
-    delete store.byCommodity[code];
+    await prisma.positionAdjustment.deleteMany({
+      where: { commodityCode: code, warehouseName: "" },
+    });
   } else {
-    store.byCommodity[code] = deltaMt;
+    await prisma.positionAdjustment.upsert({
+      where: { commodityCode_warehouseName: { commodityCode: code, warehouseName: "" } },
+      create: { commodityCode: code, warehouseName: "", deltaMt },
+      update: { deltaMt },
+    });
   }
-  writePersisted(POSITION_ADJUSTMENTS_FILE, store);
-  return store;
+  return getPositionAdjustments();
 }
 
 export type CommodityPositionRow = {
@@ -85,17 +110,19 @@ function addCommodity(
   return row;
 }
 
-export function computePositionLedger(options?: { traderName?: string }): CommodityPositionRow[] {
-  syncExecutionFromDisk();
-  syncAllLockedContracts();
+export async function computePositionLedger(options?: {
+  traderName?: string;
+}): Promise<CommodityPositionRow[]> {
+  await syncExecutionFromDisk();
+  await syncAllLockedContracts();
 
-  const adjustments = getPositionAdjustments();
+  const adjustments = await getPositionAdjustments();
   const map = new Map<string, CommodityPositionRow>();
 
-  const contracts = getLockedContracts({ openOnly: false });
+  const contracts = await getLockedContracts({ openOnly: false });
   const contractByRef = new Map(contracts.map((c) => [c.tradeRef, c]));
 
-  let trades = mockAllTraderTrades();
+  let trades = await mockAllTraderTrades();
   if (options?.traderName) {
     const tn = options.traderName.trim().toLowerCase();
     trades = trades.filter((t) => t.traderName.trim().toLowerCase() === tn);
@@ -116,7 +143,7 @@ export function computePositionLedger(options?: { traderName?: string }): Commod
     }
   }
 
-  for (const r of getInboundReceipts()) {
+  for (const r of await getInboundReceipts()) {
     const c = contractByRef.get(r.tradeRef);
     if (options?.traderName && c && !tradeRefs.has(c.tradeRef)) continue;
     const code = c?.commodityCode ?? "UNK";
@@ -128,7 +155,7 @@ export function computePositionLedger(options?: { traderName?: string }): Commod
     row.physicalNet += delta;
   }
 
-  for (const d of getOutboundDispatches()) {
+  for (const d of await getOutboundDispatches()) {
     const c = contractByRef.get(d.tradeRef);
     if (options?.traderName && c && !tradeRefs.has(c.tradeRef)) continue;
     const code = c?.commodityCode ?? "UNK";

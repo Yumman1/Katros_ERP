@@ -1,12 +1,10 @@
+import type { Prisma, TradeActivity } from "@prisma/client";
 import { buildTradeEditPreviewRows, countChangedRows } from "@/lib/change-request-trade-preview";
 import type { TradePreviewSource } from "@/lib/change-request-trade-preview";
 import { listChangeRequests, type ChangeRequest } from "@/server/change-requests-store";
-import {
-  mockTradeByRefGlobal,
-  syncBookedTradesFromDisk,
-  upsertBookedTrade,
-  type MockTraderTrade,
-} from "@/server/dummy-data";
+import { mockTradeByRefGlobal, type MockTraderTrade } from "@/server/dummy-data";
+import { prisma } from "@/server/db";
+import { json } from "@/server/db/convert";
 import type { OpenTradePatch } from "@/server/open-trades";
 
 export type TradeActivityKind =
@@ -30,9 +28,20 @@ export type TradeActivityEntry = {
   payload?: Record<string, unknown> | null;
 };
 
-function nextActivityId(trade: MockTraderTrade): string {
-  const n = (trade.activityLog?.length ?? 0) + 1;
-  return `${trade.tradeRef}-act-${n}`;
+function activityRowToEntry(row: TradeActivity): TradeActivityEntry {
+  return {
+    id: row.id,
+    at: row.at,
+    actorName: row.actorName,
+    actorSide: row.actorSide,
+    kind: row.kind as TradeActivityKind,
+    requiresApproval: row.requiresApproval,
+    summary: row.summary,
+    note: row.note,
+    changeCount: row.changeCount ?? undefined,
+    changeRequestId: row.changeRequestId ?? undefined,
+    payload: json<Record<string, unknown>>(row.payload),
+  };
 }
 
 function tradeAsPreviewSource(trade: MockTraderTrade): TradePreviewSource {
@@ -80,24 +89,34 @@ function summarizePatch(trade: MockTraderTrade, patch: Record<string, unknown>):
   return { summary: preview + suffix, changeCount };
 }
 
-export function appendTradeActivity(
+export async function appendTradeActivity(
   tradeRef: string,
   entry: Omit<TradeActivityEntry, "id" | "at"> & { at?: Date },
-): TradeActivityEntry | null {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<TradeActivityEntry | null> {
+  const trade = await prisma.trade.findUnique({
+    where: { tradeRef: tradeRef.trim() },
+    select: { id: true },
+  });
   if (!trade) return null;
-  const full: TradeActivityEntry = {
-    id: nextActivityId(trade),
-    at: entry.at ?? new Date(),
-    ...entry,
-  };
-  trade.activityLog = [full, ...(trade.activityLog ?? [])].slice(0, 100);
-  upsertBookedTrade(trade);
-  return full;
+  const row = await prisma.tradeActivity.create({
+    data: {
+      tradeId: trade.id,
+      at: entry.at ?? new Date(),
+      actorName: entry.actorName,
+      actorSide: entry.actorSide,
+      kind: entry.kind,
+      requiresApproval: entry.requiresApproval,
+      summary: entry.summary,
+      note: entry.note ?? null,
+      changeCount: entry.changeCount ?? null,
+      changeRequestId: entry.changeRequestId ?? null,
+      payload: (entry.payload ?? undefined) as Prisma.InputJsonValue | undefined,
+    },
+  });
+  return activityRowToEntry(row);
 }
 
-export function recordTradeEditApplied(
+export async function recordTradeEditApplied(
   tradeRef: string,
   patch: OpenTradePatch | Record<string, unknown>,
   opts: {
@@ -107,13 +126,12 @@ export function recordTradeEditApplied(
     note?: string | null;
     changeRequestId?: string;
   },
-): void {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<void> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
   if (!trade) return;
   const payload = patch as Record<string, unknown>;
   const { summary, changeCount } = summarizePatch(trade, payload);
-  appendTradeActivity(tradeRef, {
+  await appendTradeActivity(tradeRef, {
     actorName: opts.actorName,
     actorSide: opts.actorSide,
     kind: opts.requiresApproval ? "EDIT_APPROVED" : "EDIT_APPLIED",
@@ -126,15 +144,14 @@ export function recordTradeEditApplied(
   });
 }
 
-export function recordTradeChangeRequested(
+export async function recordTradeChangeRequested(
   req: Pick<
     ChangeRequest,
     "id" | "department" | "entityRef" | "action" | "comment" | "requestedByName" | "payload"
   >,
-): void {
+): Promise<void> {
   if (req.action !== "EDIT" && req.action !== "DELETE") return;
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(req.entityRef.trim());
+  const trade = await mockTradeByRefGlobal(req.entityRef.trim());
   const actorSide = req.department === "TRADING" ? "TRADER" : "EXECUTION";
   let summary = req.action === "DELETE" ? "Requested trade deletion" : "Requested trade edit";
   let changeCount: number | undefined;
@@ -143,7 +160,7 @@ export function recordTradeChangeRequested(
     summary = s.summary;
     changeCount = s.changeCount;
   }
-  appendTradeActivity(req.entityRef, {
+  await appendTradeActivity(req.entityRef, {
     actorName: req.requestedByName,
     actorSide,
     kind: req.action === "DELETE" ? "DELETE_REQUESTED" : "EDIT_REQUESTED",
@@ -156,13 +173,13 @@ export function recordTradeChangeRequested(
   });
 }
 
-export function recordTradeChangeResolved(
+export async function recordTradeChangeResolved(
   req: ChangeRequest,
   decision: "APPROVED" | "REJECTED",
   resolvedByName: string,
-): void {
+): Promise<void> {
   if (req.entityType !== "TRADE") return;
-  appendTradeActivity(req.entityRef, {
+  await appendTradeActivity(req.entityRef, {
     actorName: resolvedByName,
     actorSide: req.status === "PENDING_CEO" || req.department === "TRADING" ? "CEO" : "EXECUTION",
     kind: decision === "APPROVED" ? "EDIT_APPROVED" : "EDIT_REJECTED",
@@ -177,21 +194,23 @@ export function recordTradeChangeResolved(
   });
 }
 
-export function getTradeActivityLog(tradeRef: string): TradeActivityEntry[] {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
-  return (trade?.activityLog ?? []) as TradeActivityEntry[];
+export async function getTradeActivityLog(tradeRef: string): Promise<TradeActivityEntry[]> {
+  const rows = await prisma.tradeActivity.findMany({
+    where: { trade: { tradeRef: tradeRef.trim() } },
+    orderBy: { at: "asc" },
+  });
+  return rows.map(activityRowToEntry);
 }
 
-export function getTradeChangeRequests(tradeRef: string): ChangeRequest[] {
-  return listChangeRequests().filter(
+export async function getTradeChangeRequests(tradeRef: string): Promise<ChangeRequest[]> {
+  return (await listChangeRequests()).filter(
     (r) => r.entityType === "TRADE" && r.entityRef === tradeRef.trim(),
   );
 }
 
-export function getTradeTimeline(tradeRef: string) {
-  const activity = getTradeActivityLog(tradeRef);
-  const changeRequests = getTradeChangeRequests(tradeRef);
+export async function getTradeTimeline(tradeRef: string) {
+  const activity = await getTradeActivityLog(tradeRef);
+  const changeRequests = await getTradeChangeRequests(tradeRef);
   const pending = changeRequests.filter(
     (r) => r.status === "PENDING" || r.status === "PENDING_CEO",
   );

@@ -13,10 +13,11 @@ export async function GET() {
     start(controller) {
       const enc = new TextEncoder();
 
-      const send = () => {
+      const send = async () => {
         if (closed) return;
         try {
-          const payload = marketTickerPayload();
+          const payload = await marketTickerPayload();
+          if (closed) return;
           controller.enqueue(enc.encode(`data: ${JSON.stringify(payload)}\n\n`));
         } catch {
           closed = true;
@@ -29,8 +30,8 @@ export async function GET() {
         }
       };
 
-      send();
-      intervalId = setInterval(send, 30_000);
+      void send();
+      intervalId = setInterval(() => void send(), 30_000);
     },
     cancel() {
       closed = true;

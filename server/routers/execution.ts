@@ -3,7 +3,6 @@ import { TRPCError } from "@trpc/server";
 import { Role } from "@prisma/client";
 import { EXECUTION_PROFILES, TRADE_SCOPES } from "@/lib/trade-constants";
 import { headProcedure, roleProcedure, router } from "@/server/trpc/trpc";
-import { isMockMode } from "@/server/mock-mode";
 import {
   advanceSpotState,
   allocateContractWarehouse,
@@ -34,13 +33,11 @@ import {
   releaseOutbound,
   rejectPayment,
   requestOutboundRelease,
-  seedExecutionDemoIfEmpty,
   submitInboundForFinance,
   submitSpotForFinance,
   suggestInboundFifo,
   suggestSaleFifo,
   closeLockedContract,
-  syncExecutionFromDisk,
   updatePendingTruck,
   updateInboundReceipt,
   updateOutboundDispatch,
@@ -166,17 +163,14 @@ const tradeFileFilterSchema = z.object({
 });
 
 export const executionRouter = router({
-  deskSummary: roleProcedure([...execRoles]).query(() => {
-    if (isMockMode()) seedExecutionDemoIfEmpty();
-    return getDeskSummary();
-  }),
+  deskSummary: roleProcedure([...execRoles]).query(() => getDeskSummary()),
 
   // ── Head-of-execution direct deletions ──────────────────────────────────
   deleteGateEntry: headProcedure("EXECUTION")
     .input(z.object({ id: z.string() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return deletePendingTruck(input.id);
+        return await deletePendingTruck(input.id);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -207,10 +201,10 @@ export const executionRouter = router({
         commodityName: z.string().trim().optional(),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
         const { id, ...patch } = input;
-        return updatePendingTruck(id, patch);
+        return await updatePendingTruck(id, patch);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -233,10 +227,10 @@ export const executionRouter = router({
         remarks: z.string().nullable().optional(),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
         const { id, ...patch } = input;
-        return updateInboundReceipt(id, patch);
+        return await updateInboundReceipt(id, patch);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -259,10 +253,10 @@ export const executionRouter = router({
         remarks: z.string().nullable().optional(),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
         const { id, ...patch } = input;
-        return updateOutboundDispatch(id, patch);
+        return await updateOutboundDispatch(id, patch);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -270,9 +264,9 @@ export const executionRouter = router({
 
   deleteInboundReceipt: headProcedure("EXECUTION")
     .input(z.object({ id: z.string() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return deleteInboundReceipt(input.id);
+        return await deleteInboundReceipt(input.id);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -280,9 +274,9 @@ export const executionRouter = router({
 
   deleteOutboundDispatch: headProcedure("EXECUTION")
     .input(z.object({ id: z.string() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return deleteOutboundDispatch(input.id);
+        return await deleteOutboundDispatch(input.id);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -304,10 +298,10 @@ export const executionRouter = router({
 
   tradeTimeline: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string() }))
-    .query(({ input }) => {
+    .query(async ({ input }) => {
       const ref = input.tradeRef.trim();
-      const open = getOpenTradeByRef(ref);
-      if (!open && !getLockedTradeByRef(ref)) {
+      const open = await getOpenTradeByRef(ref);
+      if (!open && !(await getLockedTradeByRef(ref))) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Trade not found" });
       }
       return getTradeTimeline(ref);
@@ -315,13 +309,10 @@ export const executionRouter = router({
 
   updateOpenTrade: headProcedure("EXECUTION")
     .input(z.object({ tradeRef: z.string(), patch: openTradePatchSchema }))
-    .mutation(({ ctx, input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Open trades only in mock mode" });
-      }
+    .mutation(async ({ ctx, input }) => {
       try {
         const editedBy = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
-        return updateOpenTradeDirect(input.tradeRef.trim(), input.patch, editedBy);
+        return await updateOpenTradeDirect(input.tradeRef.trim(), input.patch, editedBy);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -332,13 +323,10 @@ export const executionRouter = router({
 
   lockOpenTrade: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string(), patch: openTradePatchSchema.optional() }))
-    .mutation(({ ctx, input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Unreviewed trades only in mock mode" });
-      }
+    .mutation(async ({ ctx, input }) => {
       try {
         const lockedBy = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
-        return lockOpenTradeFromExecution(input.tradeRef.trim(), lockedBy, input.patch);
+        return await lockOpenTradeFromExecution(input.tradeRef.trim(), lockedBy, input.patch);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -355,13 +343,10 @@ export const executionRouter = router({
 
   updateLockedTrade: headProcedure("EXECUTION")
     .input(z.object({ tradeRef: z.string(), patch: openTradePatchSchema }))
-    .mutation(({ ctx, input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Locked contracts only in mock mode" });
-      }
+    .mutation(async ({ ctx, input }) => {
       try {
         const editedBy = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
-        return updateLockedTradeDirect(input.tradeRef.trim(), input.patch, editedBy);
+        return await updateLockedTradeDirect(input.tradeRef.trim(), input.patch, editedBy);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -372,13 +357,10 @@ export const executionRouter = router({
 
   closeLockedContract: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string() }))
-    .mutation(({ ctx, input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Locked contracts only in mock mode" });
-      }
+    .mutation(async ({ ctx, input }) => {
       try {
         const closedBy = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
-        return closeLockedContract(input.tradeRef.trim(), closedBy);
+        return await closeLockedContract(input.tradeRef.trim(), closedBy);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -405,13 +387,10 @@ export const executionRouter = router({
           .min(1),
       }),
     )
-    .mutation(({ ctx, input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Open trades only in mock mode" });
-      }
+    .mutation(async ({ ctx, input }) => {
       try {
         const by = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
-        return applyOpenTradeWarehouseSplit(input.tradeRef.trim(), input.allocations, by, true);
+        return await applyOpenTradeWarehouseSplit(input.tradeRef.trim(), input.allocations, by, true);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -422,16 +401,16 @@ export const executionRouter = router({
 
   warehouseLocations: roleProcedure([...execRoles]).query(() => getMergedLocations()),
 
-  companyWarehouses: roleProcedure([...execRoles]).query(() =>
-    getCompanyWarehouses().map((w) => ({ id: w.id, name: w.name, code: w.code ?? null })),
+  companyWarehouses: roleProcedure([...execRoles]).query(async () =>
+    (await getCompanyWarehouses()).map((w) => ({ id: w.id, name: w.name, code: w.code ?? null })),
   ),
 
   // Execution head allocates each locked contract to a company warehouse (local + international).
   allocateWarehouse: headProcedure("EXECUTION")
     .input(z.object({ tradeRef: z.string(), warehouseName: z.string().nullable() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        const result = allocateContractWarehouse(input.tradeRef, input.warehouseName);
+        const result = await allocateContractWarehouse(input.tradeRef, input.warehouseName);
         return withWarehouseProgress(result);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
@@ -452,9 +431,9 @@ export const executionRouter = router({
           .min(1),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        const result = allocateContractWarehousesSplit(input.tradeRef, input.allocations);
+        const result = await allocateContractWarehousesSplit(input.tradeRef, input.allocations);
         return withWarehouseProgress(result);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
@@ -463,12 +442,9 @@ export const executionRouter = router({
 
   addWarehouseLocation: headProcedure("EXECUTION")
     .input(warehouseLocationFieldsSchema)
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Warehouse creation only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       try {
-        return addCustomLocation({
+        return await addCustomLocation({
           ...input,
           capacitySqFt: input.capacitySqFt ?? 1,
         });
@@ -482,13 +458,10 @@ export const executionRouter = router({
 
   updateWarehouseLocation: headProcedure("EXECUTION")
     .input(warehouseLocationFieldsSchema.partial().extend({ id: z.string() }))
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Warehouse update only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       const { id, ...patch } = input;
       try {
-        return updateWarehouseLocation(id, patch);
+        return await updateWarehouseLocation(id, patch);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -499,12 +472,9 @@ export const executionRouter = router({
 
   deleteWarehouseLocation: headProcedure("EXECUTION")
     .input(z.object({ id: z.string() }))
-    .mutation(({ input }) => {
-      if (!isMockMode()) {
-        throw new TRPCError({ code: "NOT_IMPLEMENTED", message: "Warehouse delete only in mock mode" });
-      }
+    .mutation(async ({ input }) => {
       try {
-        return deleteWarehouseLocation(input.id);
+        return await deleteWarehouseLocation(input.id);
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -529,22 +499,19 @@ export const executionRouter = router({
         })
         .optional(),
     )
-    .query(({ input }) => {
-      if (isMockMode()) seedExecutionDemoIfEmpty();
-      return getLockedContracts(input ?? undefined);
-    }),
+    .query(({ input }) => getLockedContracts(input ?? undefined)),
 
   contractByRef: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string() }))
-    .query(({ input }) => {
-      const c = getContractByRef(input.tradeRef.trim());
+    .query(async ({ input }) => {
+      const c = await getContractByRef(input.tradeRef.trim());
       if (!c) throw new TRPCError({ code: "NOT_FOUND", message: "Contract not found or trade not locked yet" });
-      return {
-        contract: c,
-        inbound: getInboundReceipts(input.tradeRef),
-        outbound: getOutboundDispatches(input.tradeRef),
-        spot: getSpotEvent(input.tradeRef),
-      };
+      const [inbound, outbound, spot] = await Promise.all([
+        getInboundReceipts(input.tradeRef),
+        getOutboundDispatches(input.tradeRef),
+        getSpotEvent(input.tradeRef),
+      ]);
+      return { contract: c, inbound, outbound, spot };
     }),
 
   exportLockedCsv: roleProcedure([...execRoles, Role.TRADER])
@@ -556,8 +523,8 @@ export const executionRouter = router({
         incoterms: z.string().optional(),
       }),
     )
-    .mutation(({ input }) => {
-      const csv = exportLockedContractsCsv(input.from, input.to, input.profile, input.incoterms);
+    .mutation(async ({ input }) => {
+      const csv = await exportLockedContractsCsv(input.from, input.to, input.profile, input.incoterms);
       return {
         csv,
         filename: `locked-trades-${input.from.toISOString().slice(0, 10)}.csv`,
@@ -591,9 +558,9 @@ export const executionRouter = router({
         fifoOverrideReason: z.string().optional(),
       }),
     )
-    .mutation(({ ctx, input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
-        return createInboundReceipt({
+        return await createInboundReceipt({
           ...input,
           billNo: input.billNo ?? null,
           bags: input.bags ?? null,
@@ -611,9 +578,9 @@ export const executionRouter = router({
 
   submitInboundForFinance: roleProcedure([...execRoles])
     .input(z.object({ receiptId: z.string() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return submitInboundForFinance(input.receiptId);
+        return await submitInboundForFinance(input.receiptId);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -621,10 +588,7 @@ export const executionRouter = router({
 
   inboundReceipts: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string().optional() }).optional())
-    .query(({ input }) => {
-      if (isMockMode()) seedExecutionDemoIfEmpty();
-      return getInboundReceipts(input?.tradeRef);
-    }),
+    .query(({ input }) => getInboundReceipts(input?.tradeRef)),
 
   createOutboundDispatch: roleProcedure([...execRoles])
     .input(
@@ -641,9 +605,9 @@ export const executionRouter = router({
         fifoOverrideReason: z.string().optional(),
       }),
     )
-    .mutation(({ ctx, input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
-        return createOutboundDispatch(
+        return await createOutboundDispatch(
           {
             ...input,
             doRef: null,
@@ -658,9 +622,9 @@ export const executionRouter = router({
 
   requestOutboundRelease: roleProcedure([...execRoles])
     .input(z.object({ dispatchId: z.string() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return requestOutboundRelease(input.dispatchId);
+        return await requestOutboundRelease(input.dispatchId);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -668,9 +632,9 @@ export const executionRouter = router({
 
   releaseOutbound: roleProcedure([...execRoles])
     .input(z.object({ dispatchId: z.string(), doRef: z.string().min(1) }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return releaseOutbound(input.dispatchId, input.doRef);
+        return await releaseOutbound(input.dispatchId, input.doRef);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -678,10 +642,7 @@ export const executionRouter = router({
 
   outboundDispatches: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string().optional() }).optional())
-    .query(({ input }) => {
-      if (isMockMode()) seedExecutionDemoIfEmpty();
-      return getOutboundDispatches(input?.tradeRef);
-    }),
+    .query(({ input }) => getOutboundDispatches(input?.tradeRef)),
 
   spotEvent: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string() }))
@@ -689,10 +650,7 @@ export const executionRouter = router({
 
   spotPipeline: roleProcedure([...execRoles])
     .input(z.object({ profile: z.enum(["PURCHASE_SPOT"]).optional() }).optional())
-    .query(({ input }) => {
-      if (isMockMode()) seedExecutionDemoIfEmpty();
-      return listSpotPipeline(input?.profile ?? "PURCHASE_SPOT");
-    }),
+    .query(({ input }) => listSpotPipeline(input?.profile ?? "PURCHASE_SPOT")),
 
   advanceSpot: roleProcedure([...execRoles])
     .input(
@@ -726,9 +684,9 @@ export const executionRouter = router({
 
   submitSpotForFinance: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return submitSpotForFinance(input.tradeRef);
+        return await submitSpotForFinance(input.tradeRef);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -736,17 +694,14 @@ export const executionRouter = router({
 
   paymentRequests: roleProcedure([...execRoles, Role.FINANCE])
     .input(z.object({ status: z.string().optional() }).optional())
-    .query(({ input }) => {
-      if (isMockMode()) seedExecutionDemoIfEmpty();
-      return getPaymentRequests(input ?? undefined);
-    }),
+    .query(({ input }) => getPaymentRequests(input ?? undefined)),
 
   approvePayment: roleProcedure([...execRoles, Role.FINANCE])
     .input(z.object({ paymentId: z.string(), comment: z.string().optional() }))
-    .mutation(({ input, ctx }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
-        const approvedBy = (ctx as { user?: { name?: string } }).user?.name ?? "Execution";
-        return approvePayment(input.paymentId, approvedBy, input.comment);
+        const approvedBy = ctx.session.user.name ?? "Execution";
+        return await approvePayment(input.paymentId, approvedBy, input.comment);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -754,9 +709,9 @@ export const executionRouter = router({
 
   rejectPayment: roleProcedure([...execRoles, Role.FINANCE])
     .input(z.object({ paymentId: z.string(), comment: z.string().optional() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return rejectPayment(input.paymentId, input.comment);
+        return await rejectPayment(input.paymentId, input.comment);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -776,11 +731,7 @@ export const executionRouter = router({
         to: z.coerce.date().optional(),
       }).optional(),
     )
-    .query(({ input }) => {
-      if (isMockMode()) seedExecutionDemoIfEmpty();
-      syncExecutionFromDisk();
-      return getPendingTrucks(input ?? undefined);
-    }),
+    .query(({ input }) => getPendingTrucks(input ?? undefined)),
 
   createPendingTruck: roleProcedure([...execRoles])
     .input(
@@ -807,9 +758,9 @@ export const executionRouter = router({
         gatepassNo: z.string().optional(),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return createPendingTruck({
+        return await createPendingTruck({
           ...input,
           weightKg: input.weightAsPerBuiltyKg,
           transporterName: input.transporterName || null,
@@ -836,10 +787,10 @@ export const executionRouter = router({
         overrideWeightKg: z.number().positive().optional(),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
         // Physical gate receipt — record fulfilment even if booked delivery window has not opened yet.
-        return assignTruckToTrade(
+        return await assignTruckToTrade(
           input.truckId,
           input.tradeRef,
           input.overrideWeightKg,
@@ -852,9 +803,9 @@ export const executionRouter = router({
 
   assignTruckFifoAuto: roleProcedure([...execRoles])
     .input(z.object({ truckId: z.string() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return assignTruckFifoAuto(input.truckId);
+        return await assignTruckFifoAuto(input.truckId);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -870,8 +821,8 @@ export const executionRouter = router({
         to: z.coerce.date().optional(),
       }).optional(),
     )
-    .mutation(({ input }) => {
-      const csv = exportMovementsCsv(input ?? undefined);
+    .mutation(async ({ input }) => {
+      const csv = await exportMovementsCsv(input ?? undefined);
       const today = new Date().toISOString().slice(0, 10);
       return { csv, filename: `movements-${today}.csv` };
     }),
@@ -884,17 +835,13 @@ export const executionRouter = router({
 
   exportTradeFileCsv: roleProcedure([...execRoles, Role.TRADER])
     .input(tradeFileFilterSchema.optional())
-    .mutation(({ input }) => {
-      const csv = exportTradeFileCsv(input ?? undefined);
+    .mutation(async ({ input }) => {
+      const csv = await exportTradeFileCsv(input ?? undefined);
       const stamp = new Date().toISOString().slice(0, 10);
       return { csv, filename: `trade-file-${stamp}.csv` };
     }),
 
-  positionLedger: roleProcedure([...execRoles, Role.TRADER]).query(() => {
-    if (isMockMode()) seedExecutionDemoIfEmpty();
-    syncExecutionFromDisk();
-    return computePositionLedger();
-  }),
+  positionLedger: roleProcedure([...execRoles, Role.TRADER]).query(() => computePositionLedger()),
 
   setPositionAdjustment: headProcedure("EXECUTION")
     .input(
@@ -903,8 +850,8 @@ export const executionRouter = router({
         deltaMt: z.number(),
       }),
     )
-    .mutation(({ input }) => {
-      setPositionAdjustment(input.commodityCode, input.deltaMt);
+    .mutation(async ({ input }) => {
+      await setPositionAdjustment(input.commodityCode, input.deltaMt);
       return computePositionLedger();
     }),
 });

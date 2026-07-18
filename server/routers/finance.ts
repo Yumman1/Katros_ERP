@@ -9,8 +9,10 @@ import {
 } from "@/server/execution-store";
 
 export const financeRouter = router({
-  pendingPayments: roleProcedure(["FINANCE", "ADMIN"]).query(() =>
-    listPaymentRequests("PENDING").sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+  pendingPayments: roleProcedure(["FINANCE", "ADMIN"]).query(async () =>
+    (await listPaymentRequests("PENDING")).sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    ),
   ),
 
   allPayments: roleProcedure(["FINANCE", "ADMIN"])
@@ -19,9 +21,9 @@ export const financeRouter = router({
 
   approvePayment: roleProcedure(["FINANCE", "ADMIN"])
     .input(z.object({ paymentId: z.string(), comment: z.string().optional() }))
-    .mutation(({ ctx, input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
-        return approvePayment(
+        return await approvePayment(
           input.paymentId,
           ctx.session.user.name ?? ctx.session.user.email ?? "finance",
           input.comment,
@@ -33,9 +35,9 @@ export const financeRouter = router({
 
   rejectPayment: roleProcedure(["FINANCE", "ADMIN"])
     .input(z.object({ paymentId: z.string(), comment: z.string().optional() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return rejectPayment(input.paymentId, input.comment);
+        return await rejectPayment(input.paymentId, input.comment);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -44,9 +46,9 @@ export const financeRouter = router({
   // Head-of-finance direct deletion of an erroneous payment request.
   deletePayment: headProcedure("FINANCE")
     .input(z.object({ paymentId: z.string() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
-        return deletePaymentRequest(input.paymentId);
+        return await deletePaymentRequest(input.paymentId);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }

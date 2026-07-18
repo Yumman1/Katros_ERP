@@ -29,7 +29,6 @@ import {
 import {
   mockAllTraderTrades,
   mockTradeByRefGlobal,
-  syncBookedTradesFromDisk,
   upsertBookedTrade,
   type MockTraderTrade,
 } from "@/server/dummy-data";
@@ -172,17 +171,17 @@ function toSummary(t: MockTraderTrade): OpenTradeSummary {
   };
 }
 
-export function getOpenTradesForExecution(): OpenTradeSummary[] {
-  syncBookedTradesFromDisk();
-  return mockAllTraderTrades()
+export async function getOpenTradesForExecution(): Promise<OpenTradeSummary[]> {
+  return (await mockAllTraderTrades())
     .filter(isOpenTrade)
     .sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime())
     .map(toSummary);
 }
 
-export function getOpenTradeByRef(tradeRef: string): (MockTraderTrade & { expectedProfile: string }) | null {
-  syncBookedTradesFromDisk();
-  const t = mockTradeByRefGlobal(tradeRef.trim());
+export async function getOpenTradeByRef(
+  tradeRef: string,
+): Promise<(MockTraderTrade & { expectedProfile: string }) | null> {
+  const t = await mockTradeByRefGlobal(tradeRef.trim());
   if (!t || !isOpenTrade(t)) return null;
   return {
     ...t,
@@ -190,9 +189,8 @@ export function getOpenTradeByRef(tradeRef: string): (MockTraderTrade & { expect
   };
 }
 
-export function submitTradeToExecution(tradeRef: string): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const t = mockTradeByRefGlobal(tradeRef.trim());
+export async function submitTradeToExecution(tradeRef: string): Promise<MockTraderTrade> {
+  const t = await mockTradeByRefGlobal(tradeRef.trim());
   if (!t) throw new Error("Trade not found");
   if (t.tradeStatus !== TradeStatus.PENDING) {
     throw new Error("Only draft trades can be submitted to execution");
@@ -203,11 +201,14 @@ export function submitTradeToExecution(tradeRef: string): MockTraderTrade {
   if (!priceBasisRequiresQuote(t.priceBasis) && !tradeHasQuotedPrice(t)) {
     t.pendingTraderPrice = true;
   }
-  upsertBookedTrade(t);
+  await upsertBookedTrade(t);
   return t;
 }
 
-function applyCounterpartyPatch(trade: MockTraderTrade, patch: OpenTradeCounterpartyPatch): void {
+async function applyCounterpartyPatch(
+  trade: MockTraderTrade,
+  patch: OpenTradeCounterpartyPatch,
+): Promise<void> {
   const cp = trade.counterparty;
   if (patch.name != null) {
     const name = patch.name.trim();
@@ -232,7 +233,7 @@ function applyCounterpartyPatch(trade: MockTraderTrade, patch: OpenTradeCounterp
     trade.counterpartyKycStatus = "VERIFIED";
     trade.counterpartyKycRef = trade.counterpartyKycRef ?? `KYC-${cp.code}-${verifiedAt}`;
     if (cp.id.startsWith("ccp-")) {
-      updateCustomCounterparty(cp.id, {
+      await updateCustomCounterparty(cp.id, {
         ...masterPatch,
         kycStatus: "VERIFIED",
         kycRef: trade.counterpartyKycRef,
@@ -242,15 +243,15 @@ function applyCounterpartyPatch(trade: MockTraderTrade, patch: OpenTradeCounterp
   }
 
   if (cp.id.startsWith("ccp-")) {
-    updateCustomCounterparty(cp.id, masterPatch);
+    await updateCustomCounterparty(cp.id, masterPatch);
   }
 }
 
-function applyPatchToTrade(
+async function applyPatchToTrade(
   trade: MockTraderTrade,
   patch: OpenTradePatch,
   meta: { editedBy: string; notifyTrader: boolean; editNote?: string | null },
-): MockTraderTrade {
+): Promise<MockTraderTrade> {
   if (patch.quantityEntered != null && patch.quantityEnteredUnit) {
     trade.quantityEntered = patch.quantityEntered;
     trade.quantityEnteredUnit = patch.quantityEnteredUnit;
@@ -335,7 +336,7 @@ function applyPatchToTrade(
   trade.tradeParams = Object.keys(nextParams).length ? nextParams : null;
 
   if (patch.counterparty) {
-    applyCounterpartyPatch(trade, patch.counterparty);
+    await applyCounterpartyPatch(trade, patch.counterparty);
   }
 
   if (meta.notifyTrader) {
@@ -345,27 +346,26 @@ function applyPatchToTrade(
     if (meta.editNote !== undefined) trade.executionEditNote = meta.editNote;
   }
 
-  upsertBookedTrade(trade);
+  await upsertBookedTrade(trade);
   return trade;
 }
 
-export function updateOpenTradeDirect(
+export async function updateOpenTradeDirect(
   tradeRef: string,
   patch: OpenTradePatch,
   editedBy: string,
-): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
   assertOpenTrade(trade!, tradeRef);
   const safePatch = stripExecutionForbiddenPatch(patch);
   // Warehouse qty split must go through approveOpenTradeWarehouseSplit or a head-approved change request.
   delete safePatch.warehouseSplit;
-  const result = applyPatchToTrade(trade!, safePatch, {
+  const result = await applyPatchToTrade(trade!, safePatch, {
     editedBy,
     notifyTrader: true,
     editNote: safePatch.executionEditNote ?? null,
   });
-  recordTradeEditApplied(tradeRef, safePatch, {
+  await recordTradeEditApplied(tradeRef, safePatch, {
     actorName: editedBy,
     actorSide: "EXECUTION",
     requiresApproval: false,
@@ -375,14 +375,13 @@ export function updateOpenTradeDirect(
 }
 
 /** Trader direct edit while still a draft (not submitted to execution). */
-export function updateTraderDraftTrade(
+export async function updateTraderDraftTrade(
   traderName: string,
   tradeRef: string,
   patch: OpenTradePatch,
   editedBy: string,
-): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
   if (!trade) throw new Error("Trade not found");
   if (trade.tradeStatus !== TradeStatus.PENDING || trade.submittedToExecution) {
     throw new Error("Only trader drafts (not yet submitted to execution) can be edited directly");
@@ -391,15 +390,15 @@ export function updateTraderDraftTrade(
     throw new Error("You can only edit your own trades");
   }
   const normalized = normalizeOpenTradePatch(patch as Record<string, unknown>);
-  const result = applyPatchToTrade(trade, normalized, {
+  const result = await applyPatchToTrade(trade, normalized, {
     editedBy,
     notifyTrader: false,
   });
   if (normalized.price != null && normalized.price > 0) {
     result.pendingTraderPrice = false;
   }
-  upsertBookedTrade(result);
-  recordTradeEditApplied(tradeRef, normalized, {
+  await upsertBookedTrade(result);
+  await recordTradeEditApplied(tradeRef, normalized, {
     actorName: editedBy,
     actorSide: "TRADER",
     requiresApproval: false,
@@ -408,23 +407,22 @@ export function updateTraderDraftTrade(
 }
 
 /** Apply an approved change-request payload to an open trade. */
-export function applyOpenTradeEditFromPayload(
+export async function applyOpenTradeEditFromPayload(
   tradeRef: string,
   payload: Record<string, unknown>,
   editedBy: string,
-): MockTraderTrade {
+): Promise<MockTraderTrade> {
   const patch = stripExecutionForbiddenPatch(normalizeOpenTradePatch(payload));
   return updateOpenTradeDirect(tradeRef, patch, editedBy);
 }
 
 /** Apply a CEO-approved trader edit — does not notify trader for re-review. */
-export function applyTraderTradeEditFromPayload(
+export async function applyTraderTradeEditFromPayload(
   tradeRef: string,
   payload: Record<string, unknown>,
   editedBy: string,
-): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
   if (!trade) throw new Error("Trade not found");
   if (trade.tradeStatus !== TradeStatus.PENDING) {
     throw new Error(
@@ -432,15 +430,15 @@ export function applyTraderTradeEditFromPayload(
     );
   }
   const patch = normalizeOpenTradePatch(payload);
-  const result = applyPatchToTrade(trade, patch, {
+  const result = await applyPatchToTrade(trade, patch, {
     editedBy,
     notifyTrader: false,
   });
   if (patch.price != null && patch.price > 0) {
     result.pendingTraderPrice = false;
   }
-  upsertBookedTrade(result);
-  recordTradeEditApplied(tradeRef, patch, {
+  await upsertBookedTrade(result);
+  await recordTradeEditApplied(tradeRef, patch, {
     actorName: editedBy,
     actorSide: "CEO",
     requiresApproval: true,
@@ -459,7 +457,7 @@ function assertPriceReadyForLock(trade: MockTraderTrade): void {
   }
 }
 
-export function completeTraderTradePrice(
+export async function completeTraderTradePrice(
   traderName: string,
   tradeRef: string,
   input: {
@@ -469,9 +467,8 @@ export function completeTraderTradePrice(
     priceWeightUnit?: string;
     priceKgPerUnit?: number;
   },
-): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
   if (!trade) throw new Error("Trade not found");
   if (trade.tradeStatus !== TradeStatus.PENDING) {
     throw new Error("Only pending trades can be updated");
@@ -511,17 +508,16 @@ export function completeTraderTradePrice(
   }
 
   trade.pendingTraderPrice = false;
-  upsertBookedTrade(trade);
+  await upsertBookedTrade(trade);
   return trade;
 }
 
-export function lockOpenTradeFromExecution(
+export async function lockOpenTradeFromExecution(
   tradeRef: string,
   lockedBy: string,
   patch?: OpenTradePatch,
-): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
   assertOpenTrade(trade!, tradeRef);
   if (trade!.pendingTraderReview) {
     throw new Error(
@@ -529,15 +525,18 @@ export function lockOpenTradeFromExecution(
     );
   }
   if (patch && Object.keys(patch).length > 0) {
-    applyPatchToTrade(trade!, stripExecutionForbiddenPatch(patch), { editedBy: lockedBy, notifyTrader: false });
+    await applyPatchToTrade(trade!, stripExecutionForbiddenPatch(patch), {
+      editedBy: lockedBy,
+      notifyTrader: false,
+    });
   }
-  const refreshed = mockTradeByRefGlobal(tradeRef.trim());
+  const refreshed = await mockTradeByRefGlobal(tradeRef.trim());
   assertPriceReadyForLock(refreshed!);
   assertWarehouseReadyForLock(refreshed!);
   return lockTradeInStore(refreshed!.traderName, tradeRef, { lockedBy });
 }
 
-export function lockOpenTradeAfterTraderReview(
+export async function lockOpenTradeAfterTraderReview(
   traderName: string,
   tradeRef: string,
   input: {
@@ -546,9 +545,8 @@ export function lockOpenTradeAfterTraderReview(
     commissionPerMaund?: number;
     qualityTolerances?: QualityTolerances;
   },
-): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
   if (!trade) throw new Error("Trade not found");
   if (!isOpenTrade(trade)) {
     throw new Error("Trade is not in Unreviewed Trades");
@@ -557,14 +555,14 @@ export function lockOpenTradeAfterTraderReview(
     throw new Error("No execution edits to acknowledge — execution can lock this trade directly");
   }
   trade.pendingTraderReview = false;
-  upsertBookedTrade(trade);
+  await upsertBookedTrade(trade);
   assertPriceReadyForLock(trade);
   assertWarehouseReadyForLock(trade);
   return lockTradeInStore(traderName, tradeRef, input);
 }
 
-export function getPendingTraderReviewTrades(): OpenTradeSummary[] {
-  return getOpenTradesForExecution().filter((t) => t.pendingTraderReview);
+export async function getPendingTraderReviewTrades(): Promise<OpenTradeSummary[]> {
+  return (await getOpenTradesForExecution()).filter((t) => t.pendingTraderReview);
 }
 
 /** Whether this trade profile uses warehouse allocation on lock. */
@@ -628,14 +626,13 @@ export function assertWarehouseReadyForLock(trade: MockTraderTrade): void {
   }
 }
 
-export function applyOpenTradeWarehouseSplit(
+export async function applyOpenTradeWarehouseSplit(
   tradeRef: string,
   split: WarehouseOpenAllocationLine[],
   by: string,
   approve: boolean,
-): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
   assertOpenTrade(trade!, tradeRef);
 
   const validation = validateWarehouseSplitForTrade(trade!, split);
@@ -654,21 +651,22 @@ export function applyOpenTradeWarehouseSplit(
     trade!.pendingWarehouseApproval = true;
   }
 
-  upsertBookedTrade(trade!);
+  await upsertBookedTrade(trade!);
   return trade!;
 }
 
-export function markOpenTradeWarehousePendingApproval(tradeRef: string): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const trade = mockTradeByRefGlobal(tradeRef.trim());
+export async function markOpenTradeWarehousePendingApproval(
+  tradeRef: string,
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
   assertOpenTrade(trade!, tradeRef);
   trade!.pendingWarehouseApproval = true;
-  upsertBookedTrade(trade!);
+  await upsertBookedTrade(trade!);
   return trade!;
 }
 
-export function getOpenTradesNeedingWarehouseAllocation(): OpenTradeSummary[] {
-  return getOpenTradesForExecution().filter((t) => {
+export async function getOpenTradesNeedingWarehouseAllocation(): Promise<OpenTradeSummary[]> {
+  return (await getOpenTradesForExecution()).filter((t) => {
     if (!t.requiresWarehouse) return false;
     return !t.warehouseSplitApproved;
   });
@@ -678,17 +676,16 @@ export function openTradeWarehousePlan(trade: MockTraderTrade): WarehouseOpenAll
   return parseExecutionWarehouseSplit(trade.tradeParams);
 }
 
-function getLockedTradeRecord(tradeRef: string): MockTraderTrade | null {
-  syncBookedTradesFromDisk();
-  const t = mockTradeByRefGlobal(tradeRef.trim());
+async function getLockedTradeRecord(tradeRef: string): Promise<MockTraderTrade | null> {
+  const t = await mockTradeByRefGlobal(tradeRef.trim());
   if (!t || t.tradeStatus !== TradeStatus.LOCKED) return null;
   return t;
 }
 
-export function getLockedTradeByRef(
+export async function getLockedTradeByRef(
   tradeRef: string,
-): (MockTraderTrade & { expectedProfile: string }) | null {
-  const t = getLockedTradeRecord(tradeRef);
+): Promise<(MockTraderTrade & { expectedProfile: string }) | null> {
+  const t = await getLockedTradeRecord(tradeRef);
   if (!t) return null;
   return {
     ...t,
@@ -696,28 +693,27 @@ export function getLockedTradeByRef(
   };
 }
 
-export function getLockedTradesForExecution(): OpenTradeSummary[] {
-  syncBookedTradesFromDisk();
-  return mockAllTraderTrades()
+export async function getLockedTradesForExecution(): Promise<OpenTradeSummary[]> {
+  return (await mockAllTraderTrades())
     .filter((t) => t.tradeStatus === TradeStatus.LOCKED)
     .sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime())
     .map(toSummary);
 }
 
-export function updateLockedTradeDirect(
+export async function updateLockedTradeDirect(
   tradeRef: string,
   patch: OpenTradePatch,
   editedBy: string,
-): MockTraderTrade {
-  const trade = getLockedTradeRecord(tradeRef);
+): Promise<MockTraderTrade> {
+  const trade = await getLockedTradeRecord(tradeRef);
   if (!trade) throw new Error("Locked contract not found");
-  const result = applyPatchToTrade(trade, stripExecutionForbiddenPatch(patch), {
+  const result = await applyPatchToTrade(trade, stripExecutionForbiddenPatch(patch), {
     editedBy,
     notifyTrader: false,
     editNote: patch.executionEditNote ?? null,
   });
-  syncAllLockedContracts();
-  recordTradeEditApplied(tradeRef, stripExecutionForbiddenPatch(patch), {
+  await syncAllLockedContracts();
+  await recordTradeEditApplied(tradeRef, stripExecutionForbiddenPatch(patch), {
     actorName: editedBy,
     actorSide: "EXECUTION",
     requiresApproval: false,
@@ -726,22 +722,21 @@ export function updateLockedTradeDirect(
   return result;
 }
 
-export function applyLockedTradeEditFromPayload(
+export async function applyLockedTradeEditFromPayload(
   tradeRef: string,
   payload: Record<string, unknown>,
   editedBy: string,
-): MockTraderTrade {
+): Promise<MockTraderTrade> {
   const patch = payload as OpenTradePatch;
   return updateLockedTradeDirect(tradeRef, patch, editedBy);
 }
 
-export function applyExecutionTradeEditFromPayload(
+export async function applyExecutionTradeEditFromPayload(
   tradeRef: string,
   payload: Record<string, unknown>,
   editedBy: string,
-): MockTraderTrade {
-  syncBookedTradesFromDisk();
-  const t = mockTradeByRefGlobal(tradeRef.trim());
+): Promise<MockTraderTrade> {
+  const t = await mockTradeByRefGlobal(tradeRef.trim());
   if (!t) throw new Error("Trade not found");
   const patch = stripExecutionForbiddenPatch(normalizeOpenTradePatch(payload));
   if (t.tradeStatus === TradeStatus.LOCKED) {
