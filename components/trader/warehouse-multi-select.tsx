@@ -16,6 +16,10 @@ export type WarehouseOption = {
   storageDivision?: WarehouseStorageDivision | null;
   divisionAvailabilityPct?: number | null;
   divisionAvailableMt?: number | null;
+  /** MT committed to open BUY contracts still incoming at this warehouse. */
+  allocatedMt?: number | null;
+  /** Free MT after subtracting stock and open BUY allocations. */
+  unallocatedMt?: number | null;
 };
 
 type Props = {
@@ -84,6 +88,7 @@ export function WarehouseMultiSelect({
           : w.availableGrainMt;
         const tone = availabilityTone(availPct);
         const hasCapacity = availMt != null || w.grainDivisionSqFt != null;
+        const hasAllocation = w.unallocatedMt != null;
 
         return (
           <label
@@ -126,7 +131,15 @@ export function WarehouseMultiSelect({
                 >
                   {availPct != null ? `${availPct.toFixed(0)}% available` : "N/A"}
                 </span>
-                {hasCapacity ? (
+                {hasAllocation ? (
+                  <span
+                    className="rounded-full border border-kastros-border bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground"
+                    title="Allocated = space committed to open BUY contracts still incoming. Free = capacity − stock − allocated."
+                  >
+                    Allocated {fmtCapacityMt(w.allocatedMt ?? 0)} MT · Free{" "}
+                    {fmtCapacityMt(w.unallocatedMt)} MT
+                  </span>
+                ) : hasCapacity ? (
                   <span
                     className="rounded-full border border-kastros-border bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground"
                     title={

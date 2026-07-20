@@ -18,6 +18,7 @@ import {
   type TradeScope,
 } from "@/lib/trade-constants";
 import type { WarehouseAllocationLine } from "@/lib/warehouse-allocation";
+import type { GateInvoiceStage } from "@/lib/gate-invoice";
 import { json, num, numOrNull } from "@/server/db/convert";
 
 // ─── Pending Truck (Gatepass) Types ───────────────────────────────────────────
@@ -73,6 +74,8 @@ export type PendingTruck = {
   gateInvoiceRatePerKg?: number | null;
   /** Locked contract used for provisional gate-in invoice pricing. */
   gateInvoiceTradeRef?: string | null;
+  /** Workflow stage of the gate invoice (set whenever an invoice exists). */
+  gateInvoiceStage?: GateInvoiceStage | null;
   /** @deprecated legacy persisted trucks only */
   driverCnic?: string | null;
 };
@@ -284,6 +287,7 @@ export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
     gateInvoiceCurrency: row.gateInvoiceCurrency,
     gateInvoiceRatePerKg: numOrNull(row.gateInvoiceRatePerKg),
     gateInvoiceTradeRef: row.gateInvoiceTradeRef,
+    gateInvoiceStage: row.gateInvoiceStage,
     driverCnic: null,
   };
 }

@@ -2,7 +2,8 @@
 
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
-import { formatQtyWithUnit } from "@/lib/formatters/numbers";
+import { formatCurrency, formatQtyWithUnit } from "@/lib/formatters/numbers";
+import { GATE_INVOICE_STAGES, GATE_INVOICE_STAGE_LABELS, type GateInvoiceStage } from "@/lib/gate-invoice";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ClipboardList } from "lucide-react";
@@ -12,8 +13,15 @@ export default function PurchaseDeliveredDetailPage() {
   const tradeRef = decodeURIComponent(params.ref as string);
   const utils = trpc.useUtils();
   const { data, isLoading } = trpc.execution.contractByRef.useQuery({ tradeRef });
+  const { data: invoiceSummary } = trpc.execution.gateInvoiceSummary.useQuery({ tradeRef });
   const submitFinance = trpc.execution.submitInboundForFinance.useMutation({
     onSuccess: () => invalidateTradeFlowCaches(utils, tradeRef),
+  });
+  const setStage = trpc.execution.setGateInvoiceStage.useMutation({
+    onSuccess: () => {
+      void utils.execution.gateInvoiceSummary.invalidate({ tradeRef });
+      void utils.execution.pendingTrucks.invalidate();
+    },
   });
 
   if (isLoading) {
@@ -35,6 +43,11 @@ export default function PurchaseDeliveredDetailPage() {
   const unit = c.quantityUnit;
   const pct = c.contractualQtyMt > 0 ? Math.min(c.receivedQtyMt / c.contractualQtyMt, 1) : 0;
   const tol = c.qualityTolerances;
+
+  const approvedPkr = invoiceSummary?.approvedPkr ?? 0;
+  const totalTradeValuePkr = invoiceSummary?.totalTradeValuePkr ?? 0;
+  const approvedPct = totalTradeValuePkr > 0 ? Math.min(approvedPkr / totalTradeValuePkr, 1) : 0;
+  const invoices = invoiceSummary?.invoices ?? [];
 
   return (
     <div className="kastros-desk-page">
@@ -179,7 +192,86 @@ export default function PurchaseDeliveredDetailPage() {
           </div>
         )}
       </div>
+
+      <div className="rounded-2xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
+        <div className="border-b px-5 py-4" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Gate invoices</h2>
+              <p className="mt-0.5 text-xs" style={{ color: "#71717a" }}>
+                {invoices.length} invoice{invoices.length !== 1 ? "s" : ""} on this trade&apos;s trucks
+              </p>
+            </div>
+            <div className="min-w-[240px] flex-1 sm:max-w-xs">
+              <div className="mb-1 flex justify-between text-[10px]" style={{ color: "#71717a" }}>
+                <span>Payments approved</span>
+                <span>
+                  {formatCurrency(approvedPkr, "PKR")} of {formatCurrency(totalTradeValuePkr, "PKR")} (
+                  {(approvedPct * 100).toFixed(1)}%)
+                </span>
+              </div>
+              <div className="h-2 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{ width: `${approvedPct * 100}%`, background: "linear-gradient(90deg,#34d399,#10b981)" }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+        {invoices.length === 0 ? (
+          <div className="px-5 py-8 text-center text-sm text-subtle">
+            No gate invoices yet. Invoices are generated at truck assignment or entered manually on the gate register.
+          </div>
+        ) : (
+          <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
+            {invoices.map((inv) => (
+              <div key={inv.truckId} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div className="flex flex-wrap items-center gap-4 text-xs">
+                  <span className="font-mono font-semibold text-emerald-400">{inv.invoiceNo}</span>
+                  <span className="font-mono text-muted-foreground">{inv.gatepassNo}</span>
+                  <span className="text-muted-foreground">🚛 {inv.truckNo}</span>
+                  <span style={{ color: "#f59e0b" }}>{formatCurrency(inv.amount, inv.currency)}</span>
+                  <StageBadge stage={inv.stage} />
+                </div>
+                <select
+                  value={inv.stage}
+                  disabled={setStage.isPending}
+                  onChange={(e) =>
+                    setStage.mutate({ truckId: inv.truckId, stage: e.target.value as GateInvoiceStage })
+                  }
+                  className="kastros-input kastros-input-sm text-xs disabled:opacity-50"
+                >
+                  {GATE_INVOICE_STAGES.map((s) => (
+                    <option key={s} value={s}>
+                      {GATE_INVOICE_STAGE_LABELS[s]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+        {setStage.error && (
+          <div className="px-5 pb-3 text-xs text-red-400">{setStage.error.message}</div>
+        )}
+      </div>
     </div>
+  );
+}
+
+function StageBadge({ stage }: { stage: GateInvoiceStage }) {
+  const map: Record<GateInvoiceStage, [string, string]> = {
+    PENDING_TRADE_APPROVAL: ["rgba(96,165,250,0.1)", "#60a5fa"],
+    HOLD_OLD_DUES: ["rgba(245,158,11,0.1)", "#f59e0b"],
+    WRONG_INVOICING: ["rgba(248,113,113,0.1)", "#f87171"],
+    PAYMENT_APPROVED: ["rgba(52,211,153,0.1)", "#34d399"],
+  };
+  const [bg, color] = map[stage];
+  return (
+    <span className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={{ background: bg, color }}>
+      {GATE_INVOICE_STAGE_LABELS[stage]}
+    </span>
   );
 }
 

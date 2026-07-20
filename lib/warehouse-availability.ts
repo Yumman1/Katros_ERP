@@ -1,4 +1,5 @@
 import { stockAsOf } from "@/lib/warehouse-stock-utils";
+import { normWarehouseName } from "@/lib/warehouse-allocation";
 import {
   buildWarehouseUtilizationView,
   warehouseCapacityForDivision,
@@ -30,6 +31,12 @@ export type WarehouseAvailabilityRow = {
   divisionAvailabilityPct: number | null;
   /** Free MT in the commodity's division (grain MT or bale-as-grain MT). */
   divisionAvailableMt: number | null;
+  /** Theoretical capacity (MT) for the commodity's division (grain MT, or bale capacity as grain-MT equivalent). */
+  capacityMt: number | null;
+  /** MT committed to goods still incoming — Σ max(0, qtyMt − fulfilledQtyMt) over open BUY contract allocations. */
+  allocatedMt: number;
+  /** Free (unallocated) MT = max(0, capacityMt − stock − allocatedMt). */
+  unallocatedMt: number | null;
 };
 
 type WarehouseLoc = {
@@ -87,6 +94,9 @@ const EMPTY_ROW = (loc: WarehouseLoc): WarehouseAvailabilityRow => ({
   storageDivision: null,
   divisionAvailabilityPct: null,
   divisionAvailableMt: null,
+  capacityMt: null,
+  allocatedMt: 0,
+  unallocatedMt: null,
 });
 
 /** Same utilization math as Execution → Warehouses → Utilization. */
@@ -97,6 +107,8 @@ export function computeWarehouseAvailability(
   contracts: ContractRef[],
   asOf: Date | null = null,
   commodity?: WarehouseAvailabilityCommodity | null,
+  /** Σ max(0, qtyMt − fulfilledQtyMt) per warehouse over open BUY contract allocations, keyed by normWarehouseName. */
+  allocatedMtByWarehouse?: ReadonlyMap<string, number> | null,
 ): WarehouseAvailabilityRow[] {
   const contractByRef = new Map(
     contracts.map((c) => [
@@ -114,13 +126,32 @@ export function computeWarehouseAvailability(
     : null;
 
   return locations.map((loc) => {
+    const allocatedMt = allocatedMtByWarehouse?.get(normWarehouseName(loc.name)) ?? 0;
     const stock = stockAsOf(loc.name, inbound, outbound, contractByRef, asOf);
     const view = buildWarehouseUtilizationView(loc, stock);
-    if (!view) return EMPTY_ROW(loc);
+    if (!view) return { ...EMPTY_ROW(loc), allocatedMt };
 
     const divisionCapacity = storageDivision
       ? warehouseCapacityForDivision(view, storageDivision)
       : null;
+
+    // Capacity (MT) for the commodity's division. Grain: capacitySqFt / grainDivisionSqFt
+    // (via estimatedCapacityMt convention). Bale: bale capacity as grain-MT equivalent.
+    const capacityMt =
+      storageDivision === "bale"
+        ? view.grainDivisionSqFt > 0
+          ? (view.theoreticalMaxBales * view.balesDivisionSqFt) / view.grainDivisionSqFt
+          : null
+        : view.theoreticalMaxMt;
+
+    // Free room before allocations = max(0, capacityMt − stock) in this division
+    // (availableGrainMt / divisionAvailableMt already floor at 0 and account for
+    // mixed grain + bale stock via the shared floor-area math).
+    const freeBeforeAllocMt = storageDivision
+      ? divisionCapacity?.availableMt ?? null
+      : view.availableGrainMt;
+    const unallocatedMt =
+      freeBeforeAllocMt != null ? Math.max(0, freeBeforeAllocMt - allocatedMt) : null;
 
     return {
       id: loc.id,
@@ -140,6 +171,9 @@ export function computeWarehouseAvailability(
       storageDivision,
       divisionAvailabilityPct: divisionCapacity?.availabilityPct ?? null,
       divisionAvailableMt: divisionCapacity?.availableMt ?? null,
+      capacityMt,
+      allocatedMt,
+      unallocatedMt,
     };
   });
 }

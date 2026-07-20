@@ -399,6 +399,8 @@ export default function BookTradePage() {
         storageDivision: avail?.storageDivision ?? warehouseStorageDivision,
         divisionAvailabilityPct: avail?.divisionAvailabilityPct ?? null,
         divisionAvailableMt: avail?.divisionAvailableMt ?? null,
+        allocatedMt: avail?.allocatedMt ?? null,
+        unallocatedMt: avail?.unallocatedMt ?? null,
       };
     });
   }, [refData.data?.companyWarehouses, warehouseAvailability, warehouseStorageDivision]);

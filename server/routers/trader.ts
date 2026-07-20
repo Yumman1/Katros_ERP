@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { CommodityCategory, CounterpartyType, TradeDirection, TradeStatus } from "@prisma/client";
+import { ContractStatus, CounterpartyType, TradeDirection, TradeStatus } from "@prisma/client";
 import type { Session } from "next-auth";
 import { headProcedure, protectedProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import { traderDisplayName } from "@/lib/trader-display-name";
@@ -16,6 +16,8 @@ import {
   priceBasisRequiresQuote,
 } from "@/lib/trade-constants";
 import { computeWarehouseAvailability } from "@/lib/warehouse-availability";
+import { normWarehouseName } from "@/lib/warehouse-allocation";
+import { prisma } from "@/server/db";
 import { autoCloseThresholdQty } from "@/lib/contract-closure";
 import {
   getInboundReceipts,
@@ -68,7 +70,7 @@ const quantityUnitSchema = z.string().trim().min(1);
 const priceBasisSchema = z.enum(ALL_PRICE_BASIS_OPTIONS);
 const incotermSchema = z.enum(INCOTERMS);
 const priceCurrencySchema = z.enum(PRICE_CURRENCIES);
-const priceBasisConfigSchema = z.object({
+const _priceBasisConfigSchema = z.object({
   currency: priceCurrencySchema,
   weightUnit: z.string().trim().min(1),
   kgPerUnit: z.number().positive(),
@@ -91,7 +93,7 @@ const tradeParamValuesSchema = z.record(
   z.union([z.string(), z.number(), z.null()]),
 );
 
-const tradeParamDefSchema = z.object({
+const _tradeParamDefSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
   type: z.enum(["text", "number", "percent", "select", "date", "textarea"]),
@@ -300,6 +302,22 @@ export const traderRouter = router({
       quantityUnit: c.quantityUnit,
     }));
     const commodity = input?.commodityId ? await getCommodityById(input.commodityId) : null;
+
+    // Space committed to goods still incoming: Σ max(0, qtyMt − fulfilledQtyMt)
+    // over allocation lines of open BUY contracts, grouped by warehouse.
+    const openBuyAllocations = await prisma.contractWarehouseAllocation.findMany({
+      where: {
+        contract: { contractStatus: ContractStatus.Open, direction: TradeDirection.BUY },
+      },
+      select: { warehouseName: true, qtyMt: true, fulfilledQtyMt: true },
+    });
+    const allocatedMtByWarehouse = new Map<string, number>();
+    for (const line of openBuyAllocations) {
+      const key = normWarehouseName(line.warehouseName);
+      const remaining = Math.max(0, Number(line.qtyMt) - Number(line.fulfilledQtyMt));
+      allocatedMtByWarehouse.set(key, (allocatedMtByWarehouse.get(key) ?? 0) + remaining);
+    }
+
     return computeWarehouseAvailability(
       locations,
       await getInboundReceipts(),
@@ -309,6 +327,7 @@ export const traderRouter = router({
       commodity
         ? { code: commodity.code, category: commodity.category, unit: commodity.unit }
         : null,
+      allocatedMtByWarehouse,
     );
   }),
 

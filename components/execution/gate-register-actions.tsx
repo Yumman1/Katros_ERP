@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, MessageSquarePlus, Pencil, Trash2, X } from "lucide-react";
+import { AlertTriangle, MessageSquarePlus, Pencil, Receipt, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { invalidateApprovalCaches, invalidateGateOpsCaches } from "@/lib/invalidate-caches";
 import { formatCurrency, formatQtyWithUnit } from "@/lib/formatters/numbers";
+import { GATE_INVOICE_STAGE_LABELS, type GateInvoiceStage } from "@/lib/gate-invoice";
 import { trpc } from "@/lib/trpc/client";
 import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment, type ChangeRequestAction } from "@/lib/departments";
@@ -40,6 +41,7 @@ export type GateRegisterEntry =
       gateInvoiceAmount?: number | null;
       gateInvoiceCurrency?: string | null;
       gateInvoiceTradeRef?: string | null;
+      gateInvoiceStage?: GateInvoiceStage | null;
     }
   | {
       kind: "inbound";
@@ -293,6 +295,7 @@ export function GateRegisterActions({ entry, compact }: { entry: GateRegisterEnt
     return (
       <>
         <div className="flex flex-wrap gap-1">
+          <GateInvoiceEntryButton entry={entry} compact={compact} />
           <button
             type="button"
             onClick={() => {
@@ -334,19 +337,22 @@ export function GateRegisterActions({ entry, compact }: { entry: GateRegisterEnt
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => {
-          setEditForm(entryToForm(entry));
-          setSubmitted(false);
-          setAction("DELETE");
-          setModalOpen(true);
-        }}
-        className={`inline-flex items-center gap-1 rounded-md border border-kastros-border bg-white/5 font-medium text-muted-foreground hover:bg-foreground/10 ${btn}`}
-      >
-        <MessageSquarePlus className="h-3.5 w-3.5" />
-        Request change
-      </button>
+      <div className="flex flex-wrap gap-1">
+        <GateInvoiceEntryButton entry={entry} compact={compact} />
+        <button
+          type="button"
+          onClick={() => {
+            setEditForm(entryToForm(entry));
+            setSubmitted(false);
+            setAction("DELETE");
+            setModalOpen(true);
+          }}
+          className={`inline-flex items-center gap-1 rounded-md border border-kastros-border bg-white/5 font-medium text-muted-foreground hover:bg-foreground/10 ${btn}`}
+        >
+          <MessageSquarePlus className="h-3.5 w-3.5" />
+          Request change
+        </button>
+      </div>
 
       {modalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={() => setModalOpen(false)}>
@@ -613,6 +619,174 @@ function GateInvoiceSummary({ entry }: { entry: GateRegisterEntry }) {
       {entry.kind === "pending" && entry.gateInvoiceTradeRef && (
         <div className="mt-1 text-subtle">Rate from {entry.gateInvoiceTradeRef}</div>
       )}
+      {entry.kind === "pending" && entry.gateInvoiceStage && (
+        <div className="mt-1 text-subtle">
+          Status: <span className="text-foreground">{GATE_INVOICE_STAGE_LABELS[entry.gateInvoiceStage]}</span>
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * Manual gate-invoice entry on unassigned (PENDING) inbound gate entries —
+ * invoice no + PKR amount + optional link to an open locked BUY contract.
+ */
+function GateInvoiceEntryButton({
+  entry,
+  compact,
+}: {
+  entry: GateRegisterEntry;
+  compact?: boolean;
+}) {
+  const utils = trpc.useUtils();
+  const [open, setOpen] = useState(false);
+  const [invoiceNo, setInvoiceNo] = useState("");
+  const [amount, setAmount] = useState("");
+  const [tradeRef, setTradeRef] = useState("");
+
+  const isEligible =
+    entry.kind === "pending" && entry.movementType === "INBOUND" && entry.status === "PENDING";
+
+  const { data: contracts } = trpc.execution.lockedContracts.useQuery(
+    { openOnly: true },
+    { enabled: open && isEligible },
+  );
+
+  const save = trpc.execution.setManualGateInvoice.useMutation({
+    onSuccess: () => {
+      setOpen(false);
+      invalidateGateOpsCaches(utils);
+    },
+  });
+
+  if (!isEligible) return null;
+  const hasInvoice = Boolean(entry.gateInvoiceNo);
+  const btn = compact ? "px-2 py-1 text-[11px]" : "px-3 py-1.5 text-xs";
+  const buyContracts = (contracts ?? []).filter((c) => c.direction === "BUY");
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setInvoiceNo(entry.gateInvoiceNo ?? "");
+          setAmount(entry.gateInvoiceAmount != null ? String(entry.gateInvoiceAmount) : "");
+          setTradeRef(entry.gateInvoiceTradeRef ?? "");
+          save.reset();
+          setOpen(true);
+        }}
+        className={`inline-flex items-center gap-1 rounded-md border border-accent-secondary/40 bg-accent-secondary-muted font-medium text-accent-secondary hover:bg-accent-secondary/20 ${btn}`}
+      >
+        <Receipt className="h-3.5 w-3.5" />
+        {hasInvoice ? "Edit invoice" : "Add invoice"}
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-kastros-border bg-kastros-card p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  {hasInvoice ? "Edit gate invoice" : "Enter gate invoice"}
+                </h3>
+                <p className="mt-0.5 text-xs text-subtle">
+                  Manual invoice for an unassigned truck — assignment will not overwrite it.
+                </p>
+              </div>
+              <button type="button" onClick={() => setOpen(false)} className="text-subtle hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 rounded-lg border border-kastros-border bg-black/20 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wider text-subtle">Gate entry</div>
+              <div className="font-mono text-sm text-foreground">
+                {entry.gatepassNo} · {entry.truckNo}
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <label className="block text-xs text-subtle">
+                Invoice number *
+                <input
+                  value={invoiceNo}
+                  onChange={(e) => setInvoiceNo(e.target.value)}
+                  placeholder="e.g. INV-2026-0142"
+                  className="kastros-input mt-1 w-full"
+                />
+              </label>
+              <label className="block text-xs text-subtle">
+                Amount (PKR) *
+                <input
+                  type="number"
+                  min={0}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="kastros-input mt-1 w-full"
+                />
+              </label>
+              <label className="block text-xs text-subtle">
+                Link to trade (optional)
+                <select
+                  value={tradeRef}
+                  onChange={(e) => setTradeRef(e.target.value)}
+                  className="kastros-input mt-1 w-full"
+                >
+                  <option value="">— No trade link —</option>
+                  {buyContracts.map((c) => (
+                    <option key={c.tradeRef} value={c.tradeRef}>
+                      {c.tradeRef} · {c.counterpartyName} · {c.commodityCode}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="text-[10px] text-subtle">
+                Invoice starts at &quot;{GATE_INVOICE_STAGE_LABELS.PENDING_TRADE_APPROVAL}&quot;.
+              </p>
+            </div>
+
+            {save.error && (
+              <div className="mt-2 flex items-center gap-2 text-xs text-red-400">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {save.error.message}
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded-md border border-kastros-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={save.isPending || invoiceNo.trim() === "" || !(Number(amount) > 0)}
+                onClick={() =>
+                  save.mutate({
+                    truckId: entry.id,
+                    invoiceNo: invoiceNo.trim(),
+                    amountPkr: Number(amount),
+                    tradeRef: tradeRef || undefined,
+                  })
+                }
+                className="rounded-md bg-brand px-4 py-1.5 text-xs font-semibold text-kastros-bg hover:opacity-90 disabled:opacity-50"
+              >
+                {save.isPending ? "Saving…" : "Save invoice"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

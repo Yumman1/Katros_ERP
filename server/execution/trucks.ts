@@ -1,5 +1,6 @@
 import { Prisma, TradeDirection } from "@prisma/client";
 import { KG_PER_MAUND, type QualityTolerances } from "@/lib/trade-constants";
+import type { GateInvoiceStage } from "@/lib/gate-invoice";
 import { kgToQuantityUnit, quantityUnitToKg } from "@/lib/unit-conversion";
 import {
   filterUploadedGatepassDocuments,
@@ -12,6 +13,7 @@ import {
   resolveWarehouseAllocations,
 } from "@/lib/warehouse-allocation";
 import { prisma } from "@/server/db";
+import { num, numOrNull } from "@/server/db/convert";
 import { COUNTER, nextRef } from "@/server/db/counters";
 import {
   CONTRACT_INCLUDE,
@@ -302,7 +304,11 @@ export function inboundNetInvoiceWeightKg(
   return Math.max(0, Math.round((warehouseWeightKg - deductions) * 100) / 100);
 }
 
-/** Remove provisional invoices on trucks that have not been assigned to a trade yet. */
+/**
+ * Remove provisional invoices on trucks that have not been assigned to a trade yet.
+ * Manually entered invoices always carry a gateInvoiceStage, so only stage-less
+ * auto-generated leftovers are cleared — manual entries survive.
+ */
 async function sanitizeUnassignedGateInvoices(): Promise<void> {
   await prisma.pendingTruck.updateMany({
     where: {
@@ -310,6 +316,7 @@ async function sanitizeUnassignedGateInvoices(): Promise<void> {
       status: "PENDING",
       assignedTradeRef: null,
       gateInvoiceNo: { not: null },
+      gateInvoiceStage: null,
     },
     data: {
       gateInvoiceNo: null,
@@ -532,17 +539,17 @@ export async function assignTruckToTrade(
 
     if (truck.movementType === "INBOUND") {
       // Generate gate invoice on assignment — rate comes from the assigned trade only.
-      if (!(truck.gateInvoiceNo && truck.gateInvoiceTradeRef === contract.tradeRef)) {
+      // A truck that already carries an invoice (manually entered, or generated on a
+      // previous partial assignment) keeps it untouched.
+      if (!truck.gateInvoiceNo) {
         const netKg = inboundNetInvoiceWeightKg(truck.warehouseWeightKg, truck.totalDeductionsKg);
         if (netKg == null) {
           throw new Error(
             "Enter warehouse weight on the gatepass before assignment — invoice uses warehouse weight minus deductions",
           );
         }
-        if (!truck.gateInvoiceNo) {
-          const invoiceSeq = await nextRef(COUNTER.GATE_INVOICE, tx);
-          truck.gateInvoiceNo = formatGateInvoiceNo(invoiceSeq);
-        }
+        const invoiceSeq = await nextRef(COUNTER.GATE_INVOICE, tx);
+        truck.gateInvoiceNo = formatGateInvoiceNo(invoiceSeq);
         const invoiceRateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
         truck.gateInvoiceWeightKg = netKg;
         truck.gateInvoiceQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
@@ -550,6 +557,7 @@ export async function assignTruckToTrade(
         truck.gateInvoiceCurrency = contract.currency;
         truck.gateInvoiceRatePerKg = invoiceRateKg;
         truck.gateInvoiceTradeRef = contract.tradeRef;
+        truck.gateInvoiceStage = "PENDING_TRADE_APPROVAL";
       }
 
       const seq = await nextRef(COUNTER.INBOUND, tx);
@@ -615,6 +623,7 @@ export async function assignTruckToTrade(
           gateInvoiceCurrency: truck.gateInvoiceCurrency,
           gateInvoiceRatePerKg: truck.gateInvoiceRatePerKg,
           gateInvoiceTradeRef: truck.gateInvoiceTradeRef,
+          gateInvoiceStage: truck.gateInvoiceStage ?? "PENDING_TRADE_APPROVAL",
         },
         include: TRUCK_INCLUDE,
       });
@@ -751,4 +760,124 @@ export async function assignTruckFifoAuto(truckId: string): Promise<{
   }
 
   return { truck, allocations };
+}
+
+// ─── Gate-invoice workflow ────────────────────────────────────────────────────
+
+/**
+ * Manually enter a gate invoice on a truck (typically an unassigned PENDING one).
+ * Sets the invoice number, PKR amount, optional trade link, and starts the
+ * workflow at PENDING_TRADE_APPROVAL. Assignment will never overwrite it.
+ */
+export async function setManualGateInvoice(
+  truckId: string,
+  input: { invoiceNo: string; amountPkr: number; tradeRef?: string | null },
+): Promise<PendingTruck> {
+  const row = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
+  if (!row) throw new Error("Gate entry not found");
+  const invoiceNo = input.invoiceNo.trim();
+  if (!invoiceNo) throw new Error("Invoice number is required");
+  if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
+    throw new Error("Invoice amount must be positive");
+  }
+  const tradeRef = input.tradeRef?.trim() || null;
+  if (tradeRef) {
+    const trade = await prisma.trade.findUnique({ where: { tradeRef }, select: { id: true } });
+    if (!trade) throw new Error("Trade not found: " + tradeRef);
+  }
+  const updated = await prisma.pendingTruck.update({
+    where: { id: truckId },
+    data: {
+      gateInvoiceNo: invoiceNo,
+      gateInvoiceAmount: input.amountPkr,
+      gateInvoiceCurrency: "PKR",
+      gateInvoiceTradeRef: tradeRef,
+      gateInvoiceStage: "PENDING_TRADE_APPROVAL",
+    },
+    include: TRUCK_INCLUDE,
+  });
+  return truckRowToRuntime(updated);
+}
+
+/** Move a truck's gate invoice through the 4-stage workflow. */
+export async function setGateInvoiceStage(
+  truckId: string,
+  stage: GateInvoiceStage,
+): Promise<PendingTruck> {
+  const row = await prisma.pendingTruck.findUnique({
+    where: { id: truckId },
+    select: { gateInvoiceNo: true },
+  });
+  if (!row) throw new Error("Gate entry not found");
+  if (!row.gateInvoiceNo) {
+    throw new Error("This gate entry has no invoice yet — enter or generate one first");
+  }
+  const updated = await prisma.pendingTruck.update({
+    where: { id: truckId },
+    data: { gateInvoiceStage: stage },
+    include: TRUCK_INCLUDE,
+  });
+  return truckRowToRuntime(updated);
+}
+
+export type GateInvoiceSummaryRow = {
+  truckId: string;
+  gatepassNo: string;
+  invoiceNo: string;
+  amount: number;
+  currency: string;
+  stage: GateInvoiceStage;
+  truckNo: string;
+};
+
+export type GateInvoiceSummary = {
+  /** Σ gateInvoiceAmount over the trade's trucks where stage = PAYMENT_APPROVED. */
+  approvedPkr: number;
+  /** contractualQtyMt × pricePerCanonicalQty (fallback price) + commission. */
+  totalTradeValuePkr: number;
+  invoices: GateInvoiceSummaryRow[];
+};
+
+/** Approved-vs-total gate-invoice rollup for one trade. */
+export async function getGateInvoiceSummary(tradeRef: string): Promise<GateInvoiceSummary> {
+  const ref = tradeRef.trim();
+  const trade = await prisma.trade.findUnique({
+    where: { tradeRef: ref },
+    select: {
+      quantity: true,
+      price: true,
+      pricePerCanonicalQty: true,
+      commissionAmount: true,
+      contract: { select: { contractualQtyMt: true } },
+    },
+  });
+  if (!trade) throw new Error("Trade not found: " + ref);
+
+  const qtyMt = trade.contract ? num(trade.contract.contractualQtyMt) : num(trade.quantity);
+  const pricePerQty = numOrNull(trade.pricePerCanonicalQty) ?? num(trade.price);
+  const totalTradeValuePkr = qtyMt * pricePerQty + (numOrNull(trade.commissionAmount) ?? 0);
+
+  const rows = await prisma.pendingTruck.findMany({
+    where: {
+      gateInvoiceNo: { not: null },
+      OR: [{ assignedTradeRef: ref }, { gateInvoiceTradeRef: ref }],
+    },
+    orderBy: { arrivalDate: "asc" },
+  });
+
+  const invoices: GateInvoiceSummaryRow[] = rows.map((r) => ({
+    truckId: r.id,
+    gatepassNo: r.gatepassNo,
+    invoiceNo: r.gateInvoiceNo!,
+    amount: numOrNull(r.gateInvoiceAmount) ?? 0,
+    currency: r.gateInvoiceCurrency ?? "PKR",
+    stage: r.gateInvoiceStage ?? "PENDING_TRADE_APPROVAL",
+    truckNo: r.truckNo,
+  }));
+  const approvedPkr = invoices.reduce(
+    (sum, inv) => (inv.stage === "PAYMENT_APPROVED" ? sum + inv.amount : sum),
+    0,
+  );
+
+  return { approvedPkr, totalTradeValuePkr, invoices };
 }

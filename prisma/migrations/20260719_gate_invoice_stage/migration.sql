@@ -1,0 +1,3 @@
+CREATE TYPE "GateInvoiceStage" AS ENUM ('PENDING_TRADE_APPROVAL', 'HOLD_OLD_DUES', 'WRONG_INVOICING', 'PAYMENT_APPROVED');
+
+ALTER TABLE "PendingTruck" ADD COLUMN "gateInvoiceStage" "GateInvoiceStage";

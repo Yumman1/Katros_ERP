@@ -25,9 +25,12 @@ import {
   getLockedContracts,
   getPaymentRequests,
   getPendingTradesForExecution,
+  getGateInvoiceSummary,
   getPendingTrucks,
   getOutboundDispatches,
   getSpotEvent,
+  setGateInvoiceStage,
+  setManualGateInvoice,
   withWarehouseProgress,
   listSpotPipeline,
   releaseOutbound,
@@ -67,6 +70,7 @@ import {
 } from "@/server/open-trades";
 import { getTradeTimeline } from "@/server/trade-activity";
 import { PRICE_CURRENCIES } from "@/lib/price-units";
+import { GATE_INVOICE_STAGES } from "@/lib/gate-invoice";
 
 const warehouseLaborLineSchema = z.object({
   role: z.string().trim().min(1),
@@ -806,6 +810,49 @@ export const executionRouter = router({
     .mutation(async ({ input }) => {
       try {
         return await assignTruckFifoAuto(input.truckId);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  // ─── Gate-invoice workflow ────────────────────────────────────────────────
+
+  setManualGateInvoice: roleProcedure([...execRoles])
+    .input(
+      z.object({
+        truckId: z.string(),
+        invoiceNo: z.string().trim().min(1),
+        amountPkr: z.number().positive(),
+        tradeRef: z.string().trim().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      try {
+        return await setManualGateInvoice(input.truckId, {
+          invoiceNo: input.invoiceNo,
+          amountPkr: input.amountPkr,
+          tradeRef: input.tradeRef || null,
+        });
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  setGateInvoiceStage: roleProcedure([...execRoles])
+    .input(z.object({ truckId: z.string(), stage: z.enum(GATE_INVOICE_STAGES) }))
+    .mutation(async ({ input }) => {
+      try {
+        return await setGateInvoiceStage(input.truckId, input.stage);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  gateInvoiceSummary: roleProcedure([...execRoles])
+    .input(z.object({ tradeRef: z.string() }))
+    .query(async ({ input }) => {
+      try {
+        return await getGateInvoiceSummary(input.tradeRef);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
