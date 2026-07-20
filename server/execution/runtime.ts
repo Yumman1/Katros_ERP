@@ -65,7 +65,7 @@ export type PendingTruck = {
   assignedTradeRef?: string | null;
   assignedAt?: Date | null;
   remainingKg: number;
-  /** Auto-generated purchase invoice for inbound gate entries (warehouse weight − deductions). */
+  /** Manually entered gate invoice for inbound gate entries (validated against gateInvoiceExpectedPkr). */
   gateInvoiceNo?: string | null;
   gateInvoiceWeightKg?: number | null;
   gateInvoiceQtyMt?: number | null;
@@ -76,6 +76,8 @@ export type PendingTruck = {
   gateInvoiceTradeRef?: string | null;
   /** Workflow stage of the gate invoice (set whenever an invoice exists). */
   gateInvoiceStage?: GateInvoiceStage | null;
+  /** Expected invoice amount (PKR) computed at trade assignment — net warehouse weight × contract rate. */
+  gateInvoiceExpectedPkr?: number | null;
   /** @deprecated legacy persisted trucks only */
   driverCnic?: string | null;
 };
@@ -288,6 +290,7 @@ export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
     gateInvoiceRatePerKg: numOrNull(row.gateInvoiceRatePerKg),
     gateInvoiceTradeRef: row.gateInvoiceTradeRef,
     gateInvoiceStage: row.gateInvoiceStage,
+    gateInvoiceExpectedPkr: numOrNull(row.gateInvoiceExpectedPkr),
     driverCnic: null,
   };
 }

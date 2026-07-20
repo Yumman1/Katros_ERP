@@ -6,7 +6,8 @@ import { formatCurrency, formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { GATE_INVOICE_STAGES, GATE_INVOICE_STAGE_LABELS, type GateInvoiceStage } from "@/lib/gate-invoice";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ClipboardList } from "lucide-react";
+import { useState } from "react";
+import { ClipboardList, Pencil } from "lucide-react";
 
 export default function PurchaseDeliveredDetailPage() {
   const params = useParams();
@@ -16,12 +17,6 @@ export default function PurchaseDeliveredDetailPage() {
   const { data: invoiceSummary } = trpc.execution.gateInvoiceSummary.useQuery({ tradeRef });
   const submitFinance = trpc.execution.submitInboundForFinance.useMutation({
     onSuccess: () => invalidateTradeFlowCaches(utils, tradeRef),
-  });
-  const setStage = trpc.execution.setGateInvoiceStage.useMutation({
-    onSuccess: () => {
-      void utils.execution.gateInvoiceSummary.invalidate({ tradeRef });
-      void utils.execution.pendingTrucks.invalidate();
-    },
   });
 
   if (isLoading) {
@@ -221,41 +216,152 @@ export default function PurchaseDeliveredDetailPage() {
         </div>
         {invoices.length === 0 ? (
           <div className="px-5 py-8 text-center text-sm text-subtle">
-            No gate invoices yet. Invoices are generated at truck assignment or entered manually on the gate register.
+            No gate invoices yet. Enter them from the truck workflow on Truck Movements after
+            assigning trucks to this trade.
           </div>
         ) : (
           <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
             {invoices.map((inv) => (
-              <div key={inv.truckId} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-                <div className="flex flex-wrap items-center gap-4 text-xs">
-                  <span className="font-mono font-semibold text-emerald-400">{inv.invoiceNo}</span>
-                  <span className="font-mono text-muted-foreground">{inv.gatepassNo}</span>
-                  <span className="text-muted-foreground">🚛 {inv.truckNo}</span>
-                  <span style={{ color: "#f59e0b" }}>{formatCurrency(inv.amount, inv.currency)}</span>
-                  <StageBadge stage={inv.stage} />
-                </div>
-                <select
-                  value={inv.stage}
-                  disabled={setStage.isPending}
-                  onChange={(e) =>
-                    setStage.mutate({ truckId: inv.truckId, stage: e.target.value as GateInvoiceStage })
-                  }
-                  className="kastros-input kastros-input-sm text-xs disabled:opacity-50"
-                >
-                  {GATE_INVOICE_STAGES.map((s) => (
-                    <option key={s} value={s}>
-                      {GATE_INVOICE_STAGE_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <GateInvoiceRow key={inv.truckId} inv={inv} tradeRef={tradeRef} />
             ))}
           </div>
         )}
-        {setStage.error && (
-          <div className="px-5 pb-3 text-xs text-red-400">{setStage.error.message}</div>
-        )}
       </div>
+    </div>
+  );
+}
+
+type GateInvoiceRowData = {
+  truckId: string;
+  gatepassNo: string;
+  invoiceNo: string;
+  amount: number;
+  expectedPkr: number | null;
+  currency: string;
+  stage: GateInvoiceStage;
+  truckNo: string;
+};
+
+function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: string }) {
+  const utils = trpc.useUtils();
+  const [editing, setEditing] = useState(false);
+  const [invoiceNo, setInvoiceNo] = useState(inv.invoiceNo);
+  const [amount, setAmount] = useState(String(inv.amount));
+
+  const invalidate = () => {
+    void utils.execution.gateInvoiceSummary.invalidate({ tradeRef });
+    void utils.execution.pendingTrucks.invalidate();
+  };
+  const setStage = trpc.execution.setGateInvoiceStage.useMutation({ onSuccess: invalidate });
+  const update = trpc.execution.setManualGateInvoice.useMutation({
+    onSuccess: () => {
+      setEditing(false);
+      invalidate();
+    },
+  });
+
+  const mismatch = inv.stage === "WRONG_INVOICING";
+
+  return (
+    <div
+      className="px-5 py-3"
+      style={mismatch ? { background: "rgba(248,113,113,0.06)" } : undefined}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-4 text-xs">
+          <span className="font-mono font-semibold text-emerald-400">{inv.invoiceNo}</span>
+          <span className="font-mono text-muted-foreground">{inv.gatepassNo}</span>
+          <span className="text-muted-foreground">🚛 {inv.truckNo}</span>
+          <span>
+            <span className="text-subtle">Entered </span>
+            <span style={{ color: mismatch ? "#f87171" : "#f59e0b" }}>
+              {formatCurrency(inv.amount, inv.currency)}
+            </span>
+          </span>
+          <span>
+            <span className="text-subtle">Expected </span>
+            <span className="text-muted-foreground">
+              {inv.expectedPkr != null ? formatCurrency(inv.expectedPkr, "PKR") : "—"}
+            </span>
+          </span>
+          <StageBadge stage={inv.stage} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setInvoiceNo(inv.invoiceNo);
+              setAmount(String(inv.amount));
+              update.reset();
+              setEditing((v) => !v);
+            }}
+            className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+            style={{ borderColor: "rgba(255,255,255,0.1)" }}
+          >
+            <Pencil className="h-3 w-3" />
+            {editing ? "Close" : "Edit invoice"}
+          </button>
+          <select
+            value={inv.stage}
+            disabled={setStage.isPending}
+            onChange={(e) =>
+              setStage.mutate({ truckId: inv.truckId, stage: e.target.value as GateInvoiceStage })
+            }
+            className="kastros-input kastros-input-sm text-xs disabled:opacity-50"
+          >
+            {GATE_INVOICE_STAGES.map((s) => (
+              <option key={s} value={s}>
+                {GATE_INVOICE_STAGE_LABELS[s]}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {editing && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            value={invoiceNo}
+            onChange={(e) => setInvoiceNo(e.target.value)}
+            placeholder="Invoice no."
+            className="kastros-input kastros-input-sm w-40 text-xs"
+            aria-label="Invoice number"
+          />
+          <input
+            type="number"
+            min={0}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="Amount PKR"
+            className="kastros-input kastros-input-sm w-36 text-xs"
+            aria-label="Invoice amount (PKR)"
+          />
+          <button
+            type="button"
+            disabled={update.isPending || invoiceNo.trim() === "" || !(Number(amount) > 0)}
+            onClick={() =>
+              update.mutate({
+                truckId: inv.truckId,
+                invoiceNo: invoiceNo.trim(),
+                amountPkr: Number(amount),
+                tradeRef,
+              })
+            }
+            className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-black disabled:opacity-50"
+            style={{ background: "linear-gradient(135deg,#34d399,#10b981)" }}
+          >
+            {update.isPending ? "Saving…" : "Save & re-validate"}
+          </button>
+          <span className="text-[10px] text-subtle">
+            Amount is matched against the expected value (±1 PKR) — a mismatch marks the invoice
+            as wrong invoicing.
+          </span>
+        </div>
+      )}
+      {(update.error || setStage.error) && (
+        <div className="mt-2 text-xs text-red-400">
+          {update.error?.message ?? setStage.error?.message}
+        </div>
+      )}
     </div>
   );
 }
