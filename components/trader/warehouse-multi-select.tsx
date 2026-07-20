@@ -16,10 +16,10 @@ export type WarehouseOption = {
   storageDivision?: WarehouseStorageDivision | null;
   divisionAvailabilityPct?: number | null;
   divisionAvailableMt?: number | null;
-  /** MT committed to open BUY contracts still incoming at this warehouse. */
-  allocatedMt?: number | null;
-  /** Free MT after subtracting stock and open BUY allocations. */
-  unallocatedMt?: number | null;
+  /** max(0, capacity − allocated inventory) — stock on trucks assigned to trades. */
+  freeOfAllocatedMt?: number | null;
+  /** max(0, capacity − unallocated inventory) — gatepassed stock not yet assigned to a trade. */
+  freeOfUnallocatedMt?: number | null;
 };
 
 type Props = {
@@ -88,7 +88,8 @@ export function WarehouseMultiSelect({
           : w.availableGrainMt;
         const tone = availabilityTone(availPct);
         const hasCapacity = availMt != null || w.grainDivisionSqFt != null;
-        const hasAllocation = w.unallocatedMt != null;
+        const hasInventorySplit =
+          w.freeOfAllocatedMt != null && w.freeOfUnallocatedMt != null;
 
         return (
           <label
@@ -131,13 +132,13 @@ export function WarehouseMultiSelect({
                 >
                   {availPct != null ? `${availPct.toFixed(0)}% available` : "N/A"}
                 </span>
-                {hasAllocation ? (
+                {hasInventorySplit ? (
                   <span
                     className="rounded-full border border-kastros-border bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground"
-                    title="Committed = space promised to open BUY contracts still incoming. Free space = capacity − physical stock − committed."
+                    title="Free of allocated = capacity − allocated inventory (stock on trucks assigned to trades). Free of unallocated = capacity − unallocated inventory (gatepassed stock not yet assigned to a trade)."
                   >
-                    Committed {fmtCapacityMt(w.allocatedMt ?? 0)} MT · Free space{" "}
-                    {fmtCapacityMt(w.unallocatedMt)} MT
+                    Free of allocated {fmtCapacityMt(w.freeOfAllocatedMt)} MT · Free of
+                    unallocated {fmtCapacityMt(w.freeOfUnallocatedMt)} MT
                   </span>
                 ) : hasCapacity ? (
                   <span

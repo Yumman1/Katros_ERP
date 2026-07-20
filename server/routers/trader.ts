@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { ContractStatus, CounterpartyType, TradeDirection, TradeStatus } from "@prisma/client";
+import { CounterpartyType, TradeDirection, TradeStatus } from "@prisma/client";
 import type { Session } from "next-auth";
 import { headProcedure, protectedProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import { traderDisplayName } from "@/lib/trader-display-name";
@@ -17,11 +17,12 @@ import {
 } from "@/lib/trade-constants";
 import { computeWarehouseAvailability } from "@/lib/warehouse-availability";
 import { normWarehouseName } from "@/lib/warehouse-allocation";
-import { prisma } from "@/server/db";
+import { buildLocationCommodityInventory } from "@/lib/inventory-stock";
 import { autoCloseThresholdQty } from "@/lib/contract-closure";
 import {
   getInboundReceipts,
   getOutboundDispatches,
+  getPendingTrucks,
   getLockedContracts,
   lockTradeInStore,
   exportLockedContractsCsv,
@@ -296,38 +297,53 @@ export const traderRouter = router({
     .input(z.object({ commodityId: z.string().optional() }).optional())
     .query(async ({ input }) => {
     const locations = await getCompanyWarehouses();
-    const contracts = (await getLockedContracts({ openOnly: false })).map((c) => ({
+    const lockedContracts = await getLockedContracts({ openOnly: false });
+    const contracts = lockedContracts.map((c) => ({
       tradeRef: c.tradeRef,
       commodityCode: c.commodityCode,
       quantityUnit: c.quantityUnit,
     }));
     const commodity = input?.commodityId ? await getCommodityById(input.commodityId) : null;
 
-    // Space committed to goods still incoming: Σ max(0, qtyMt − fulfilledQtyMt)
-    // over allocation lines of open BUY contracts, grouped by warehouse.
-    const openBuyAllocations = await prisma.contractWarehouseAllocation.findMany({
-      where: {
-        contract: { contractStatus: ContractStatus.Open, direction: TradeDirection.BUY },
+    const [inbound, outbound, pendingTrucks] = await Promise.all([
+      getInboundReceipts(),
+      getOutboundDispatches(),
+      getPendingTrucks({}),
+    ]);
+
+    // Physical inventory split per warehouse (summed across commodities):
+    // allocated = stock from trucks/loads assigned to a trade (inbound receipts − released dispatches);
+    // unallocated = gatepassed trucks not yet assigned to any trade.
+    const contractByRef = new Map(lockedContracts.map((c) => [c.tradeRef, c]));
+    const inventoryRows = buildLocationCommodityInventory({
+      inbound,
+      outbound,
+      pendingTrucks,
+      commodityForTradeRef: (ref) => {
+        const c = contractByRef.get(ref);
+        if (!c) return null;
+        return { code: c.commodityCode, name: c.commodityName, unit: c.quantityUnit };
       },
-      select: { warehouseName: true, qtyMt: true, fulfilledQtyMt: true },
     });
-    const allocatedMtByWarehouse = new Map<string, number>();
-    for (const line of openBuyAllocations) {
-      const key = normWarehouseName(line.warehouseName);
-      const remaining = Math.max(0, Number(line.qtyMt) - Number(line.fulfilledQtyMt));
-      allocatedMtByWarehouse.set(key, (allocatedMtByWarehouse.get(key) ?? 0) + remaining);
+    const inventoryByWarehouse = new Map<string, { allocatedMt: number; unallocatedMt: number }>();
+    for (const row of inventoryRows) {
+      const key = normWarehouseName(row.warehouseName);
+      const cur = inventoryByWarehouse.get(key) ?? { allocatedMt: 0, unallocatedMt: 0 };
+      cur.allocatedMt += row.allocatedQty;
+      cur.unallocatedMt += row.unallocatedQty;
+      inventoryByWarehouse.set(key, cur);
     }
 
     return computeWarehouseAvailability(
       locations,
-      await getInboundReceipts(),
-      await getOutboundDispatches(),
+      inbound,
+      outbound,
       contracts,
       null,
       commodity
         ? { code: commodity.code, category: commodity.category, unit: commodity.unit }
         : null,
-      allocatedMtByWarehouse,
+      inventoryByWarehouse,
     );
   }),
 
