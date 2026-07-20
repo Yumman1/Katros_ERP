@@ -844,11 +844,15 @@ export const executionRouter = router({
       }
     }),
 
+  // Payment approval is reserved for the trade's trader (Invoice approvals page);
+  // only CEO/ADMIN may set PAYMENT_APPROVED from the execution stage dropdown.
   setGateInvoiceStage: roleProcedure([...execRoles])
     .input(z.object({ truckId: z.string(), stage: z.enum(GATE_INVOICE_STAGES) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
-        return await setGateInvoiceStage(input.truckId, input.stage);
+        return await setGateInvoiceStage(input.truckId, input.stage, {
+          actorRole: ctx.session.user.role,
+        });
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }

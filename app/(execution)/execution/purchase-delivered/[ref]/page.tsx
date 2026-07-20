@@ -4,6 +4,7 @@ import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { GATE_INVOICE_STAGES, GATE_INVOICE_STAGE_LABELS, type GateInvoiceStage } from "@/lib/gate-invoice";
+import { useTeam } from "@/lib/use-team";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
@@ -244,9 +245,18 @@ type GateInvoiceRowData = {
 
 function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: string }) {
   const utils = trpc.useUtils();
+  const { role } = useTeam();
   const [editing, setEditing] = useState(false);
   const [invoiceNo, setInvoiceNo] = useState(inv.invoiceNo);
   const [amount, setAmount] = useState(String(inv.amount));
+
+  // Payment approval belongs to the trade's trader (Invoice approvals page);
+  // only CEO/ADMIN can set it from this dropdown. Keep the option visible when
+  // it is already the current stage so the select renders correctly.
+  const canApprovePayment = role === "CEO" || role === "ADMIN";
+  const stageOptions = GATE_INVOICE_STAGES.filter(
+    (s) => s !== "PAYMENT_APPROVED" || canApprovePayment || inv.stage === "PAYMENT_APPROVED",
+  );
 
   const invalidate = () => {
     void utils.execution.gateInvoiceSummary.invalidate({ tradeRef });
@@ -314,7 +324,7 @@ function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: 
             }
             className="kastros-input kastros-input-sm text-xs disabled:opacity-50"
           >
-            {GATE_INVOICE_STAGES.map((s) => (
+            {stageOptions.map((s) => (
               <option key={s} value={s}>
                 {GATE_INVOICE_STAGE_LABELS[s]}
               </option>

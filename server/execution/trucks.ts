@@ -1,6 +1,7 @@
-import { Prisma, TradeDirection } from "@prisma/client";
+import { Prisma, TradeDirection, type Role } from "@prisma/client";
 import { KG_PER_MAUND, type QualityTolerances } from "@/lib/trade-constants";
 import type { GateInvoiceStage } from "@/lib/gate-invoice";
+import { traderNamesMatch } from "@/lib/trader-identity";
 import { kgToQuantityUnit, quantityUnitToKg } from "@/lib/unit-conversion";
 import {
   filterUploadedGatepassDocuments,
@@ -880,11 +881,26 @@ export async function setManualGateInvoice(
   return truckRowToRuntime(updated);
 }
 
-/** Move a truck's gate invoice through the 4-stage workflow. */
+/**
+ * Move a truck's gate invoice through the 4-stage workflow.
+ *
+ * Setting PAYMENT_APPROVED from here is an executive override only (CEO/ADMIN)
+ * — the normal approval path is the trade's trader via traderResolveGateInvoice.
+ */
 export async function setGateInvoiceStage(
   truckId: string,
   stage: GateInvoiceStage,
+  opts?: { actorRole?: Role },
 ): Promise<PendingTruck> {
+  if (
+    stage === "PAYMENT_APPROVED" &&
+    opts?.actorRole !== "CEO" &&
+    opts?.actorRole !== "ADMIN"
+  ) {
+    throw new Error(
+      "Payment approval is done by the trade's trader from their Invoice approvals page",
+    );
+  }
   const row = await prisma.pendingTruck.findUnique({
     where: { id: truckId },
     select: {
@@ -984,4 +1000,160 @@ export async function getGateInvoiceSummary(tradeRef: string): Promise<GateInvoi
   );
 
   return { approvedPkr, totalTradeValuePkr, invoices };
+}
+
+// ─── Trader invoice approvals ─────────────────────────────────────────────────
+
+/** Gate-invoice stages a trader can act on from the Invoice approvals page. */
+export type TraderApprovableStage = Extract<
+  GateInvoiceStage,
+  "PENDING_TRADE_APPROVAL" | "HOLD_OLD_DUES"
+>;
+
+const TRADER_APPROVABLE_STAGES: TraderApprovableStage[] = [
+  "PENDING_TRADE_APPROVAL",
+  "HOLD_OLD_DUES",
+];
+
+/** Thrown when an invoice does not belong to the acting trader's trade (maps to FORBIDDEN). */
+export class TraderInvoiceOwnershipError extends Error {}
+
+export type TraderInvoiceApprovalRow = {
+  truckId: string;
+  gatepassNo: string;
+  truckNo: string;
+  invoiceNo: string;
+  /** Entered gate-invoice amount (PKR). */
+  amountPkr: number;
+  /** Expected amount (net warehouse weight × contract rate), when known. */
+  expectedPkr: number | null;
+  stage: TraderApprovableStage;
+  warehouseName: string;
+  arrivalDate: Date;
+  tradeRef: string;
+  counterpartyName: string;
+  commodityName: string;
+  /** trade.quantity × (pricePerCanonicalQty ?? price) + commission. */
+  totalTradePricePkr: number;
+};
+
+/**
+ * Gate invoices awaiting the given trader's decision: entered invoices in
+ * PENDING_TRADE_APPROVAL or HOLD_OLD_DUES whose linked trade
+ * (assignedTradeRef ?? gateInvoiceTradeRef) belongs to that trader.
+ */
+export async function getTraderInvoiceApprovals(
+  traderName: string,
+): Promise<TraderInvoiceApprovalRow[]> {
+  const rows = await prisma.pendingTruck.findMany({
+    where: {
+      gateInvoiceNo: { not: null },
+      gateInvoiceStage: { in: TRADER_APPROVABLE_STAGES },
+    },
+    orderBy: { arrivalDate: "asc" },
+  });
+
+  const refs = [
+    ...new Set(
+      rows
+        .map((r) => r.assignedTradeRef ?? r.gateInvoiceTradeRef)
+        .filter((ref): ref is string => Boolean(ref)),
+    ),
+  ];
+  if (refs.length === 0) return [];
+
+  const trades = await prisma.trade.findMany({
+    where: { tradeRef: { in: refs } },
+    select: {
+      tradeRef: true,
+      traderName: true,
+      quantity: true,
+      price: true,
+      pricePerCanonicalQty: true,
+      commissionAmount: true,
+      counterparty: { select: { name: true } },
+      commodity: { select: { name: true } },
+    },
+  });
+  const tradeByRef = new Map(trades.map((t) => [t.tradeRef, t]));
+
+  const result: TraderInvoiceApprovalRow[] = [];
+  for (const r of rows) {
+    const tradeRef = r.assignedTradeRef ?? r.gateInvoiceTradeRef;
+    if (!tradeRef) continue;
+    const trade = tradeByRef.get(tradeRef);
+    if (!trade || !traderNamesMatch(trade.traderName, traderName)) continue;
+    result.push({
+      truckId: r.id,
+      gatepassNo: r.gatepassNo,
+      truckNo: r.truckNo,
+      invoiceNo: r.gateInvoiceNo!,
+      amountPkr: numOrNull(r.gateInvoiceAmount) ?? 0,
+      expectedPkr: numOrNull(r.gateInvoiceExpectedPkr),
+      stage: r.gateInvoiceStage as TraderApprovableStage,
+      warehouseName: r.warehouseName,
+      arrivalDate: r.arrivalDate,
+      tradeRef,
+      counterpartyName: trade.counterparty.name,
+      commodityName: trade.commodity.name,
+      totalTradePricePkr:
+        num(trade.quantity) * (numOrNull(trade.pricePerCanonicalQty) ?? num(trade.price)) +
+        (numOrNull(trade.commissionAmount) ?? 0),
+    });
+  }
+  return result;
+}
+
+/**
+ * Trader decision on a gate invoice of one of their own trades:
+ * APPROVE → PAYMENT_APPROVED, HOLD → HOLD_OLD_DUES. The invoice must currently
+ * be in PENDING_TRADE_APPROVAL or HOLD_OLD_DUES and the linked trade must
+ * belong to the acting trader (else TraderInvoiceOwnershipError).
+ */
+export async function traderResolveGateInvoice(
+  traderName: string,
+  truckId: string,
+  decision: "APPROVE" | "HOLD",
+): Promise<PendingTruck> {
+  const row = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
+  if (!row) throw new Error("Gate entry not found");
+  if (!row.gateInvoiceNo) {
+    throw new Error("This gate entry has no invoice yet");
+  }
+  if (
+    row.gateInvoiceStage !== "PENDING_TRADE_APPROVAL" &&
+    row.gateInvoiceStage !== "HOLD_OLD_DUES"
+  ) {
+    throw new Error("This invoice is not awaiting trade approval");
+  }
+
+  const tradeRef = row.assignedTradeRef ?? row.gateInvoiceTradeRef;
+  const trade = tradeRef
+    ? await prisma.trade.findUnique({ where: { tradeRef }, select: { traderName: true } })
+    : null;
+  if (!trade || !traderNamesMatch(trade.traderName, traderName)) {
+    throw new TraderInvoiceOwnershipError(
+      "This invoice is not linked to one of your trades",
+    );
+  }
+
+  const stage: GateInvoiceStage = decision === "APPROVE" ? "PAYMENT_APPROVED" : "HOLD_OLD_DUES";
+  // Guarded update — only flips the stage if the invoice is still approvable.
+  const updated = await prisma.pendingTruck.updateMany({
+    where: {
+      id: truckId,
+      gateInvoiceNo: { not: null },
+      gateInvoiceStage: { in: TRADER_APPROVABLE_STAGES },
+    },
+    data: { gateInvoiceStage: stage },
+  });
+  if (updated.count === 0) {
+    throw new Error("Invoice stage changed in the meantime — refresh and try again");
+  }
+
+  const fresh = await prisma.pendingTruck.findUnique({
+    where: { id: truckId },
+    include: TRUCK_INCLUDE,
+  });
+  return truckRowToRuntime(fresh!);
 }
