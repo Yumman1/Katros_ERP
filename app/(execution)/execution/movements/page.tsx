@@ -19,6 +19,7 @@ import {
   GateRegisterActions,
   type GateRegisterEntry,
 } from "@/components/execution/gate-register-actions";
+import { GateTruckWorkflow } from "@/components/execution/gate-truck-workflow";
 import { PageHeader } from "@/components/ui/page-header";
 import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -36,6 +37,16 @@ function uploadedDocs(refs: string[] | null | undefined): string[] {
 
 function pendingTransporter(t: PendingTruck) {
   return t.transporterName?.trim() || t.driverName?.trim() || null;
+}
+
+/**
+ * A gatepass truck is COMPLETE only when it is fully assigned to a trade AND
+ * (for inbound) its gate invoice has been entered. Assigned-but-uninvoiced
+ * trucks stay in the incomplete workflow list.
+ */
+function isGateWorkflowComplete(t: PendingTruck): boolean {
+  if (t.status !== "ASSIGNED") return false;
+  return t.movementType === "OUTBOUND" || Boolean(t.gateInvoiceNo);
 }
 
 const fmtKg = (n: number) =>
@@ -244,7 +255,7 @@ export default function TruckMovementsPage() {
   }, [movementFilter, movements, query, warehouseFilter, commodityFilter, dateFrom, dateTo]);
 
   const unassignedTrucks = useMemo(
-    () => (pendingTrucks ?? []).filter((t) => t.status !== "ASSIGNED"),
+    () => (pendingTrucks ?? []).filter((t) => !isGateWorkflowComplete(t)),
     [pendingTrucks],
   );
 
@@ -289,7 +300,7 @@ export default function TruckMovementsPage() {
   const pendingOutbound = (pendingTrucks ?? []).filter(
     (t) => t.movementType === "OUTBOUND" && t.status !== "ASSIGNED",
   ).length;
-  const unassignedGatepassCount = (pendingTrucks ?? []).filter((t) => t.status !== "ASSIGNED").length;
+  const unassignedGatepassCount = unassignedTrucks.length;
 
   if (movementsLoading && !contracts && !inbound && !outbound && !pendingTrucks) {
     return (
@@ -335,19 +346,23 @@ export default function TruckMovementsPage() {
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       {unassignedGatepassCount > 0 && (
-        <section className="exec-panel max-h-[38%] shrink-0 border-accent-secondary/30">
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+        <section className="exec-panel max-h-[45%] shrink-0 border-accent-secondary/30">
+          <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
             <Truck className="h-4 w-4 text-accent-secondary" />
             Unassigned Gatepass Trucks
             <span className="rounded-full bg-accent-secondary-muted px-2 py-0.5 text-[10px] font-bold text-accent-secondary">
               {unassignedGatepassCount}
             </span>
           </h2>
+          <p className="mb-3 text-xs text-subtle">
+            Guided flow: assign the truck to a trade, then enter its gate invoice — the row leaves
+            this list once both steps are complete.
+          </p>
           <div className="kastros-table-wrap max-h-full min-h-0 flex-1 overflow-auto border-0 shadow-none">
             <table className="kastros-table text-xs">
               <thead>
                 <tr>
-                  {["Type", "Gatepass", "Generated", "Truck", "Counterparty", "Commodity", "Builty", "Warehouse", "Weight", "Invoice", "Status", "Go to", "Actions"].map(
+                  {["Gatepass", "Truck", "Counterparty", "Commodity", "Warehouse", "Weight", "Workflow", "Actions"].map(
                     (h) => (
                       <th key={h}>{h}</th>
                     ),
@@ -358,27 +373,26 @@ export default function TruckMovementsPage() {
                 {unassignedPagination.items.map((t) => (
                     <tr key={t.id}>
                       <td>
-                        <span
-                          className={cn(
-                            "rounded-full px-2 py-0.5 text-[10px] font-bold",
-                            t.movementType === "INBOUND" ? "exec-badge-local" : "exec-badge-intl",
-                          )}
-                        >
-                          {t.movementType}
-                        </span>
-                      </td>
-                      <td className="font-mono font-semibold text-accent-secondary">{t.gatepassNo}</td>
-                      <td className="whitespace-nowrap text-muted-foreground">
-                        {fmtGatepassGenerated(t.arrivalDate)}
+                        <div className="font-mono font-semibold text-accent-secondary">{t.gatepassNo}</div>
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          <span
+                            className={cn(
+                              "rounded-full px-1.5 py-0.5 text-[9px] font-bold",
+                              t.movementType === "INBOUND" ? "exec-badge-local" : "exec-badge-intl",
+                            )}
+                          >
+                            {t.movementType === "INBOUND" ? "IN" : "OUT"}
+                          </span>
+                          <span className="whitespace-nowrap text-[10px] text-subtle">
+                            {fmtGatepassGenerated(t.arrivalDate)}
+                          </span>
+                        </div>
                       </td>
                       <td className="font-mono text-foreground">{t.truckNo}</td>
                       <td>
                         <div className="text-foreground">{t.counterpartyName}</div>
                       </td>
                       <td className="text-muted-foreground">{t.commodityName ?? "—"}</td>
-                      <td className="max-w-[120px] truncate text-muted-foreground" title={t.builtyDetails ?? ""}>
-                        {t.builtyDetails ?? "—"}
-                      </td>
                       <td className="text-muted-foreground">{t.warehouseName}</td>
                       <td>
                         <div className="font-semibold text-accent-secondary">
@@ -387,39 +401,8 @@ export default function TruckMovementsPage() {
                         {t.quantityBagsBales && <div className="text-subtle">{t.quantityBagsBales} bags/bales</div>}
                         {!t.quantityBagsBales && t.bags && <div className="text-subtle">{t.bags} bags</div>}
                       </td>
-                      <td>
-                        <GateInvoiceCell
-                          movementType={t.movementType}
-                          invoiceNo={t.gateInvoiceNo}
-                          invoiceQtyMt={t.gateInvoiceQtyMt}
-                          invoiceQtyUnit={t.gateInvoiceQtyMt != null ? "MT" : undefined}
-                          invoiceAmount={t.gateInvoiceAmount}
-                          invoiceCurrency={t.gateInvoiceCurrency}
-                          invoiceStage={t.gateInvoiceStage}
-                          pendingAssignment={!t.assignedTradeRef}
-                        />
-                      </td>
-                      <td>
-                        <span
-                          className={cn(
-                            "rounded-full px-2 py-0.5 text-[9px] font-bold uppercase",
-                            t.status === "PARTIAL" ? "exec-badge-intl" : "exec-stat-accent text-accent-secondary",
-                          )}
-                        >
-                          {t.status}
-                        </span>
-                      </td>
-                      <td>
-                        <Link
-                          href={
-                            t.movementType === "INBOUND"
-                              ? "/execution/purchase-delivered"
-                              : "/execution/sales"
-                          }
-                          className="text-xs text-accent-secondary hover:underline"
-                        >
-                          Assign →
-                        </Link>
+                      <td className="min-w-[320px]">
+                        <GateTruckWorkflow truck={t} contracts={contracts ?? []} />
                       </td>
                       <td>
                         <GateRegisterActions

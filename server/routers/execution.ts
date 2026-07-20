@@ -731,6 +731,8 @@ export const executionRouter = router({
         warehouseName: z.string().optional(),
         movementType: z.enum(["INBOUND", "OUTBOUND"]).optional(),
         status: z.enum(["PENDING", "ASSIGNED", "PARTIAL"]).optional(),
+        /** Trucks whose gate workflow is incomplete (missing trade assignment or, inbound, an invoice). */
+        incompleteOnly: z.boolean().optional(),
         from: z.coerce.date().optional(),
         to: z.coerce.date().optional(),
       }).optional(),
@@ -817,6 +819,10 @@ export const executionRouter = router({
 
   // ─── Gate-invoice workflow ────────────────────────────────────────────────
 
+  // Enter OR edit a gate invoice — repeated calls update invoiceNo/amount and
+  // re-validate the stage against the expected amount (match → pending trade
+  // approval, mismatch → wrong invoicing). Editing a PAYMENT_APPROVED invoice
+  // is rejected until its stage is changed.
   setManualGateInvoice: roleProcedure([...execRoles])
     .input(
       z.object({

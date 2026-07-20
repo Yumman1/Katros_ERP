@@ -287,10 +287,6 @@ function formatGatepassNo(movementType: "INBOUND" | "OUTBOUND", seq: number): st
   return `GP-${movementType === "INBOUND" ? "IN" : "OUT"}-${seq.toString().padStart(4, "0")}`;
 }
 
-function formatGateInvoiceNo(seq: number): string {
-  return `INV-GIN-${seq.toString().padStart(5, "0")}`;
-}
-
 function truckCounterName(movementType: "INBOUND" | "OUTBOUND"): string {
   return movementType === "INBOUND" ? COUNTER.TRUCK_INBOUND : COUNTER.TRUCK_OUTBOUND;
 }
@@ -417,6 +413,12 @@ export async function getPendingTrucks(filter?: {
   warehouseName?: string;
   movementType?: "INBOUND" | "OUTBOUND";
   status?: PendingTruckStatus;
+  /**
+   * Only trucks whose gate workflow is incomplete. A truck is COMPLETE only when
+   * it has an assigned trade AND (for inbound) an entered gate invoice — an
+   * assigned-but-uninvoiced inbound truck is still incomplete.
+   */
+  incompleteOnly?: boolean;
   from?: Date;
   to?: Date;
 }): Promise<PendingTruck[]> {
@@ -427,6 +429,12 @@ export async function getPendingTrucks(filter?: {
   }
   if (filter?.movementType) where.movementType = filter.movementType;
   if (filter?.status) where.status = filter.status;
+  if (filter?.incompleteOnly) {
+    where.OR = [
+      { status: { not: "ASSIGNED" } },
+      { movementType: "INBOUND", gateInvoiceNo: null },
+    ];
+  }
   if (filter?.from || filter?.to) {
     where.arrivalDate = {
       ...(filter?.from ? { gte: filter.from } : {}),
@@ -538,26 +546,36 @@ export async function assignTruckToTrade(
     const assignedAt = new Date();
 
     if (truck.movementType === "INBOUND") {
-      // Generate gate invoice on assignment — rate comes from the assigned trade only.
-      // A truck that already carries an invoice (manually entered, or generated on a
-      // previous partial assignment) keeps it untouched.
+      // No invoice is auto-generated any more. Assignment computes the EXPECTED
+      // amount (net warehouse weight × contract rate) as the validation benchmark;
+      // the operator enters the physical invoice no/amount afterwards and it is
+      // matched against this expectation.
+      const invoiceNetKg = inboundNetInvoiceWeightKg(
+        truck.warehouseWeightKg,
+        truck.totalDeductionsKg,
+      );
+      if (invoiceNetKg == null) {
+        throw new Error(
+          "Enter warehouse weight on the gatepass before assignment — invoice uses warehouse weight minus deductions",
+        );
+      }
+      const invoiceRateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
+      truck.gateInvoiceExpectedPkr = Math.round(invoiceNetKg * invoiceRateKg * 100) / 100;
       if (!truck.gateInvoiceNo) {
-        const netKg = inboundNetInvoiceWeightKg(truck.warehouseWeightKg, truck.totalDeductionsKg);
-        if (netKg == null) {
-          throw new Error(
-            "Enter warehouse weight on the gatepass before assignment — invoice uses warehouse weight minus deductions",
-          );
-        }
-        const invoiceSeq = await nextRef(COUNTER.GATE_INVOICE, tx);
-        truck.gateInvoiceNo = formatGateInvoiceNo(invoiceSeq);
-        const invoiceRateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
-        truck.gateInvoiceWeightKg = netKg;
-        truck.gateInvoiceQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
-        truck.gateInvoiceAmount = Math.round(netKg * invoiceRateKg * 100) / 100;
+        // Calculation record only — no invoice number, amount, or stage yet.
+        truck.gateInvoiceWeightKg = invoiceNetKg;
+        truck.gateInvoiceQtyMt = kgToQuantityUnit(invoiceNetKg, contract.quantityUnit);
         truck.gateInvoiceCurrency = contract.currency;
         truck.gateInvoiceRatePerKg = invoiceRateKg;
         truck.gateInvoiceTradeRef = contract.tradeRef;
-        truck.gateInvoiceStage = "PENDING_TRADE_APPROVAL";
+      } else {
+        // Manually entered invoice stays untouched — only backfill the expected
+        // amount and re-validate the workflow stage against it.
+        truck.gateInvoiceStage = revalidateGateInvoiceStage({
+          gateInvoiceAmount: truck.gateInvoiceAmount ?? null,
+          gateInvoiceExpectedPkr: truck.gateInvoiceExpectedPkr,
+          gateInvoiceStage: truck.gateInvoiceStage ?? null,
+        });
       }
 
       const seq = await nextRef(COUNTER.INBOUND, tx);
@@ -593,7 +611,8 @@ export async function assignTruckToTrade(
           deductionPct: 0,
           allocatedQtyMt,
           fifoOverrideReason: null,
-          amountDue: truck.gateInvoiceAmount ?? invoiceWeightKg * rateKg,
+          amountDue:
+            truck.gateInvoiceAmount ?? truck.gateInvoiceExpectedPkr ?? invoiceWeightKg * rateKg,
           status: "ALLOCATED",
           documentRefs: filterUploadedGatepassDocuments(truck.documentRefs),
           remarks:
@@ -623,7 +642,10 @@ export async function assignTruckToTrade(
           gateInvoiceCurrency: truck.gateInvoiceCurrency,
           gateInvoiceRatePerKg: truck.gateInvoiceRatePerKg,
           gateInvoiceTradeRef: truck.gateInvoiceTradeRef,
-          gateInvoiceStage: truck.gateInvoiceStage ?? "PENDING_TRADE_APPROVAL",
+          // Stage exists only once an invoice has been entered — never for the
+          // expected-amount calculation record alone.
+          gateInvoiceStage: truck.gateInvoiceNo ? truck.gateInvoiceStage ?? "PENDING_TRADE_APPROVAL" : null,
+          gateInvoiceExpectedPkr: truck.gateInvoiceExpectedPkr,
         },
         include: TRUCK_INCLUDE,
       });
@@ -764,10 +786,37 @@ export async function assignTruckFifoAuto(truckId: string): Promise<{
 
 // ─── Gate-invoice workflow ────────────────────────────────────────────────────
 
+/** PKR rounding tolerance when matching an entered invoice against the expected amount. */
+export const GATE_INVOICE_MATCH_TOLERANCE_PKR = 1;
+
 /**
- * Manually enter a gate invoice on a truck (typically an unassigned PENDING one).
- * Sets the invoice number, PKR amount, optional trade link, and starts the
- * workflow at PENDING_TRADE_APPROVAL. Assignment will never overwrite it.
+ * Re-derive the workflow stage of an entered gate invoice from the expected amount.
+ * Match (|entered − expected| ≤ 1 PKR) or unknown expected → PENDING_TRADE_APPROVAL;
+ * mismatch → WRONG_INVOICING. A PAYMENT_APPROVED invoice is never downgraded.
+ */
+export function revalidateGateInvoiceStage(truck: {
+  gateInvoiceAmount: number | null;
+  gateInvoiceExpectedPkr: number | null;
+  gateInvoiceStage: GateInvoiceStage | null;
+}): GateInvoiceStage {
+  if (truck.gateInvoiceStage === "PAYMENT_APPROVED") return "PAYMENT_APPROVED";
+  if (truck.gateInvoiceExpectedPkr == null || truck.gateInvoiceAmount == null) {
+    return "PENDING_TRADE_APPROVAL";
+  }
+  return Math.abs(truck.gateInvoiceAmount - truck.gateInvoiceExpectedPkr) <=
+    GATE_INVOICE_MATCH_TOLERANCE_PKR
+    ? "PENDING_TRADE_APPROVAL"
+    : "WRONG_INVOICING";
+}
+
+/**
+ * Enter (or edit) the gate invoice on a truck — invoice number + PKR amount,
+ * optionally linked to a trade. The amount is validated against the expected
+ * amount (net warehouse weight × contract rate, stored at trade assignment):
+ * match → PENDING_TRADE_APPROVAL, mismatch → WRONG_INVOICING, unknown expected
+ * (no trade yet) → PENDING_TRADE_APPROVAL. Repeated calls update the invoice
+ * and re-validate; a PAYMENT_APPROVED invoice cannot be edited without first
+ * changing its stage.
  */
 export async function setManualGateInvoice(
   truckId: string,
@@ -780,19 +829,51 @@ export async function setManualGateInvoice(
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Invoice amount must be positive");
   }
+  if (row.gateInvoiceNo && row.gateInvoiceStage === "PAYMENT_APPROVED") {
+    throw new Error("Invoice already approved — change the stage first");
+  }
   const tradeRef = input.tradeRef?.trim() || null;
   if (tradeRef) {
     const trade = await prisma.trade.findUnique({ where: { tradeRef }, select: { id: true } });
     if (!trade) throw new Error("Trade not found: " + tradeRef);
   }
+
+  // Expected amount: stored at trade assignment; otherwise computable when the
+  // truck is linked to a trade and has a warehouse weighment.
+  const effectiveTradeRef = tradeRef ?? row.assignedTradeRef ?? row.gateInvoiceTradeRef;
+  let expectedPkr = numOrNull(row.gateInvoiceExpectedPkr);
+  if (expectedPkr == null && effectiveTradeRef) {
+    const netKg = inboundNetInvoiceWeightKg(
+      numOrNull(row.warehouseWeightKg),
+      numOrNull(row.totalDeductionsKg),
+    );
+    const contractRow = await prisma.executionContract.findUnique({
+      where: { tradeRef: effectiveTradeRef },
+      select: { ratePerKg: true, ratePerMaund: true },
+    });
+    if (netKg != null && contractRow) {
+      const rateKg =
+        numOrNull(contractRow.ratePerKg) ?? (numOrNull(contractRow.ratePerMaund) ?? 0) / KG_PER_MAUND;
+      if (rateKg > 0) expectedPkr = Math.round(netKg * rateKg * 100) / 100;
+    }
+  }
+
+  const stage = revalidateGateInvoiceStage({
+    gateInvoiceAmount: input.amountPkr,
+    gateInvoiceExpectedPkr: expectedPkr,
+    // Fresh validation — approved invoices were rejected above.
+    gateInvoiceStage: null,
+  });
+
   const updated = await prisma.pendingTruck.update({
     where: { id: truckId },
     data: {
       gateInvoiceNo: invoiceNo,
       gateInvoiceAmount: input.amountPkr,
       gateInvoiceCurrency: "PKR",
-      gateInvoiceTradeRef: tradeRef,
-      gateInvoiceStage: "PENDING_TRADE_APPROVAL",
+      gateInvoiceTradeRef: tradeRef ?? row.gateInvoiceTradeRef,
+      gateInvoiceStage: stage,
+      gateInvoiceExpectedPkr: expectedPkr,
     },
     include: TRUCK_INCLUDE,
   });
@@ -825,6 +906,8 @@ export type GateInvoiceSummaryRow = {
   gatepassNo: string;
   invoiceNo: string;
   amount: number;
+  /** Expected amount (PKR) from net warehouse weight × contract rate, when known. */
+  expectedPkr: number | null;
   currency: string;
   stage: GateInvoiceStage;
   truckNo: string;
@@ -870,6 +953,7 @@ export async function getGateInvoiceSummary(tradeRef: string): Promise<GateInvoi
     gatepassNo: r.gatepassNo,
     invoiceNo: r.gateInvoiceNo!,
     amount: numOrNull(r.gateInvoiceAmount) ?? 0,
+    expectedPkr: numOrNull(r.gateInvoiceExpectedPkr),
     currency: r.gateInvoiceCurrency ?? "PKR",
     stage: r.gateInvoiceStage ?? "PENDING_TRADE_APPROVAL",
     truckNo: r.truckNo,

@@ -713,7 +713,8 @@ model PendingTruck {
   assignedAt       DateTime?
   remainingKg      Decimal  @default(0) @db.Decimal(20, 3)
 
-  // Auto-generated provisional gate-in invoice (inbound).
+  // Gate-in invoice (inbound) — entered manually and validated against the
+  // expected amount computed at trade assignment.
   gateInvoiceNo        String?
   gateInvoiceWeightKg  Decimal? @db.Decimal(20, 3)
   gateInvoiceQtyMt     Decimal? @db.Decimal(20, 6)
@@ -724,6 +725,8 @@ model PendingTruck {
   gateInvoiceTrade     Trade?   @relation("TruckGateInvoiceTrade", fields: [gateInvoiceTradeRef], references: [tradeRef], onDelete: SetNull)
   /// Workflow stage of the gate invoice (default PENDING_TRADE_APPROVAL when an invoice exists).
   gateInvoiceStage     GateInvoiceStage?
+  /// Expected invoice amount (PKR) computed at trade assignment — net warehouse weight × contract rate.
+  gateInvoiceExpectedPkr Decimal? @db.Decimal(20, 4)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
