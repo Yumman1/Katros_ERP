@@ -975,7 +975,7 @@ export default function BookTradePage() {
                   <span className="data-grid text-success">{fmtBase(netAfterCommission)}</span>
                 </div>
                 <div>
-                  Total incl. commission (finance):{" "}
+                  Total trade price (incl. commission):{" "}
                   <span className="data-grid font-semibold text-foreground">
                     {fmtBase(totalWithCommission)}
                   </span>

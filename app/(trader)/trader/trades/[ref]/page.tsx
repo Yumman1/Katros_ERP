@@ -11,7 +11,7 @@ import { trpc } from "@/lib/trpc/client";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { PenLine } from "lucide-react";
+import { PenLine, X } from "lucide-react";
 import { TradeChangeForm, TRADE_EDIT_SECTION_ID } from "@/components/trader/trade-change-form";
 import { TradeActivityPanel } from "@/components/trade/trade-activity-panel";
 import { isTraderDraft, traderCanEditTrade } from "@/lib/trade-lifecycle";
@@ -32,6 +32,7 @@ export default function TradeDetailPage() {
   });
   const [ratePerMaund, setRatePerMaund] = useState<number>(0);
   const [commission, setCommission] = useState<number>(0);
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     if (trade?.ratePerMaund) setRatePerMaund(trade.ratePerMaund);
@@ -41,7 +42,7 @@ export default function TradeDetailPage() {
   useEffect(() => {
     if (typeof window === "undefined" || !trade) return;
     if (window.location.hash === `#${TRADE_EDIT_SECTION_ID}`) {
-      document.getElementById(TRADE_EDIT_SECTION_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setEditing(true);
     }
   }, [trade]);
 
@@ -106,6 +107,12 @@ export default function TradeDetailPage() {
   const netAfterCommission = Math.max(0, notional - commissionInBase);
   /** Gross payable for finance — contract value plus broker commission. */
   const totalWithCommission = notional + commissionInBase;
+  const canEdit = traderCanEditTrade(trade);
+  const paramStr = (v: unknown) => (v == null || v === "" ? null : String(v));
+  const contactPerson = paramStr(trade.tradeParams?.contactPerson);
+  const contactNumber = paramStr(trade.tradeParams?.contactNumber);
+  const dealStatus = paramStr(trade.tradeParams?.dealStatus);
+  const quantityTolerance = paramStr(trade.tradeParams?.quantityTolerance);
 
   return (
     <div className="kastros-desk-page mx-auto w-full max-w-4xl">
@@ -123,14 +130,15 @@ export default function TradeDetailPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {traderCanEditTrade(trade) && (
-              <a
-                href={`#${TRADE_EDIT_SECTION_ID}`}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setEditing((v) => !v)}
                 className="inline-flex items-center gap-1.5 rounded-md border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/20"
               >
-                <PenLine className="h-3.5 w-3.5" />
-                Edit
-              </a>
+                {editing ? <X className="h-3.5 w-3.5" /> : <PenLine className="h-3.5 w-3.5" />}
+                {editing ? "Back to summary" : "Edit"}
+              </button>
             )}
             <span
               className={`rounded-md px-3 py-1 text-sm font-medium ${
@@ -159,11 +167,10 @@ export default function TradeDetailPage() {
         </div>
       </div>
 
-      {traderCanEditTrade(trade) && (
+      {editing && canEdit ? (
         <TradeChangeForm trade={trade} mode={isTraderDraft(trade) ? "direct" : "ceo"} />
-      )}
-
-      <TradeActivityPanel tradeRef={trade.tradeRef} audience="trader" />
+      ) : (
+        <>
 
       <DetailCard title="Product specifications">
         <Row label="Commodity" value={`${trade.commodity.code} — ${trade.commodity.name}`} />
@@ -234,7 +241,7 @@ export default function TradeDetailPage() {
                         tone: "text-success",
                       },
                       {
-                        label: "Total incl. commission",
+                        label: "Total trade price",
                         value: formatCurrency(totalWithCommission, trade.currency),
                         tone: "font-semibold",
                       },
@@ -250,8 +257,8 @@ export default function TradeDetailPage() {
           },
           { label: "Market", value: formatCurrency(trade.marketPrice, trade.currency) },
           { label: "Payment type", value: paymentLabel },
-        ].map((item) => (
-          <div key={item.label} className="rounded-lg border border-kastros-border bg-kastros-card px-3 py-2.5">
+        ].map((item, index) => (
+          <div key={`${item.label}-${index}`} className="rounded-lg border border-kastros-border bg-kastros-card px-3 py-2.5">
             <div className="text-xs uppercase text-subtle">{item.label}</div>
             <div className={`mt-1 text-sm font-medium ${"tone" in item ? item.tone : "text-foreground"}`}>
               {item.value}
@@ -278,6 +285,8 @@ export default function TradeDetailPage() {
               />
             );
           })()}
+          {dealStatus && <Row label="Deal status" value={dealStatus} />}
+          {quantityTolerance && <Row label="Quantity tolerance" value={quantityTolerance} />}
         </DetailCard>
 
         <DetailCard title="Counterparty">
@@ -287,6 +296,8 @@ export default function TradeDetailPage() {
             <Row label="Company (as per NTN)" value={trade.counterparty.companyNameNtn} />
           )}
           {trade.counterparty.ntn && <Row label="NTN no." value={trade.counterparty.ntn} />}
+          {contactPerson && <Row label="Contact person" value={contactPerson} />}
+          {contactNumber && <Row label="Contact number" value={contactNumber} />}
           {trade.counterparty.address && (
             <Row label="Address" value={trade.counterparty.address} multiline />
           )}
@@ -304,9 +315,17 @@ export default function TradeDetailPage() {
           "warehouse",
           "warehouseSelections",
         ]);
+        // Rendered inside the Counterparty / Delivery terms cards above — not repeated here.
+        const relocatedKeys = new Set([
+          "contactPerson",
+          "contactNumber",
+          "dealStatus",
+          "quantityTolerance",
+        ]);
         const universal = Object.entries(trade.tradeParams).filter(
           ([k, v]) =>
             universalKeys.has(k) &&
+            !relocatedKeys.has(k) &&
             k !== "warehouse" &&
             k !== "warehouseSelections" &&
             v != null &&
@@ -315,6 +334,7 @@ export default function TradeDetailPage() {
         const commodity = Object.entries(trade.tradeParams).filter(
           ([k, v]) =>
             !universalKeys.has(k) &&
+            !relocatedKeys.has(k) &&
             k !== "warehouse" &&
             k !== "warehouseSelections" &&
             v != null &&
@@ -355,10 +375,11 @@ export default function TradeDetailPage() {
 
       {trade.tradeStatus === "PENDING" && trade.submittedToExecution && trade.pendingTraderPrice && (
         <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
-          <div className="font-medium">Price required — submit via edit form above</div>
+          <div className="font-medium">Price required — submit via the Edit form</div>
           <p className="mt-1 text-xs text-warning/90">
-            This trade was booked as {trade.priceBasis} without a fixed price. Enter the price and quantity in the
-            edit form above and submit for CEO approval. Execution cannot lock until the CEO approves your price.
+            This trade was booked as {trade.priceBasis} without a fixed price. Use the Edit button in the page
+            header to enter the price and quantity, then submit for CEO approval. Execution cannot lock until the
+            CEO approves your price.
           </p>
         </div>
       )}
@@ -474,6 +495,10 @@ export default function TradeDetailPage() {
           )}
           <ExecutionWorkspaceLink profile={trade.executionProfile} tradeRef={trade.tradeRef} />
         </div>
+      )}
+
+      <TradeActivityPanel tradeRef={trade.tradeRef} audience="trader" />
+        </>
       )}
       </div>
     </div>
