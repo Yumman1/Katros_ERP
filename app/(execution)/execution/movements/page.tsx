@@ -27,6 +27,7 @@ import {
   filterUploadedGatepassDocuments,
   gatepassDocumentDisplayName,
 } from "@/lib/gatepass-documents";
+import { GATE_INVOICE_STAGE_LABELS, type GateInvoiceStage } from "@/lib/gate-invoice";
 import type { InboundReceipt, OutboundDispatch, PendingTruck } from "@/server/execution-store";
 
 function uploadedDocs(refs: string[] | null | undefined): string[] {
@@ -67,6 +68,7 @@ type Movement = {
   invoiceQtyUnit?: string | null;
   invoiceAmount?: number | null;
   invoiceCurrency?: string | null;
+  invoiceStage?: GateInvoiceStage | null;
   status: string;
   driverName?: string | null;
   isPendingGatepass?: boolean;
@@ -171,11 +173,13 @@ export default function TruckMovementsPage() {
         documentRefs: uploadedDocs(t.documentRefs),
         grossWeightKg: t.remainingKg,
         netQtyMt: t.gateInvoiceQtyMt ?? t.remainingKg / 1000,
-        invoiceNo: t.assignedTradeRef ? t.gateInvoiceNo : null,
-        invoiceQtyMt: t.assignedTradeRef ? t.gateInvoiceQtyMt : null,
-        invoiceQtyUnit: t.assignedTradeRef && t.gateInvoiceQtyMt != null ? "MT" : "KG",
-        invoiceAmount: t.assignedTradeRef ? t.gateInvoiceAmount : null,
-        invoiceCurrency: t.assignedTradeRef ? t.gateInvoiceCurrency : null,
+        // Manually entered invoices exist before assignment — show them either way.
+        invoiceNo: t.gateInvoiceNo,
+        invoiceQtyMt: t.gateInvoiceQtyMt,
+        invoiceQtyUnit: t.gateInvoiceQtyMt != null ? "MT" : "KG",
+        invoiceAmount: t.gateInvoiceAmount,
+        invoiceCurrency: t.gateInvoiceCurrency,
+        invoiceStage: t.gateInvoiceStage,
         status: t.status === "PARTIAL" ? "GATEPASS_PARTIAL" : "GATEPASS_PENDING",
         driverName: pendingTransporter(t),
         isPendingGatepass: true,
@@ -386,11 +390,12 @@ export default function TruckMovementsPage() {
                       <td>
                         <GateInvoiceCell
                           movementType={t.movementType}
-                          invoiceNo={t.assignedTradeRef ? t.gateInvoiceNo : null}
-                          invoiceQtyMt={t.assignedTradeRef ? t.gateInvoiceQtyMt : null}
+                          invoiceNo={t.gateInvoiceNo}
+                          invoiceQtyMt={t.gateInvoiceQtyMt}
                           invoiceQtyUnit={t.gateInvoiceQtyMt != null ? "MT" : undefined}
-                          invoiceAmount={t.assignedTradeRef ? t.gateInvoiceAmount : null}
+                          invoiceAmount={t.gateInvoiceAmount}
                           invoiceCurrency={t.gateInvoiceCurrency}
+                          invoiceStage={t.gateInvoiceStage}
                           pendingAssignment={!t.assignedTradeRef}
                         />
                       </td>
@@ -592,6 +597,7 @@ export default function TruckMovementsPage() {
                       invoiceQtyUnit={m.invoiceQtyUnit ?? undefined}
                       invoiceAmount={m.invoiceAmount}
                       invoiceCurrency={m.invoiceCurrency}
+                      invoiceStage={m.invoiceStage}
                       pendingAssignment={m.isPendingGatepass && !m.invoiceNo}
                     />
                   </td>
@@ -672,6 +678,7 @@ function pendingTruckToRegisterEntry(
     gateInvoiceAmount: t.gateInvoiceAmount,
     gateInvoiceCurrency: t.gateInvoiceCurrency,
     gateInvoiceTradeRef: t.gateInvoiceTradeRef,
+    gateInvoiceStage: t.gateInvoiceStage,
   };
 }
 
@@ -822,6 +829,7 @@ function GateInvoiceCell({
   invoiceQtyUnit,
   invoiceAmount,
   invoiceCurrency,
+  invoiceStage,
   pendingAssignment,
 }: {
   movementType: "INBOUND" | "OUTBOUND";
@@ -830,6 +838,7 @@ function GateInvoiceCell({
   invoiceQtyUnit?: string;
   invoiceAmount?: number | null;
   invoiceCurrency?: string | null;
+  invoiceStage?: GateInvoiceStage | null;
   pendingAssignment?: boolean;
 }) {
   if (movementType !== "INBOUND") {
@@ -851,6 +860,9 @@ function GateInvoiceCell({
         <div className="font-medium text-accent-secondary">
           {formatCurrency(invoiceAmount, invoiceCurrency ?? "PKR")}
         </div>
+      )}
+      {invoiceStage && (
+        <div className="text-[10px] text-subtle">{GATE_INVOICE_STAGE_LABELS[invoiceStage]}</div>
       )}
     </div>
   );

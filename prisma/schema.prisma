@@ -673,6 +673,14 @@ enum PendingTruckStatus {
   PARTIAL
 }
 
+/// Workflow status of a gate invoice (auto-generated or manually entered).
+enum GateInvoiceStage {
+  PENDING_TRADE_APPROVAL
+  HOLD_OLD_DUES
+  WRONG_INVOICING
+  PAYMENT_APPROVED
+}
+
 /// Gatepass entry logged at the warehouse gate (public REST form).
 model PendingTruck {
   id         String   @id @default(cuid())
@@ -714,6 +722,8 @@ model PendingTruck {
   gateInvoiceRatePerKg Decimal? @db.Decimal(20, 6)
   gateInvoiceTradeRef  String?
   gateInvoiceTrade     Trade?   @relation("TruckGateInvoiceTrade", fields: [gateInvoiceTradeRef], references: [tradeRef], onDelete: SetNull)
+  /// Workflow stage of the gate invoice (default PENDING_TRADE_APPROVAL when an invoice exists).
+  gateInvoiceStage     GateInvoiceStage?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
