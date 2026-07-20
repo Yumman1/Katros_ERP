@@ -24,8 +24,11 @@ import {
   getOutboundDispatches,
   getPendingTrucks,
   getLockedContracts,
+  getTraderInvoiceApprovals,
   lockTradeInStore,
   exportLockedContractsCsv,
+  traderResolveGateInvoice,
+  TraderInvoiceOwnershipError,
 } from "@/server/execution-store";
 import { exportTradeFileCsv } from "@/server/trade-file-export";
 import { computePositionLedger } from "@/server/position-ledger";
@@ -715,6 +718,40 @@ export const traderRouter = router({
         lockedAt: c.lockedAt,
       }));
   }),
+
+  // ─── Gate-invoice approvals (trader-owned trades) ─────────────────────────
+
+  /** Gate invoices pending this trader's approval or held on old dues. */
+  invoiceApprovals: protectedProcedure.query(({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    return getTraderInvoiceApprovals(name);
+  }),
+
+  /** Count of invoices awaiting approval (PENDING_TRADE_APPROVAL only) — nav badge. */
+  invoiceApprovalsCount: protectedProcedure.query(async ({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    const rows = await getTraderInvoiceApprovals(name);
+    return rows.filter((r) => r.stage === "PENDING_TRADE_APPROVAL").length;
+  }),
+
+  /** Approve payment (→ PAYMENT_APPROVED) or hold (→ HOLD_OLD_DUES) a gate invoice on this trader's trade. */
+  resolveInvoiceApproval: protectedProcedure
+    .input(z.object({ truckId: z.string(), decision: z.enum(["APPROVE", "HOLD"]) }))
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      try {
+        const truck = await traderResolveGateInvoice(name, input.truckId, input.decision);
+        return { ok: true as const, truck };
+      } catch (e) {
+        if (e instanceof TraderInvoiceOwnershipError) {
+          throw new TRPCError({ code: "FORBIDDEN", message: e.message });
+        }
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not update invoice",
+        });
+      }
+    }),
 });
 
 export type TraderTrade = Awaited<ReturnType<typeof mockTraderTrades>>[number];
