@@ -887,11 +887,31 @@ export async function setGateInvoiceStage(
 ): Promise<PendingTruck> {
   const row = await prisma.pendingTruck.findUnique({
     where: { id: truckId },
-    select: { gateInvoiceNo: true },
+    select: {
+      gateInvoiceNo: true,
+      gateInvoiceStage: true,
+      gateInvoiceAmount: true,
+      gateInvoiceExpectedPkr: true,
+    },
   });
   if (!row) throw new Error("Gate entry not found");
   if (!row.gateInvoiceNo) {
     throw new Error("This gate entry has no invoice yet — enter or generate one first");
+  }
+  // Wrong invoicing is a locked state: while the entered amount still
+  // mismatches the expected value, the invoice cannot be moved to any other
+  // category. The only way out is editing the invoice so the amount matches
+  // (which re-validates it back to Pending trade approval).
+  if (row.gateInvoiceStage === "WRONG_INVOICING") {
+    const amount = row.gateInvoiceAmount != null ? Number(row.gateInvoiceAmount) : null;
+    const expected = row.gateInvoiceExpectedPkr != null ? Number(row.gateInvoiceExpectedPkr) : null;
+    const stillMismatched =
+      amount == null || expected == null || Math.abs(amount - expected) > 1;
+    if (stillMismatched) {
+      throw new Error(
+        "This invoice is flagged as wrong invoicing — edit the invoice amount to match the expected value before changing its stage",
+      );
+    }
   }
   const updated = await prisma.pendingTruck.update({
     where: { id: truckId },
