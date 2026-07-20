@@ -337,29 +337,27 @@ export default function TruckMovementsPage() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi icon={<Truck className="h-5 w-5" />} label="Vehicles Today" value={vehiclesToday} variant="accent" />
-        <Kpi icon={<ArrowDownToLine className="h-5 w-5" />} label="Pending Gate In" value={pendingInbound} variant="success" />
-        <Kpi icon={<ArrowUpFromLine className="h-5 w-5" />} label="Pending Gate Out" value={pendingOutbound} variant="info" />
-        <Kpi icon={<Truck className="h-5 w-5" />} label="Awaiting Assignment" value={unassignedGatepassCount} variant="accent" />
-      </div>
+      {/* Everything below the header scrolls as one vertical column. */}
+      <div className="kastros-desk-scroll flex flex-col gap-4">
+        {/* ── KPI tiles ── */}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Kpi icon={<Truck className="h-5 w-5" />} label="Vehicles Today" value={vehiclesToday} variant="accent" />
+          <Kpi icon={<ArrowDownToLine className="h-5 w-5" />} label="Pending Gate In" value={pendingInbound} variant="success" />
+          <Kpi icon={<ArrowUpFromLine className="h-5 w-5" />} label="Pending Gate Out" value={pendingOutbound} variant="info" />
+          <Kpi icon={<Truck className="h-5 w-5" />} label="Awaiting Assignment" value={unassignedGatepassCount} variant="accent" />
+        </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-      {unassignedGatepassCount > 0 && (
-        <section className="exec-panel max-h-[45%] shrink-0 border-accent-secondary/30">
-          <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Truck className="h-4 w-4 text-accent-secondary" />
-            Unassigned Gatepass Trucks
-            <span className="rounded-full bg-accent-secondary-muted px-2 py-0.5 text-[10px] font-bold text-accent-secondary">
-              {unassignedGatepassCount}
-            </span>
-          </h2>
-          <p className="mb-3 text-xs text-subtle">
-            Guided flow: assign the truck to a trade, then enter its gate invoice — the row leaves
-            this list once both steps are complete.
-          </p>
-          <div className="max-h-full min-h-0 flex-1 space-y-3 overflow-auto pr-1">
-            {unassignedPagination.items.map((t) => (
+        {/* ── Truck Workflow: unassigned / incomplete gatepass trucks ── */}
+        {unassignedGatepassCount > 0 && (
+          <section className="flex min-w-0 flex-col gap-3">
+            <SectionHeader
+              icon={<Truck className="h-4 w-4 text-accent-secondary" />}
+              title="Truck Workflow"
+              count={unassignedGatepassCount}
+              description="Assign each truck to a trade, then enter its gate invoice — the card leaves this list once both steps are complete."
+            />
+            <div className="flex flex-col gap-3">
+              {unassignedPagination.items.map((t) => (
               <div
                 key={t.id}
                 className="rounded-xl border border-kastros-border bg-kastros-card p-3.5 shadow-sm"
@@ -422,6 +420,7 @@ export default function TruckMovementsPage() {
                 </div>
               </div>
             ))}
+            </div>
             <ListPagination
               page={unassignedPagination.page}
               totalPages={unassignedPagination.totalPages}
@@ -430,32 +429,34 @@ export default function TruckMovementsPage() {
               endIndex={unassignedPagination.endIndex}
               onPageChange={unassignedPagination.setPage}
             />
-          </div>
-        </section>
-      )}
+          </section>
+        )}
 
-      <section className="exec-panel flex min-h-0 flex-1 flex-col overflow-hidden p-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Gate Register</h2>
-            <p className="mt-0.5 text-xs text-subtle">
-              All gate in/out slips — including unassigned gatepasses waiting for trade linkage.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
+        {/* ── Gate Register: filters + table ── */}
+        <section className="flex min-w-0 flex-col gap-3">
+          <SectionHeader
+            icon={<ClipboardList className="h-4 w-4 text-brand" />}
+            title="Gate Register"
+            count={filteredMovements.length}
+            description="All gate in/out slips — including unassigned gatepasses waiting for trade linkage."
+          />
+
+          {/* Toolbar — wraps gracefully, never forces page width. */}
+          <div className="exec-panel flex flex-wrap items-center gap-2 p-3">
+            <div className="relative min-w-[200px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search truck, gatepass, trade"
-                className="kastros-input kastros-input-sm w-56 py-2 pl-8"
+                className="kastros-input kastros-input-sm w-full py-2 pl-8"
               />
             </div>
             <select
               value={warehouseFilter}
               onChange={(e) => setWarehouseFilter(e.target.value)}
-              className="exec-filter kastros-select-sm"
+              className="exec-filter kastros-select-sm w-44"
+              aria-label="Warehouse filter"
             >
               {warehouseOptions.map((w) => (
                 <option key={w} value={w}>
@@ -466,7 +467,8 @@ export default function TruckMovementsPage() {
             <select
               value={commodityFilter}
               onChange={(e) => setCommodityFilter(e.target.value)}
-              className="exec-filter kastros-select-sm"
+              className="exec-filter kastros-select-sm w-40"
+              aria-label="Commodity filter"
             >
               <option value="ALL">All commodities</option>
               {commodityCodes.map((c) => (
@@ -476,35 +478,37 @@ export default function TruckMovementsPage() {
               ))}
             </select>
             <Segment value={movementFilter} onChange={setMovementFilter} />
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="kastros-input kastros-input-sm"
-              aria-label="From date"
-            />
-            <span className="text-xs text-subtle">to</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="kastros-input kastros-input-sm"
-              aria-label="To date"
-            />
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="kastros-input kastros-input-sm w-[8.5rem]"
+                aria-label="From date"
+              />
+              <span className="text-xs text-subtle">to</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="kastros-input kastros-input-sm w-[8.5rem]"
+                aria-label="To date"
+              />
+            </div>
             <button
               type="button"
               onClick={exportFilteredExcel}
               disabled={filteredMovements.length === 0}
-              className="kastros-btn-primary inline-flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
+              className="kastros-btn-primary ml-auto inline-flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
             >
               <Download className="h-3.5 w-3.5" />
               Excel ({filteredMovements.length})
             </button>
           </div>
-        </div>
 
-        <div className="min-h-0 flex-1 overflow-auto">
-          <table className="kastros-table text-xs">
+          {/* Table card — scrolls horizontally inside itself, never the page. */}
+          <div className="kastros-table-wrap">
+            <table className="kastros-table text-xs">
             <thead>
               <tr>
                 {["Type", "Gatepass", "Generated", "Truck", "Trade", "Warehouse", "Weight", "Invoice", "Documents", "Status", "Actions"].map(
@@ -609,8 +613,9 @@ export default function TruckMovementsPage() {
                 );
               })}
             </tbody>
-          </table>
-          {filteredMovements.length === 0 && <Empty label="No movements match the current filters" />}
+            </table>
+            {filteredMovements.length === 0 && <Empty label="No movements match the current filters" />}
+          </div>
           <ListPagination
             page={movementsPagination.page}
             totalPages={movementsPagination.totalPages}
@@ -619,8 +624,7 @@ export default function TruckMovementsPage() {
             endIndex={movementsPagination.endIndex}
             onPageChange={movementsPagination.setPage}
           />
-        </div>
-      </section>
+        </section>
       </div>
     </div>
   );
@@ -725,6 +729,33 @@ function movementToRegisterEntry(
     remarks: d.remarks,
     generatedAt: d.dispatchDate,
   };
+}
+
+function SectionHeader({
+  icon,
+  title,
+  count,
+  description,
+}: {
+  icon: ReactNode;
+  title: string;
+  count?: number;
+  description: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <h2 className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
+        {icon}
+        {title}
+        {count != null && (
+          <span className="rounded-full bg-accent-secondary-muted px-2 py-0.5 text-[10px] font-bold tabular-nums text-accent-secondary">
+            {count}
+          </span>
+        )}
+      </h2>
+      <p className="mt-0.5 text-xs text-subtle">{description}</p>
+    </div>
+  );
 }
 
 type KpiVariant = "accent" | "success" | "info";
