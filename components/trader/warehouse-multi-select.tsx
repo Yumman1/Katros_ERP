@@ -134,9 +134,9 @@ export function WarehouseMultiSelect({
                 {hasAllocation ? (
                   <span
                     className="rounded-full border border-kastros-border bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground"
-                    title="Allocated = space committed to open BUY contracts still incoming. Free = capacity − stock − allocated."
+                    title="Committed = space promised to open BUY contracts still incoming. Free space = capacity − physical stock − committed."
                   >
-                    Allocated {fmtCapacityMt(w.allocatedMt ?? 0)} MT · Free{" "}
+                    Committed {fmtCapacityMt(w.allocatedMt ?? 0)} MT · Free space{" "}
                     {fmtCapacityMt(w.unallocatedMt)} MT
                   </span>
                 ) : hasCapacity ? (
