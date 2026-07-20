@@ -303,7 +303,12 @@ function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: 
           </button>
           <select
             value={inv.stage}
-            disabled={setStage.isPending}
+            disabled={setStage.isPending || mismatch}
+            title={
+              mismatch
+                ? "Wrong invoicing is locked — edit the invoice so the amount matches the expected value first"
+                : undefined
+            }
             onChange={(e) =>
               setStage.mutate({ truckId: inv.truckId, stage: e.target.value as GateInvoiceStage })
             }
