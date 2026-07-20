@@ -358,62 +358,70 @@ export default function TruckMovementsPage() {
             Guided flow: assign the truck to a trade, then enter its gate invoice — the row leaves
             this list once both steps are complete.
           </p>
-          <div className="kastros-table-wrap max-h-full min-h-0 flex-1 overflow-auto border-0 shadow-none">
-            <table className="kastros-table text-xs">
-              <thead>
-                <tr>
-                  {["Gatepass", "Truck", "Counterparty", "Commodity", "Warehouse", "Weight", "Workflow", "Actions"].map(
-                    (h) => (
-                      <th key={h}>{h}</th>
-                    ),
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {unassignedPagination.items.map((t) => (
-                    <tr key={t.id}>
-                      <td>
-                        <div className="font-mono font-semibold text-accent-secondary">{t.gatepassNo}</div>
-                        <div className="mt-0.5 flex items-center gap-1.5">
-                          <span
-                            className={cn(
-                              "rounded-full px-1.5 py-0.5 text-[9px] font-bold",
-                              t.movementType === "INBOUND" ? "exec-badge-local" : "exec-badge-intl",
-                            )}
-                          >
-                            {t.movementType === "INBOUND" ? "IN" : "OUT"}
-                          </span>
-                          <span className="whitespace-nowrap text-[10px] text-subtle">
-                            {fmtGatepassGenerated(t.arrivalDate)}
-                          </span>
+          <div className="max-h-full min-h-0 flex-1 space-y-3 overflow-auto pr-1">
+            {unassignedPagination.items.map((t) => (
+              <div
+                key={t.id}
+                className="rounded-xl border border-kastros-border bg-kastros-card p-3.5 shadow-sm"
+              >
+                {/* ── Header: gatepass identity · weight · actions ── */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-bold text-accent-secondary">
+                      {t.gatepassNo}
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.5 text-[9px] font-bold",
+                        t.movementType === "INBOUND" ? "exec-badge-local" : "exec-badge-intl",
+                      )}
+                    >
+                      {t.movementType === "INBOUND" ? "IN" : "OUT"}
+                    </span>
+                    <span className="whitespace-nowrap text-[10px] text-subtle">
+                      {fmtGatepassGenerated(t.arrivalDate)}
+                    </span>
+                  </div>
+                  <div className="ml-auto flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="font-mono text-sm font-bold text-accent-secondary">
+                        {new Intl.NumberFormat("en-PK").format(t.remainingKg)} kg
+                      </div>
+                      {(t.quantityBagsBales ?? t.bags) != null && (
+                        <div className="text-[10px] text-subtle">
+                          {t.quantityBagsBales ?? t.bags} bags/bales
                         </div>
-                      </td>
-                      <td className="font-mono text-foreground">{t.truckNo}</td>
-                      <td>
-                        <div className="text-foreground">{t.counterpartyName}</div>
-                      </td>
-                      <td className="text-muted-foreground">{t.commodityName ?? "—"}</td>
-                      <td className="text-muted-foreground">{t.warehouseName}</td>
-                      <td>
-                        <div className="font-semibold text-accent-secondary">
-                          {new Intl.NumberFormat("en-PK").format(t.remainingKg)} kg
-                        </div>
-                        {t.quantityBagsBales && <div className="text-subtle">{t.quantityBagsBales} bags/bales</div>}
-                        {!t.quantityBagsBales && t.bags && <div className="text-subtle">{t.bags} bags</div>}
-                      </td>
-                      <td className="min-w-[320px]">
-                        <GateTruckWorkflow truck={t} contracts={contracts ?? []} />
-                      </td>
-                      <td>
-                        <GateRegisterActions
-                          entry={pendingTruckToRegisterEntry(t)}
-                          compact
-                        />
-                      </td>
-                    </tr>
+                      )}
+                    </div>
+                    <GateRegisterActions entry={pendingTruckToRegisterEntry(t)} compact />
+                  </div>
+                </div>
+
+                {/* ── Meta grid ── */}
+                <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-kastros-border/60 pt-2.5 text-xs sm:grid-cols-4">
+                  {(
+                    [
+                      ["Truck", t.truckNo],
+                      ["Counterparty", t.counterpartyName],
+                      ["Commodity", t.commodityName ?? "—"],
+                      ["Warehouse", t.warehouseName],
+                    ] as const
+                  ).map(([label, value]) => (
+                    <div key={label} className="min-w-0">
+                      <div className="text-[9px] font-semibold uppercase tracking-wider text-subtle">
+                        {label}
+                      </div>
+                      <div className="truncate text-foreground">{value}</div>
+                    </div>
                   ))}
-              </tbody>
-            </table>
+                </div>
+
+                {/* ── Two-step workflow ── */}
+                <div className="mt-3">
+                  <GateTruckWorkflow truck={t} contracts={contracts ?? []} />
+                </div>
+              </div>
+            ))}
             <ListPagination
               page={unassignedPagination.page}
               totalPages={unassignedPagination.totalPages}
