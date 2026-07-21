@@ -1243,7 +1243,7 @@ INSERT INTO "User" ("id","email","passwordHash","name","role","isHead","updatedA
 ON CONFLICT ("email") DO UPDATE SET "name"=EXCLUDED."name","role"=EXCLUDED."role","isHead"=EXCLUDED."isHead","updatedAt"=now();
 
 INSERT INTO "Commodity" ("id","name","code","unit","exchange","tickerCode","category","canonicalKgPerUnit","grades","priceUnits","updatedAt","createdById") VALUES
-('cmd_corn','Corn (Maize)','CORN','MT','CBOT','ZC','GRAINS',1000,ARRAY['Grade A','Grade B','Feed Grade'],'{"LOCAL":{"currency":"PKR","weightUnit":"MAUND_40","kgPerUnit":40},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_ceo')
+('cmd_corn','Corn','CORN','MT','CBOT','ZC','GRAINS',1000,ARRAY['Grade A','Grade B','Feed Grade'],'{"LOCAL":{"currency":"PKR","weightUnit":"MAUND_40","kgPerUnit":40},"INTERNATIONAL":{"currency":"USD","weightUnit":"MT","kgPerUnit":1000}}',now(),'usr_ceo')
 ON CONFLICT ("code") DO UPDATE SET "name"=EXCLUDED."name","grades"=EXCLUDED."grades","priceUnits"=EXCLUDED."priceUnits","updatedAt"=now();
 
 INSERT INTO "UnitDef" ("code","label","kgPerUnit") VALUES
