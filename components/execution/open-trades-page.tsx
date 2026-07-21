@@ -70,7 +70,7 @@ export function OpenTradesPage() {
         placeholder="Search contract, trader, counterparty, commodity…"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        className="kastros-input min-w-[200px] flex-1 rounded-xl py-2.5"
+        className="kastros-input w-full max-w-md rounded-xl py-2.5"
       />
 
       <div className="kastros-table-wrap">
@@ -172,7 +172,7 @@ export function OpenTradesPage() {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={11} className="py-12 text-center text-sm text-subtle">
+                <td colSpan={12} className="py-12 text-center text-sm text-subtle">
                   No unreviewed trades match your search.
                 </td>
               </tr>
