@@ -78,7 +78,7 @@ const intlMt = { currency: "USD", weightUnit: "MT", kgPerUnit: 1000 };
 
 const COMMODITIES: CommoditySeed[] = [
   {
-    name: "Corn (Maize)",
+    name: "Corn",
     code: "CORN",
     unit: "MT",
     exchange: "CBOT",
