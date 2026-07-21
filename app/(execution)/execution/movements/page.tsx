@@ -579,10 +579,13 @@ export default function TruckMovementsPage() {
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">{m.warehouseName}</td>
                   <td className="px-5 py-3">
-                    <div className="font-semibold text-foreground">
+                    <div className="font-semibold text-foreground" title="Invoiced weight">
+                      <span className="font-normal text-subtle">IW:</span>{" "}
                       {formatQtyWithUnit(m.netQtyMt, m.quantityUnit, 2)}
                     </div>
-                    <div className="text-subtle">{fmtKg(m.grossWeightKg)}</div>
+                    <div className="text-subtle" title="Weight in (gate weighbridge)">
+                      WI: {fmtKg(m.grossWeightKg)}
+                    </div>
                   </td>
                   <td className="px-5 py-3">
                     <GateInvoiceCell
