@@ -831,7 +831,12 @@ export async function setManualGateInvoice(
     throw new Error("Invoice amount must be positive");
   }
   if (row.gateInvoiceNo && row.gateInvoiceStage === "PAYMENT_APPROVED") {
-    throw new Error("Invoice already approved — change the stage first");
+    throw new Error("Invoice already approved by the trader — it can no longer be edited");
+  }
+  if (row.gateInvoiceNo && row.gateInvoiceStage === "HOLD_OLD_DUES") {
+    throw new Error(
+      "This invoice is on hold by the trade's trader — only they can release it",
+    );
   }
   const tradeRef = input.tradeRef?.trim() || null;
   if (tradeRef) {
@@ -892,13 +897,12 @@ export async function setGateInvoiceStage(
   stage: GateInvoiceStage,
   opts?: { actorRole?: Role },
 ): Promise<PendingTruck> {
-  if (
-    stage === "PAYMENT_APPROVED" &&
-    opts?.actorRole !== "CEO" &&
-    opts?.actorRole !== "ADMIN"
-  ) {
+  // Stage transitions are automatic (validation) or trader decisions
+  // (approve / hold from the Invoice approvals page). Execution cannot move
+  // stages by hand; the CEO retains an executive override.
+  if (opts?.actorRole !== "CEO" && opts?.actorRole !== "ADMIN") {
     throw new Error(
-      "Payment approval is done by the trade's trader from their Invoice approvals page",
+      "Invoice stages are set by validation and the trade's trader — execution cannot change them",
     );
   }
   const row = await prisma.pendingTruck.findUnique({

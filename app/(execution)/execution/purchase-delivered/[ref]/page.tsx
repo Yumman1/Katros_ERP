@@ -271,6 +271,7 @@ function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: 
   });
 
   const mismatch = inv.stage === "WRONG_INVOICING";
+  const traderLocked = inv.stage === "PAYMENT_APPROVED" || inv.stage === "HOLD_OLD_DUES";
 
   return (
     <div
@@ -297,39 +298,58 @@ function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: 
           <StageBadge stage={inv.stage} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setInvoiceNo(inv.invoiceNo);
-              setAmount(String(inv.amount));
-              update.reset();
-              setEditing((v) => !v);
-            }}
-            className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
-            style={{ borderColor: "rgba(255,255,255,0.1)" }}
-          >
-            <Pencil className="h-3 w-3" />
-            {editing ? "Close" : "Edit invoice"}
-          </button>
-          <select
-            value={inv.stage}
-            disabled={setStage.isPending || mismatch}
-            title={
-              mismatch
-                ? "Wrong invoicing is locked — edit the invoice so the amount matches the expected value first"
-                : undefined
-            }
-            onChange={(e) =>
-              setStage.mutate({ truckId: inv.truckId, stage: e.target.value as GateInvoiceStage })
-            }
-            className="kastros-input kastros-input-sm text-xs disabled:opacity-50"
-          >
-            {stageOptions.map((s) => (
-              <option key={s} value={s}>
-                {GATE_INVOICE_STAGE_LABELS[s]}
-              </option>
-            ))}
-          </select>
+          {/* Trader-owned states are read-only from execution: an approved or
+              held invoice can no longer be edited here. */}
+          {!traderLocked && (
+            <button
+              type="button"
+              onClick={() => {
+                setInvoiceNo(inv.invoiceNo);
+                setAmount(String(inv.amount));
+                update.reset();
+                setEditing((v) => !v);
+              }}
+              className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+              style={{ borderColor: "rgba(255,255,255,0.1)" }}
+            >
+              <Pencil className="h-3 w-3" />
+              {editing ? "Close" : "Edit invoice"}
+            </button>
+          )}
+          {canApprovePayment ? (
+            <select
+              value={inv.stage}
+              disabled={setStage.isPending || mismatch}
+              title={
+                mismatch
+                  ? "Wrong invoicing is locked — edit the invoice so the amount matches the expected value first"
+                  : "Executive override — stages normally move via validation and trader approval"
+              }
+              onChange={(e) =>
+                setStage.mutate({ truckId: inv.truckId, stage: e.target.value as GateInvoiceStage })
+              }
+              className="kastros-input kastros-input-sm text-xs disabled:opacity-50"
+            >
+              {stageOptions.map((s) => (
+                <option key={s} value={s}>
+                  {GATE_INVOICE_STAGE_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span
+              className="text-[10px] text-subtle"
+              title="Stages move automatically (validation) or by the trade's trader (approve / hold)"
+            >
+              {inv.stage === "PAYMENT_APPROVED"
+                ? "Approved by trader — locked"
+                : inv.stage === "HOLD_OLD_DUES"
+                  ? "On hold by trader — only they can release it"
+                  : mismatch
+                    ? "Fix the amount to re-submit for trader approval"
+                    : "Awaiting trader approval"}
+            </span>
+          )}
         </div>
       </div>
       {editing && (
