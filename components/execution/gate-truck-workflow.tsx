@@ -395,6 +395,55 @@ function AmountLine({
   );
 }
 
+/**
+ * Manual release toggle — the truck only leaves the workflow (and the gate
+ * register flips to Released) once execution confirms the printed slips were
+ * handed to the warehouse manager.
+ */
+function ReleaseToggle({
+  row,
+  truckId,
+}: {
+  row: { saleReleasedAt: Date | null; saleReleasedBy: string | null };
+  truckId: string;
+}) {
+  const utils = trpc.useUtils();
+  const release = trpc.execution.markSaleReleased.useMutation({
+    onSuccess: () => invalidateGateOpsCaches(utils),
+  });
+  if (row.saleReleasedAt) {
+    return (
+      <span className="text-[10px] text-success">
+        Released{row.saleReleasedBy ? ` by ${row.saleReleasedBy}` : ""}
+      </span>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        disabled={release.isPending}
+        onClick={() => {
+          if (
+            confirm(
+              "Mark this truck as released? Confirm only after the printed Gate Out Slip and Delivery Order have been handed to the warehouse manager.",
+            )
+          ) {
+            release.mutate({ truckId });
+          }
+        }}
+        className="kastros-btn-primary self-start px-3 py-1.5 text-[11px] disabled:opacity-50"
+      >
+        {release.isPending ? "Releasing…" : "Mark released"}
+      </button>
+      <span className="text-[10px] text-subtle">
+        Print both slips and hand them to the warehouse manager first.
+      </span>
+      {release.error && <ErrorLine message={release.error.message} />}
+    </div>
+  );
+}
+
 function PrintLinks({ truckId }: { truckId: string }) {
   return (
     <div className="flex flex-wrap gap-3 text-[11px]">
@@ -531,7 +580,12 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
 
   if (row.saleStage === "CLEARED_UNPAID") {
     return (
-      <StepPanel step={2} title="Payment" state="warn" headline="Cleared unpaid">
+      <StepPanel
+        step={2}
+        title="Payment"
+        state="warn"
+        headline={row.saleReleasedAt ? "Released unpaid" : "Cleared unpaid"}
+      >
         <span className="truncate font-mono text-xs font-semibold text-foreground">
           {row.gateOutSlipNo ?? "—"}
           {row.deliveryOrderNo && (
@@ -542,13 +596,19 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
         <span className="text-[10px] text-warning">
           Receivable remains open in the buyer&rsquo;s ledger.
         </span>
+        <ReleaseToggle row={row} truckId={truck.id} />
       </StepPanel>
     );
   }
 
   // PAYMENT_RECEIVED
   return (
-    <StepPanel step={2} title="Payment" state="done" headline="Payment received">
+    <StepPanel
+      step={2}
+      title="Payment"
+      state="done"
+      headline={row.saleReleasedAt ? "Released" : "Payment received"}
+    >
       <span className="truncate font-mono text-xs font-semibold text-foreground">
         {row.gateOutSlipNo ?? "—"}
         {row.deliveryOrderNo && (
@@ -556,6 +616,7 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
         )}
       </span>
       <PrintLinks truckId={truck.id} />
+      <ReleaseToggle row={row} truckId={truck.id} />
     </StepPanel>
   );
 }

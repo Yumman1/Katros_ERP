@@ -46,6 +46,7 @@ import {
   updateOutboundDispatch,
   getSaleWorkflowRows,
   getSaleTruckPrintable,
+  markSaleTruckReleased,
   sendSaleTruckForApproval,
   requestClearWithoutPayment,
 } from "@/server/execution-store";
@@ -932,6 +933,23 @@ export const executionRouter = router({
     .mutation(async ({ input }) => {
       try {
         return await sendSaleTruckForApproval(input.truckId);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  /**
+   * Manual release toggle — printed Gate Out Slip + Delivery Order handed to
+   * the warehouse manager. Flips the gate register entry to RELEASED.
+   */
+  markSaleReleased: roleProcedure([...execRoles])
+    .input(z.object({ truckId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await markSaleTruckReleased(
+          input.truckId,
+          ctx.session.user.name ?? ctx.session.user.email ?? "execution",
+        );
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }

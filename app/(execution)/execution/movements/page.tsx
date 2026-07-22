@@ -44,12 +44,9 @@ function pendingTransporter(t: PendingTruck) {
  * is open (payment not received and not CEO-cleared).
  */
 function hasOpenSaleStage(t: PendingTruck): boolean {
-  return (
-    t.movementType === "OUTBOUND" &&
-    t.saleStage != null &&
-    t.saleStage !== "PAYMENT_RECEIVED" &&
-    t.saleStage !== "CLEARED_UNPAID"
-  );
+  // A truck stays in the workflow until execution flips the manual release
+  // toggle (printed slips handed to the warehouse manager).
+  return t.movementType === "OUTBOUND" && t.saleStage != null && t.saleReleasedAt == null;
 }
 
 /**
@@ -126,6 +123,12 @@ export default function TruckMovementsPage() {
   const contractByRef = useMemo(
     () => new Map((contracts ?? []).map((c) => [c.tradeRef, c])),
     [contracts],
+  );
+
+  // Gatepass → truck lookup so register rows can link the release documents.
+  const truckByGatepass = useMemo(
+    () => new Map((pendingTrucks ?? []).map((t) => [t.gatepassNo, t])),
+    [pendingTrucks],
   );
 
   const movements = useMemo<Movement[]>(() => {
@@ -617,6 +620,31 @@ export default function TruckMovementsPage() {
                   </td>
                   <td className="px-5 py-3">
                     <GateDocumentsCell refs={m.documentRefs} />
+                    {m.type === "OUTBOUND" &&
+                      (() => {
+                        const truck = truckByGatepass.get(m.gatepassNo);
+                        if (!truck?.gateOutSlipNo) return null;
+                        return (
+                          <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+                            <Link
+                              href={`/execution/print/gate-out-slip/${truck.id}`}
+                              target="_blank"
+                              className="font-medium text-accent-secondary hover:underline"
+                            >
+                              {truck.gateOutSlipNo}
+                            </Link>
+                            {truck.deliveryOrderNo && (
+                              <Link
+                                href={`/execution/print/delivery-order/${truck.id}`}
+                                target="_blank"
+                                className="font-medium text-accent-secondary hover:underline"
+                              >
+                                {truck.deliveryOrderNo}
+                              </Link>
+                            )}
+                          </div>
+                        );
+                      })()}
                   </td>
                   <td className="px-5 py-3">
                     <Status status={m.status} />
