@@ -25,9 +25,11 @@ import {
   getPendingTrucks,
   getLockedContracts,
   getTraderInvoiceApprovals,
+  getTraderSaleApprovals,
   lockTradeInStore,
   exportLockedContractsCsv,
   traderResolveGateInvoice,
+  traderResolveSaleTruck,
   TraderInvoiceOwnershipError,
 } from "@/server/execution-store";
 import { exportTradeFileCsv } from "@/server/trade-file-export";
@@ -43,6 +45,7 @@ import {
   getCompanyWarehouses,
   getTraderReferenceData,
   registerCustomUnit,
+  updateCustomCounterparty,
 } from "@/server/trader-master-data";
 import { canonicalKgPerUnitOf, PRICE_CURRENCIES } from "@/lib/price-units";
 import { commodityCreateInputSchema } from "@/lib/commodity-registration";
@@ -58,8 +61,14 @@ import {
   type KycStatus,
   type PaymentType,
 } from "@/server/dummy-data";
-import { lockOpenTradeAfterTraderReview, completeTraderTradePrice, submitTradeToExecution, updateTraderDraftTrade } from "@/server/open-trades";
-import { getTradeTimeline } from "@/server/trade-activity";
+import { lockOpenTradeAfterTraderReview, completeTraderTradePrice, submitTradeToExecution, traderApproveExecutionEdits, updateTraderDraftTrade } from "@/server/open-trades";
+import { getTradeActivityLog, getTradeTimeline } from "@/server/trade-activity";
+import {
+  deleteTradeDraft,
+  getTradeDraft,
+  listTradeDrafts,
+  upsertTradeDraft,
+} from "@/server/trade-drafts";
 
 const paymentTypeSchema = z.enum([
   "DP",
@@ -394,12 +403,16 @@ export const traderRouter = router({
       z.object({
         name: z.string().min(1),
         type: z.nativeEnum(CounterpartyType).optional(),
+        /** BUY register (we buy from them) vs SELL register (we sell to them). */
+        side: z.enum(["BUY", "SELL"]).optional(),
         country: z.string().min(1),
         kycStatus: z.enum(["VERIFIED", "PENDING", "EXPIRED", "NOT_ON_FILE"]).optional(),
         kycRef: z.string().optional(),
         kycExpires: z.coerce.date().optional(),
         companyNameNtn: z.string().optional(),
         ntn: z.string().optional(),
+        contactPerson: z.string().optional(),
+        contactPhone: z.string().optional(),
         address: z.string().optional(),
         bankDetails: z.string().optional(),
       }),
@@ -409,12 +422,15 @@ export const traderRouter = router({
         return await addCustomCounterparty({
           name: input.name,
           type: input.type,
+          side: input.side,
           country: input.country,
           kycStatus: input.kycStatus,
           kycRef: input.kycRef ?? null,
           kycExpires: input.kycExpires ?? null,
           companyNameNtn: input.companyNameNtn ?? null,
           ntn: input.ntn ?? null,
+          contactPerson: input.contactPerson ?? null,
+          contactPhone: input.contactPhone ?? null,
           address: input.address ?? null,
           bankDetails: input.bankDetails ?? null,
         });
@@ -455,6 +471,36 @@ export const traderRouter = router({
       const cp = await getCounterpartyById(input.counterpartyId);
       if (!cp) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid counterparty" });
+      }
+
+      // BUY and SELL run separate counterparty registers — a booking must use
+      // a counterparty from the matching side.
+      const expectedSide = input.direction === TradeDirection.SELL ? "SELL" : "BUY";
+      if (cp.side !== expectedSide) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${cp.code} — ${cp.name} is registered on the ${cp.side === "SELL" ? "sell" : "buy"} side. ${
+            expectedSide === "SELL"
+              ? "Select or register a sell-side buyer for this sale."
+              : "Select or register a buy-side counterparty for this purchase."
+          }`,
+        });
+      }
+
+      // Booking-form contact person/number are optional and stored with the
+      // counterparty once — later bookings reuse them.
+      {
+        const rawPerson = input.tradeParams?.contactPerson;
+        const rawNumber = input.tradeParams?.contactNumber;
+        const contactPerson = typeof rawPerson === "string" ? rawPerson.trim() : "";
+        const contactNumber =
+          rawNumber != null && rawNumber !== "" ? String(rawNumber).trim() : "";
+        const patch: { contactPerson?: string; contactPhone?: string } = {};
+        if (contactPerson && !cp.contactPerson) patch.contactPerson = contactPerson;
+        if (contactNumber && !cp.contactPhone) patch.contactPhone = contactNumber;
+        if (Object.keys(patch).length) {
+          await updateCustomCounterparty(cp.id, patch);
+        }
       }
 
       const c = await getCommodityById(input.commodityId);
@@ -749,6 +795,163 @@ export const traderRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not update invoice",
+        });
+      }
+    }),
+
+  // ─── Sell-invoice approvals (outbound sale trucks) ─────────────────────────
+
+  /** Outbound trucks awaiting this trader: payment approvals + clear-without-payment requests. */
+  sellInvoiceApprovals: protectedProcedure.query(({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    return getTraderSaleApprovals(name);
+  }),
+
+  /** Nav badge count for the Sell Invoice Approvals page. */
+  sellInvoiceApprovalsCount: protectedProcedure.query(async ({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    return (await getTraderSaleApprovals(name)).length;
+  }),
+
+  /**
+   * Trader decision on a sell-side truck. PENDING_TRADER: approve → finance;
+   * CLEAR_PENDING_TRADER: approve → CEO. Reject returns it to awaiting balance.
+   */
+  resolveSellInvoiceApproval: protectedProcedure
+    .input(z.object({ truckId: z.string(), decision: z.enum(["APPROVE", "REJECT"]) }))
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      try {
+        const truck = await traderResolveSaleTruck(name, input.truckId, input.decision);
+        return { ok: true as const, truck };
+      } catch (e) {
+        if (e instanceof TraderInvoiceOwnershipError) {
+          throw new TRPCError({ code: "FORBIDDEN", message: e.message });
+        }
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not update truck",
+        });
+      }
+    }),
+
+  // ─── Execution-edit approvals (exact change diffs) ─────────────────────────
+
+  /**
+   * Trades of this trader edited by execution and awaiting approval — each
+   * with the latest execution edit's summary and raw field patch so the page
+   * can show the exact change.
+   */
+  executionEditApprovals: protectedProcedure.query(async ({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    const trades = (await mockTraderTrades(name)).filter((t) => t.pendingTraderReview);
+    return Promise.all(
+      trades.map(async (t) => {
+        const log = await getTradeActivityLog(t.tradeRef);
+        const lastEdit =
+          [...log]
+            .filter((e) => e.actorSide === "EXECUTION" && e.kind === "EDIT_APPLIED")
+            .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
+            .at(-1) ?? null;
+        return {
+          tradeRef: t.tradeRef,
+          direction: t.direction,
+          commodityName: t.commodity.name,
+          commodityCode: t.commodity.code,
+          counterpartyName: t.counterparty.name,
+          quantity: t.quantity,
+          quantityUnit: t.quantityUnit,
+          editedBy: t.executionLastEditedBy ?? lastEdit?.actorName ?? null,
+          editedAt: t.executionLastEditedAt ?? lastEdit?.at ?? null,
+          editNote: t.executionEditNote ?? null,
+          changeSummary: lastEdit?.summary ?? null,
+          changeCount: lastEdit?.changeCount ?? null,
+          /** Raw execution patch — field → new value. */
+          changes: lastEdit?.payload ?? null,
+        };
+      }),
+    );
+  }),
+
+  /** Nav badge count for the trade-change approvals page. */
+  executionEditApprovalsCount: protectedProcedure.query(async ({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    return (await mockTraderTrades(name)).filter((t) => t.pendingTraderReview).length;
+  }),
+
+  /** Approve execution's changes so execution can lock the trade. */
+  approveExecutionEdits: roleProcedure(["TRADER", "ADMIN"])
+    .input(z.object({ tradeRef: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      try {
+        const trade = await traderApproveExecutionEdits(name, input.tradeRef.trim());
+        return { ok: true as const, trade };
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not approve changes",
+        });
+      }
+    }),
+
+  // ─── Booking drafts (autosaved unfinished forms) ───────────────────────────
+
+  /** Unfinished booking drafts for the My Trades page, newest first. */
+  bookingDrafts: protectedProcedure.query(({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    return listTradeDrafts(name);
+  }),
+
+  bookingDraft: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .query(({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      return getTradeDraft(name, input.id);
+    }),
+
+  /** Autosave the booking form; returns the draft id to keep writing to. */
+  saveBookingDraft: roleProcedure(["TRADER", "ADMIN"])
+    .input(
+      z.object({
+        id: z.string().nullish(),
+        payload: z.record(z.string(), z.unknown()),
+        summary: z
+          .object({
+            commodityLabel: z.string().nullish(),
+            counterpartyLabel: z.string().nullish(),
+            direction: z.string().nullish(),
+            quantityLabel: z.string().nullish(),
+          })
+          .nullish(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      try {
+        return await upsertTradeDraft(name, {
+          id: input.id ?? null,
+          payload: input.payload,
+          summary: input.summary ?? null,
+        });
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not save draft",
+        });
+      }
+    }),
+
+  deleteBookingDraft: roleProcedure(["TRADER", "ADMIN"])
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      try {
+        return await deleteTradeDraft(name, input.id);
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not delete draft",
         });
       }
     }),

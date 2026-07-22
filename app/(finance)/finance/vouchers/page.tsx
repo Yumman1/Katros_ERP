@@ -1,0 +1,208 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { format } from "date-fns";
+import { Check, X } from "lucide-react";
+import { ListPagination } from "@/components/ui/list-pagination";
+import { PageHeader } from "@/components/ui/page-header";
+import { useListPagination } from "@/lib/use-list-pagination";
+import { trpc } from "@/lib/trpc/client";
+import { cn } from "@/lib/utils";
+
+const pkrFormat = new Intl.NumberFormat("en-PK");
+
+function fmtPkr(value: number): string {
+  return `${pkrFormat.format(value)} PKR`;
+}
+
+const STATUS_CHIP: Record<string, { className: string; label: string }> = {
+  APPROVED: { className: "bg-success/15 text-success", label: "Approved" },
+  REJECTED: { className: "bg-destructive/15 text-destructive", label: "Rejected" },
+  PENDING_FINANCE: { className: "bg-warning/15 text-warning", label: "Pending finance" },
+};
+
+export default function FinanceVouchersPage() {
+  const utils = trpc.useUtils();
+  const { data: vouchers, isLoading } = trpc.finance.vouchers.useQuery({}, { refetchInterval: 60_000 });
+  const [notes, setNotes] = useState<Record<string, string>>({});
+
+  const invalidate = () => {
+    void utils.finance.vouchers.invalidate();
+    void utils.finance.pendingVouchersCount.invalidate();
+    void utils.finance.counterpartyLedgers.invalidate();
+  };
+
+  const approve = trpc.finance.approveVoucher.useMutation({ onSuccess: invalidate });
+  const reject = trpc.finance.rejectVoucher.useMutation({ onSuccess: invalidate });
+
+  const pending = useMemo(
+    () => (vouchers ?? []).filter((v) => v.status === "PENDING_FINANCE"),
+    [vouchers],
+  );
+  const resolved = useMemo(
+    () =>
+      (vouchers ?? [])
+        .filter((v) => v.status !== "PENDING_FINANCE")
+        .sort(
+          (a, b) =>
+            new Date(b.resolvedAt ?? b.createdAt).getTime() - new Date(a.resolvedAt ?? a.createdAt).getTime(),
+        ),
+    [vouchers],
+  );
+  const historyPagination = useListPagination(resolved);
+
+  return (
+    <div className="kastros-desk-page">
+      <PageHeader
+        title="Voucher approvals"
+        subtitle="Payments entered by execution become part of the buyer's ledger only after your approval."
+      />
+
+      <div className="kastros-desk-scroll space-y-6 pb-6">
+        <section>
+          <div className="mb-2 flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-foreground">Pending vouchers</h2>
+            <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-bold text-warning">
+              {pending.length}
+            </span>
+          </div>
+          {isLoading ? (
+            <div className="py-8 text-center text-sm text-subtle">Loading vouchers…</div>
+          ) : pending.length === 0 ? (
+            <div className="exec-empty">No vouchers awaiting approval.</div>
+          ) : (
+            <div className="space-y-4">
+              {pending.map((v) => {
+                const busy =
+                  (approve.isPending && approve.variables?.voucherId === v.id) ||
+                  (reject.isPending && reject.variables?.voucherId === v.id);
+                const errorHere =
+                  (approve.error && approve.variables?.voucherId === v.id && approve.error.message) ||
+                  (reject.error && reject.variables?.voucherId === v.id && reject.error.message) ||
+                  null;
+                return (
+                  <article key={v.id} className="exec-panel">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-sm font-semibold text-foreground">{v.voucherNo}</span>
+                          <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-bold uppercase text-warning">
+                            Pending finance
+                          </span>
+                        </div>
+                        <div className="mt-1 text-sm text-foreground">
+                          {v.counterpartyName}{" "}
+                          <span className="font-mono text-xs text-muted-foreground">({v.counterpartyCode})</span>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {v.method ? `Method: ${v.method}` : "Method: —"}
+                          {v.reference ? ` · Ref: ${v.reference}` : ""}
+                          {v.note ? ` · “${v.note}”` : ""}
+                        </div>
+                        <div className="mt-1 text-xs text-subtle">
+                          Entered by {v.enteredByName} · {format(new Date(v.createdAt), "d MMM yyyy, HH:mm")}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[10px] uppercase tracking-wider text-subtle">Amount</div>
+                        <div className="text-lg font-bold tabular-nums text-foreground">{fmtPkr(v.amountPkr)}</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <input
+                        value={notes[v.id] ?? ""}
+                        onChange={(e) => setNotes((n) => ({ ...n, [v.id]: e.target.value }))}
+                        placeholder="Optional note…"
+                        className="kastros-input w-64 text-xs"
+                      />
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => approve.mutate({ voucherId: v.id, note: notes[v.id] || undefined })}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-xs font-bold text-white hover:bg-success/90 disabled:opacity-50"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        {busy && approve.variables?.voucherId === v.id ? "Approving…" : "Approve"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => reject.mutate({ voucherId: v.id, note: notes[v.id] || undefined })}
+                        className="kastros-btn-secondary inline-flex items-center gap-1.5 text-xs disabled:opacity-50"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                        Reject
+                      </button>
+                    </div>
+                    {errorHere && <p className="mt-2 text-xs text-destructive">{errorHere}</p>}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-foreground">History</h2>
+          <div className="kastros-table-wrap">
+            {resolved.length === 0 ? (
+              <div className="px-4 py-6 text-center text-xs text-subtle">No resolved vouchers yet.</div>
+            ) : (
+              <>
+                <table className="kastros-table">
+                  <thead>
+                    <tr>
+                      <th>No</th>
+                      <th>Counterparty</th>
+                      <th className="text-right">Amount</th>
+                      <th>Status</th>
+                      <th>Resolved by</th>
+                      <th>Date</th>
+                      <th>Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyPagination.items.map((v) => {
+                      const chip = STATUS_CHIP[v.status] ?? STATUS_CHIP.PENDING_FINANCE;
+                      return (
+                        <tr key={v.id}>
+                          <td className="whitespace-nowrap font-mono text-xs">{v.voucherNo}</td>
+                          <td className="whitespace-nowrap">
+                            {v.counterpartyName}{" "}
+                            <span className="font-mono text-xs text-muted-foreground">({v.counterpartyCode})</span>
+                          </td>
+                          <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(v.amountPkr)}</td>
+                          <td className="whitespace-nowrap">
+                            <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", chip.className)}>
+                              {chip.label}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap">{v.resolvedByName ?? "—"}</td>
+                          <td className="whitespace-nowrap">
+                            {v.resolvedAt ? format(new Date(v.resolvedAt), "d MMM yyyy") : "—"}
+                          </td>
+                          <td className="max-w-[220px] truncate text-muted-foreground" title={v.resolutionNote ?? undefined}>
+                            {v.resolutionNote ?? "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <ListPagination
+                  page={historyPagination.page}
+                  totalPages={historyPagination.totalPages}
+                  totalItems={historyPagination.totalItems}
+                  startIndex={historyPagination.startIndex}
+                  endIndex={historyPagination.endIndex}
+                  onPageChange={historyPagination.setPage}
+                />
+              </>
+            )}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}

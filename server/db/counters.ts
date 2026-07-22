@@ -39,5 +39,9 @@ export const COUNTER = {
   GATE_INVOICE: "gate-invoice",
   CHANGE_REQUEST: "change-request",
   COUNTERPARTY: "counterparty",
+  COUNTERPARTY_SELL: "counterparty-sell",
   WAREHOUSE: "warehouse",
+  VOUCHER: "voucher",
+  GATE_OUT_SLIP: "gate-out-slip",
+  DELIVERY_ORDER: "delivery-order",
 } as const;

@@ -78,9 +78,34 @@ export type PendingTruck = {
   gateInvoiceStage?: GateInvoiceStage | null;
   /** Expected invoice amount (PKR) computed at trade assignment — net warehouse weight × contract rate. */
   gateInvoiceExpectedPkr?: number | null;
+  // ── Outbound sale payment workflow ──
+  /** Sale value before tax: dispatched weight × contract rate (PKR). */
+  saleBasePkr?: number | null;
+  /** 236G advance income tax on the base amount (PKR). */
+  saleTaxPkr?: number | null;
+  /** Expected receivable incl. 236G — the buyer-ledger debit for this truck. */
+  saleExpectedPkr?: number | null;
+  saleStage?: SaleTruckStage | null;
+  saleTraderApprovedBy?: string | null;
+  saleTraderApprovedAt?: Date | null;
+  saleFinanceApprovedBy?: string | null;
+  saleFinanceApprovedAt?: Date | null;
+  saleCeoApprovedBy?: string | null;
+  saleCeoApprovedAt?: Date | null;
+  gateOutSlipNo?: string | null;
+  deliveryOrderNo?: string | null;
   /** @deprecated legacy persisted trucks only */
   driverCnic?: string | null;
 };
+
+export type SaleTruckStage =
+  | "AWAITING_BALANCE"
+  | "PENDING_TRADER"
+  | "PENDING_FINANCE"
+  | "PAYMENT_RECEIVED"
+  | "CLEAR_PENDING_TRADER"
+  | "CLEAR_PENDING_CEO"
+  | "CLEARED_UNPAID";
 
 export type ContractStatus = "Open" | "Close";
 
@@ -291,6 +316,18 @@ export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
     gateInvoiceTradeRef: row.gateInvoiceTradeRef,
     gateInvoiceStage: row.gateInvoiceStage,
     gateInvoiceExpectedPkr: numOrNull(row.gateInvoiceExpectedPkr),
+    saleBasePkr: numOrNull(row.saleBasePkr),
+    saleTaxPkr: numOrNull(row.saleTaxPkr),
+    saleExpectedPkr: numOrNull(row.saleExpectedPkr),
+    saleStage: row.saleStage,
+    saleTraderApprovedBy: row.saleTraderApprovedBy,
+    saleTraderApprovedAt: row.saleTraderApprovedAt,
+    saleFinanceApprovedBy: row.saleFinanceApprovedBy,
+    saleFinanceApprovedAt: row.saleFinanceApprovedAt,
+    saleCeoApprovedBy: row.saleCeoApprovedBy,
+    saleCeoApprovedAt: row.saleCeoApprovedAt,
+    gateOutSlipNo: row.gateOutSlipNo,
+    deliveryOrderNo: row.deliveryOrderNo,
     driverCnic: null,
   };
 }

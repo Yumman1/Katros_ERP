@@ -1,12 +1,14 @@
 "use client";
 
 import {
+  BookOpen,
   ClipboardCheck,
   ClipboardList,
   FileSpreadsheet,
   LayoutGrid,
   LineChart,
   MapPin,
+  Receipt,
   ShieldCheck,
   TrendingUp,
   Truck,
@@ -72,6 +74,8 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         { href: "/execution/inventory", label: "Inventory", icon: <Warehouse className="h-4 w-4" /> },
         { href: "/execution/positions", label: "Positions", icon: <LineChart className="h-4 w-4" /> },
         { href: "/execution/movements", label: "Truck Movements", icon: <Truck className="h-4 w-4" /> },
+        { href: "/execution/vouchers", label: "Vouchers", icon: <Receipt className="h-4 w-4" /> },
+        { href: "/execution/ledgers", label: "Ledgers", icon: <BookOpen className="h-4 w-4" /> },
         { href: "/execution/warehouses", label: "Warehouses", icon: <MapPin className="h-4 w-4" /> },
         {
           href: "/execution/payments",

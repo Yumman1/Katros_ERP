@@ -1,7 +1,132 @@
 "use client";
 
+import { format } from "date-fns";
+import { Check, Inbox, Truck, X } from "lucide-react";
 import { CeoApprovalsInbox } from "@/components/team/ceo-approvals-inbox";
+import { trpc } from "@/lib/trpc/client";
+import { cn } from "@/lib/utils";
 
 export default function CeoApprovalsPage() {
-  return <CeoApprovalsInbox />;
+  return (
+    <>
+      <CeoApprovalsInbox />
+      <ClearWithoutPaymentSection />
+    </>
+  );
+}
+
+const pkrFormat = new Intl.NumberFormat("en-PK");
+
+function fmtPkr(value: number): string {
+  return `${pkrFormat.format(value)} PKR`;
+}
+
+function ClearWithoutPaymentSection() {
+  const utils = trpc.useUtils();
+  const { data: rows } = trpc.ceo.clearWithoutPaymentApprovals.useQuery(undefined, {
+    refetchInterval: 60_000,
+    staleTime: 60_000,
+  });
+
+  const resolve = trpc.ceo.resolveClearWithoutPayment.useMutation({
+    onSuccess: () => {
+      void utils.ceo.clearWithoutPaymentApprovals.invalidate();
+      void utils.ceo.clearWithoutPaymentCount.invalidate();
+    },
+  });
+
+  const items = rows ?? [];
+
+  return (
+    <section className="mb-6 mt-2 max-h-[45dvh] shrink-0 overflow-auto rounded-xl border border-kastros-border bg-kastros-card">
+      <div className="flex items-center justify-between border-b border-kastros-border px-5 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Truck className="h-4 w-4 text-brand" />
+          Clear without payment
+        </div>
+        <span className="rounded-full bg-warning/15 px-2.5 py-0.5 text-xs font-semibold text-warning">
+          {items.length} pending
+        </span>
+      </div>
+
+      <div className="divide-y divide-kastros-border">
+        {items.length === 0 && (
+          <div className="flex items-center gap-2 px-5 py-8 text-sm text-subtle">
+            <Inbox className="h-4 w-4" /> No release-without-payment requests.
+          </div>
+        )}
+        {items.map((r) => {
+          const busy = resolve.isPending && resolve.variables?.truckId === r.truckId;
+          const errorHere = resolve.error && resolve.variables?.truckId === r.truckId;
+          return (
+            <div key={r.truckId} className="px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-sm font-semibold text-foreground">{r.gatepassNo}</span>
+                    <span className="text-sm text-foreground">{r.truckNo}</span>
+                    <span className="text-xs text-subtle">
+                      {r.warehouseName} · Arrived {format(new Date(r.arrivalDate), "d MMM yyyy")}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    <span className="font-mono text-accent-secondary">{r.tradeRef}</span> · {r.counterpartyName} ·{" "}
+                    {r.commodityName}
+                  </div>
+                  <div className="mt-1 text-xs text-accent-secondary">
+                    Trader {r.traderName} approved
+                    {r.saleTraderApprovedBy ? ` · ${r.saleTraderApprovedBy}` : ""}
+                  </div>
+                  <p className="mt-1 text-xs text-warning">
+                    Releasing without payment leaves the receivable open in the buyer&apos;s ledger.
+                  </p>
+                </div>
+                <div className="flex flex-wrap justify-end gap-x-6 gap-y-2 text-right">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-subtle">Total receivable</div>
+                    <div className="text-sm font-bold tabular-nums text-foreground">
+                      {fmtPkr(r.saleExpectedPkr)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-subtle">Buyer balance</div>
+                    <div
+                      className={cn(
+                        "text-sm font-semibold tabular-nums",
+                        r.buyerBalancePkr >= 0 ? "text-success" : "text-destructive",
+                      )}
+                    >
+                      {fmtPkr(r.buyerBalancePkr)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => resolve.mutate({ truckId: r.truckId, decision: "APPROVE" })}
+                  className="inline-flex items-center gap-1 rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-kastros-bg hover:opacity-90 disabled:opacity-50"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  {busy && resolve.variables?.decision === "APPROVE" ? "Approving…" : "Approve release"}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => resolve.mutate({ truckId: r.truckId, decision: "REJECT" })}
+                  className="inline-flex items-center gap-1 rounded-md border border-kastros-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  {busy && resolve.variables?.decision === "REJECT" ? "Rejecting…" : "Reject"}
+                </button>
+              </div>
+              {errorHere && <p className="mt-2 text-xs text-destructive">{resolve.error?.message}</p>}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }

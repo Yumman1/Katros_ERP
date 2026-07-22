@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ShellHeader } from "@/components/layout/shell-header";
 import { DeferredPriceTicker } from "@/components/modules/deferred-price-ticker";
+import { trpc } from "@/lib/trpc/client";
 
 type NavLink = { href: string; label: string };
 type NavGroup = { label: string; children: NavLink[] };
@@ -24,7 +25,11 @@ const nav: NavEntry[] = [
     label: "Finance",
     children: [
       { href: "/finance/payments", label: "Payment approvals" },
+      { href: "/finance/ledgers", label: "Ledgers" },
+      { href: "/finance/vouchers", label: "Vouchers" },
+      { href: "/finance/sale-approvals", label: "Sell approvals" },
       { href: "/finance/change-requests", label: "Change requests" },
+      { href: "/finance/policies", label: "Policies" },
       { href: "/cashflow", label: "Cash Flow" },
       { href: "/reconciliation", label: "Reconciliation" },
     ],
@@ -49,22 +54,50 @@ const nav: NavEntry[] = [
   },
 ];
 
-function toAppNav(entries: NavEntry[]) {
+function countBadge(count: number | undefined) {
+  return count ? (
+    <span className="rounded-full bg-warning/20 px-2 py-0.5 text-[10px] font-bold text-warning">
+      {count}
+    </span>
+  ) : undefined;
+}
+
+function toAppNav(entries: NavEntry[], badges: Record<string, number | undefined>) {
   return entries.map((item) =>
     "children" in item
-      ? { label: item.label, items: item.children.map((c) => ({ href: c.href, label: c.label })) }
+      ? {
+          label: item.label,
+          items: item.children.map((c) => ({
+            href: c.href,
+            label: c.label,
+            badge: countBadge(badges[c.href]),
+          })),
+        }
       : { href: item.href, label: item.label },
   );
 }
 
 export function DashboardShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const pendingVouchers = trpc.finance.pendingVouchersCount.useQuery(undefined, {
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const saleApprovals = trpc.finance.saleApprovalsCount.useQuery(undefined, {
+    refetchInterval: 60_000,
+    retry: false,
+  });
+
+  const badges: Record<string, number | undefined> = {
+    "/finance/vouchers": pendingVouchers.data,
+    "/finance/sale-approvals": saleApprovals.data,
+  };
 
   return (
     <AppShell
       brandSubtitle="Control Tower"
       pathname={pathname}
-      nav={toAppNav(nav)}
+      nav={toAppNav(nav, badges)}
       header={
         <ShellHeader
           left={new Date().toLocaleString("en-PK", {

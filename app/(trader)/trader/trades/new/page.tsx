@@ -69,9 +69,9 @@ import { traderDisplayName } from "@/lib/trader-display-name";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { TradeDirection } from "@prisma/client";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import { addDays, differenceInCalendarDays, format } from "date-fns";
@@ -148,8 +148,18 @@ const defaultStart = todayStr;
 const defaultEnd = format(addDays(new Date(), 14), "yyyy-MM-dd");
 
 export default function BookTradePage() {
+  return (
+    <Suspense fallback={null}>
+      <BookTradeForm />
+    </Suspense>
+  );
+}
+
+function BookTradeForm() {
   const router = useRouter();
   const utils = trpc.useUtils();
+  const searchParams = useSearchParams();
+  const draftParam = searchParams.get("draft");
   const { data: session, status: sessionStatus } = useSession();
   const refData = trpc.trader.referenceData.useQuery();
   const submitCommodityRequest = trpc.team.submitChangeRequest.useMutation({
@@ -168,10 +178,25 @@ export default function BookTradePage() {
       if (res.trade) {
         utils.trader.tradeByRef.setData({ tradeRef: res.tradeRef }, res.trade);
       }
+      if (draftIdRef.current) {
+        deleteDraft.mutate({ id: draftIdRef.current });
+        draftIdRef.current = null;
+      }
       invalidateTradeFlowCaches(utils, res.tradeRef);
       router.push(`/trader/trades/${encodeURIComponent(res.tradeRef)}`);
     },
   });
+  const saveDraft = trpc.trader.saveBookingDraft.useMutation({
+    onSuccess: (res) => {
+      draftIdRef.current = res.id;
+      setLastDraftSavedAt(new Date());
+      void utils.trader.bookingDrafts.invalidate();
+    },
+  });
+  const deleteDraft = trpc.trader.deleteBookingDraft.useMutation({
+    onSuccess: () => void utils.trader.bookingDrafts.invalidate(),
+  });
+  const policy = trpc.policy.get.useQuery();
 
   const loggedInTraderName = traderDisplayName(session);
   const [showAddCommodity, setShowAddCommodity] = useState(false);
@@ -190,16 +215,35 @@ export default function BookTradePage() {
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [newUnit, setNewUnit] = useState({ code: "", kgPerUnit: 1000 });
   const [newCommodity, setNewCommodity] = useState(emptyCommodityFormState);
-  const [newCp, setNewCp] = useState<{ name: string; ntn: string }>({
+  const [newCp, setNewCp] = useState<{
+    name: string;
+    ntn: string;
+    contactPerson: string;
+    contactPhone: string;
+  }>({
     name: "",
     ntn: "",
+    contactPerson: "",
+    contactPhone: "",
   });
+
+  // Autosaved booking draft — id is kept in a ref so debounced saves never go stale.
+  const draftIdRef = useRef<string | null>(null);
+  const [lastDraftSavedAt, setLastDraftSavedAt] = useState<Date | null>(null);
+  const lastSavedPayloadRef = useRef<string | null>(null);
+  const draftRestoredRef = useRef(false);
+  const restoreFixupRef = useRef<{
+    form: Partial<Form>;
+    cornSpecs: QualityTolerances | null;
+  } | null>(null);
 
   const {
     register,
     handleSubmit,
     watch,
     setValue,
+    reset,
+    getValues,
     control,
     formState: { errors, isSubmitting },
   } = useForm<Form>({
@@ -232,6 +276,44 @@ export default function BookTradePage() {
     }
   }, [sessionStatus, loggedInTraderName, setValue]);
 
+  // Resume an autosaved draft (?draft=<id>) — restore form values, params,
+  // warehouses, and corn specs, then keep saving to the same draft id.
+  const draftQuery = trpc.trader.bookingDraft.useQuery(
+    { id: draftParam ?? "" },
+    { enabled: Boolean(draftParam), refetchOnWindowFocus: false },
+  );
+
+  useEffect(() => {
+    if (draftRestoredRef.current) return;
+    if (draftQuery.isError || (draftQuery.isSuccess && !draftQuery.data)) {
+      // Draft gone (deleted or bad id) — continue as a fresh form/new draft.
+      draftRestoredRef.current = true;
+      return;
+    }
+    const draft = draftQuery.data;
+    if (!draft) return;
+    draftRestoredRef.current = true;
+    const payload = (draft.payload ?? {}) as {
+      form?: Partial<Form>;
+      tradeParams?: TradeParamValues;
+      selectedWarehouses?: string[];
+      cornSpecs?: QualityTolerances;
+    };
+    const savedForm: Partial<Form> = { ...(payload.form ?? {}) };
+    // JSON round-trips turn NaN (cleared number inputs) into null — drop those.
+    for (const key of Object.keys(savedForm) as (keyof Form)[]) {
+      if (savedForm[key] == null) delete savedForm[key];
+    }
+    reset({ ...getValues(), ...savedForm });
+    if (payload.tradeParams) setTradeParams(payload.tradeParams);
+    if (Array.isArray(payload.selectedWarehouses)) setSelectedWarehouses(payload.selectedWarehouses);
+    if (payload.cornSpecs) setCornSpecs(payload.cornSpecs);
+    // Commodity-driven effects overwrite units/specs once the commodity loads —
+    // stash the saved values so the fixup effect below can re-apply them.
+    restoreFixupRef.current = { form: savedForm, cornSpecs: payload.cornSpecs ?? null };
+    draftIdRef.current = draft.id;
+  }, [draftQuery.data, draftQuery.isError, draftQuery.isSuccess, reset, getValues]);
+
   // Fields start empty; react-hook-form yields NaN for cleared number inputs.
   const qtyRaw = watch("quantity");
   const qty = typeof qtyRaw === "number" && Number.isFinite(qtyRaw) ? qtyRaw : 0;
@@ -252,12 +334,63 @@ export default function BookTradePage() {
   const deliveryEnd = watch("deliveryEnd");
   const paymentType = watch("paymentType");
   const priceBasis = watch("priceBasis");
+  const counterpartyId = watch("counterpartyId");
 
   const commodities = refData.data?.commodities ?? [];
   const quantityUnitOptions = refData.data?.quantityUnits ?? [...QUANTITY_UNITS];
   const priceWeightUnitOptions = refData.data?.priceWeightUnits ?? [...PRICE_WEIGHT_UNITS];
   const priceCurrencyOptions = refData.data?.priceCurrencies ?? [...PRICE_CURRENCIES];
   const selectedCommodity = commodities.find((c) => c.id === commodityId);
+
+  // BUY register (CP-xxxxx) vs SELL register (CPS-xxxxx) — separate dropdowns per side.
+  const counterpartyOptions =
+    direction === TradeDirection.SELL
+      ? refData.data?.sellCounterparties ?? []
+      : refData.data?.buyCounterparties ?? [];
+  const selectedCounterparty = counterpartyOptions.find((cp) => cp.id === counterpartyId);
+
+  // Clear the counterparty when the direction flips to a register it doesn't belong to.
+  useEffect(() => {
+    if (!counterpartyId || !refData.data) return;
+    const list =
+      direction === TradeDirection.SELL
+        ? refData.data.sellCounterparties
+        : refData.data.buyCounterparties;
+    if (!list.some((cp) => cp.id === counterpartyId)) {
+      setValue("counterpartyId", "");
+    }
+  }, [direction, counterpartyId, refData.data, setValue]);
+
+  // Prefill contact person/number from the counterparty when the fields are empty.
+  useEffect(() => {
+    if (!selectedCounterparty) return;
+    const { contactPerson, contactPhone } = selectedCounterparty;
+    setTradeParams((p) => {
+      const next = { ...p };
+      let changed = false;
+      if (!next.contactPerson && contactPerson) {
+        next.contactPerson = contactPerson;
+        changed = true;
+      }
+      if (!next.contactNumber && contactPhone) {
+        next.contactNumber = contactPhone;
+        changed = true;
+      }
+      return changed ? next : p;
+    });
+  }, [selectedCounterparty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sellInflow = trpc.policy.sellInflowStatus.useQuery(undefined, {
+    enabled: direction === TradeDirection.SELL,
+  });
+  const isOverInflowLimit = (cpId: string) =>
+    direction === TradeDirection.SELL &&
+    sellInflow.data != null &&
+    (sellInflow.data.byCounterparty[cpId] ?? 0) > sellInflow.data.limitPkr;
+  const inflowLimitMillions =
+    sellInflow.data != null
+      ? Math.round(sellInflow.data.limitPkr / 1_000_000).toLocaleString("en-PK")
+      : null;
 
   const bookingIncoterms = useMemo(
     () => incotermsForBooking(direction, tradeScope, selectedCommodity?.code),
@@ -375,6 +508,25 @@ export default function BookTradePage() {
     setValue("priceKgPerUnit", basis.kgPerUnit, { shouldValidate: true });
   }, [selectedCommodity?.id, tradeScope, setValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // After a draft restore, the commodity effects above reset units, price
+  // metric, and corn specs to commodity defaults — re-apply the saved values
+  // once. Declared after those effects so it runs last in the same commit.
+  useEffect(() => {
+    const fix = restoreFixupRef.current;
+    if (!fix || !selectedCommodity) return;
+    restoreFixupRef.current = null;
+    if (fix.cornSpecs) setCornSpecs(fix.cornSpecs);
+    if (fix.form.quantityUnit) setValue("quantityUnit", fix.form.quantityUnit);
+    if (fix.form.priceCurrency) setValue("priceCurrency", fix.form.priceCurrency);
+    if (fix.form.priceWeightUnit) setValue("priceWeightUnit", fix.form.priceWeightUnit);
+    if (typeof fix.form.priceKgPerUnit === "number") {
+      setValue("priceKgPerUnit", fix.form.priceKgPerUnit);
+    }
+    if (fix.form.priceBasis) setValue("priceBasis", fix.form.priceBasis);
+    if (fix.form.paymentType) setValue("paymentType", fix.form.paymentType);
+    if (fix.form.incoterms) setValue("incoterms", fix.form.incoterms);
+  }, [selectedCommodity?.id, setValue]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const { data: warehouseAvailability, isLoading: warehouseAvailabilityLoading } =
     trpc.trader.warehouseAvailability.useQuery(
       { commodityId: commodityId || undefined },
@@ -399,8 +551,8 @@ export default function BookTradePage() {
         storageDivision: avail?.storageDivision ?? warehouseStorageDivision,
         divisionAvailabilityPct: avail?.divisionAvailabilityPct ?? null,
         divisionAvailableMt: avail?.divisionAvailableMt ?? null,
-        freeOfAllocatedMt: avail?.freeOfAllocatedMt ?? null,
-        freeOfUnallocatedMt: avail?.freeOfUnallocatedMt ?? null,
+        trueAvailableMt: avail?.trueAvailableMt ?? null,
+        trueAvailabilityPct: avail?.trueAvailabilityPct ?? null,
       };
     });
   }, [refData.data?.companyWarehouses, warehouseAvailability, warehouseStorageDivision]);
@@ -429,6 +581,51 @@ export default function BookTradePage() {
   const fmtBase = (v: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: baseCurrency }).format(v);
 
+  // 236G advance income tax on sell trades — rate is set on Finance → Policies.
+  const advanceTaxRatePct = policy.data?.advanceTaxRatePct ?? null;
+  const advanceTaxAmount =
+    direction === TradeDirection.SELL && notional > 0 && advanceTaxRatePct != null
+      ? (notional * advanceTaxRatePct) / 100
+      : 0;
+
+  // ── Draft autosave — 2s after the last change, once the form is meaningful.
+  const formValues = watch();
+  const draftPayloadSerialized = JSON.stringify({
+    form: formValues,
+    tradeParams,
+    selectedWarehouses,
+    cornSpecs,
+  });
+  const bookPending = book.isPending;
+  const bookSucceeded = book.isSuccess;
+  useEffect(() => {
+    if (bookPending || bookSucceeded) return;
+    // When resuming, wait for the draft to load before autosaving over it.
+    if (draftParam && !draftRestoredRef.current) return;
+    const hasQty = typeof qtyRaw === "number" && Number.isFinite(qtyRaw) && qtyRaw > 0;
+    const hasPrice = typeof pxRaw === "number" && Number.isFinite(pxRaw) && pxRaw > 0;
+    if (!commodityId && !counterpartyId && !hasQty && !hasPrice) return;
+    if (draftPayloadSerialized === lastSavedPayloadRef.current) return;
+    const timer = setTimeout(() => {
+      lastSavedPayloadRef.current = draftPayloadSerialized;
+      saveDraft.mutate({
+        id: draftIdRef.current,
+        payload: JSON.parse(draftPayloadSerialized) as Record<string, unknown>,
+        summary: {
+          commodityLabel: selectedCommodity
+            ? `${selectedCommodity.code} — ${selectedCommodity.name}`
+            : null,
+          counterpartyLabel: selectedCounterparty
+            ? `${selectedCounterparty.code} — ${selectedCounterparty.name}`
+            : null,
+          direction: direction ?? null,
+          quantityLabel: hasQty ? `${qty.toLocaleString()} ${quantityUnit}` : null,
+        },
+      });
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [draftPayloadSerialized, bookPending, bookSucceeded, draftParam]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [submitHint, setSubmitHint] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<"draft" | "submit" | null>(null);
 
@@ -449,10 +646,10 @@ export default function BookTradePage() {
         if (isCorn && tradeScope === "LOCAL" && tradeParams.dealStatus) {
           cleanedParams.dealStatus = tradeParams.dealStatus;
         }
-        if (isCorn && tradeParams.contactPerson) {
+        if (tradeParams.contactPerson) {
           cleanedParams.contactPerson = tradeParams.contactPerson;
         }
-        if (isCorn && tradeParams.contactNumber) {
+        if (tradeParams.contactNumber) {
           cleanedParams.contactNumber = tradeParams.contactNumber;
         }
         if (data.paymentType === "CREDIT" && data.creditDays) {
@@ -610,12 +807,22 @@ export default function BookTradePage() {
                 className="kastros-select w-full"
               >
                 <option value="">Select…</option>
-                {refData.data?.counterparties.map((cp) => (
+                {counterpartyOptions.map((cp) => (
                   <option key={cp.id} value={cp.id}>
                     {cp.code} — {cp.name}
+                    {isOverInflowLimit(cp.id) && inflowLimitMillions
+                      ? ` — ⚠ Caution: over PKR ${inflowLimitMillions}M this FY`
+                      : ""}
                   </option>
                 ))}
               </select>
+              {selectedCounterparty && sellInflow.data && isOverInflowLimit(selectedCounterparty.id) && (
+                <p className="mt-1 text-xs text-warning">
+                  Caution: {selectedCounterparty.name} has crossed the yearly inflow limit of PKR{" "}
+                  {new Intl.NumberFormat("en-PK").format(sellInflow.data.limitPkr)} (
+                  {sellInflow.data.fiscalYear}). Confirm with finance before selling more.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => setShowAddCp((v) => !v)}
@@ -637,8 +844,21 @@ export default function BookTradePage() {
                     onChange={(e) => setNewCp((s) => ({ ...s, ntn: e.target.value }))}
                     className="rounded-md border border-kastros-border bg-kastros-bg px-2 py-1.5 text-sm text-foreground"
                   />
+                  <input
+                    placeholder="Contact person"
+                    value={newCp.contactPerson}
+                    onChange={(e) => setNewCp((s) => ({ ...s, contactPerson: e.target.value }))}
+                    className="rounded-md border border-kastros-border bg-kastros-bg px-2 py-1.5 text-sm text-foreground"
+                  />
+                  <input
+                    placeholder="Contact number"
+                    value={newCp.contactPhone}
+                    onChange={(e) => setNewCp((s) => ({ ...s, contactPhone: e.target.value }))}
+                    className="rounded-md border border-kastros-border bg-kastros-bg px-2 py-1.5 text-sm text-foreground"
+                  />
                   <p className="text-[11px] text-subtle">
-                    A unique counterparty code (e.g. CP-00101) is assigned automatically when you save.
+                    A unique counterparty code is assigned automatically when you save — buy side
+                    gets a CP-xxxxx code, sell side a CPS-xxxxx code.
                   </p>
                   <button
                     type="button"
@@ -648,10 +868,13 @@ export default function BookTradePage() {
                         name: newCp.name.trim(),
                         country: "PK",
                         ntn: newCp.ntn.trim() || undefined,
+                        side: direction === TradeDirection.SELL ? "SELL" : "BUY",
+                        contactPerson: newCp.contactPerson.trim() || undefined,
+                        contactPhone: newCp.contactPhone.trim() || undefined,
                       });
                       setValue("counterpartyId", row.id);
                       setShowAddCp(false);
-                      setNewCp({ name: "", ntn: "" });
+                      setNewCp({ name: "", ntn: "", contactPerson: "", contactPhone: "" });
                     }}
                     className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-kastros-bg disabled:opacity-50"
                   >
@@ -662,6 +885,25 @@ export default function BookTradePage() {
                   )}
                 </div>
               )}
+            </Field>
+
+            <Field label="Contact person (optional)">
+              <input
+                value={String(tradeParams.contactPerson ?? "")}
+                onChange={(e) =>
+                  setTradeParams((p) => ({ ...p, contactPerson: e.target.value || undefined }))
+                }
+                className="kastros-select w-full"
+              />
+            </Field>
+            <Field label="Contact number (optional)">
+              <input
+                value={String(tradeParams.contactNumber ?? "")}
+                onChange={(e) =>
+                  setTradeParams((p) => ({ ...p, contactNumber: e.target.value || undefined }))
+                }
+                className="kastros-select w-full"
+              />
             </Field>
 
             <Field label="Trade date" error={errors.tradeDate?.message}>
@@ -727,24 +969,6 @@ export default function BookTradePage() {
                     </select>
                   </Field>
                 )}
-                <Field label="Contact person">
-                  <input
-                    value={String(tradeParams.contactPerson ?? "")}
-                    onChange={(e) =>
-                      setTradeParams((p) => ({ ...p, contactPerson: e.target.value || undefined }))
-                    }
-                    className="kastros-select w-full"
-                  />
-                </Field>
-                <Field label="Contact number">
-                  <input
-                    value={String(tradeParams.contactNumber ?? "")}
-                    onChange={(e) =>
-                      setTradeParams((p) => ({ ...p, contactNumber: e.target.value || undefined }))
-                    }
-                    className="kastros-select w-full"
-                  />
-                </Field>
               </>
             ) : (
               <Field label="Commodity origin" error={errors.productOrigin?.message}>
@@ -982,6 +1206,20 @@ export default function BookTradePage() {
                 </div>
               </>
             )}
+            {direction === TradeDirection.SELL && notional > 0 && advanceTaxRatePct != null && (
+              <>
+                <div title="Set on Finance → Policies">
+                  Advance income tax (236G, {advanceTaxRatePct}%):{" "}
+                  <span className="data-grid text-warning">{fmtBase(advanceTaxAmount)}</span>
+                </div>
+                <div title="Set on Finance → Policies">
+                  Total receivable (incl. commission + 236G):{" "}
+                  <span className="data-grid font-semibold text-foreground">
+                    {fmtBase(notional + commissionInBase + advanceTaxAmount)}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
           )}
         </Section>
@@ -1179,8 +1417,14 @@ export default function BookTradePage() {
             Cancel
           </Link>
           <span className="text-xs text-subtle">
-            Drafts stay in My Trades · Submitting sends the trade to execution Unreviewed Trades for review and lock.
+            Drafts stay in My Trades · Unfinished forms are autosaved under My Trades → Unfinished ·
+            Submitting sends the trade to execution Unreviewed Trades for review and lock.
           </span>
+          {lastDraftSavedAt && (
+            <span className="text-xs text-subtle">
+              Draft autosaved · {format(lastDraftSavedAt, "HH:mm")}
+            </span>
+          )}
         </div>
       </form>
       </div>

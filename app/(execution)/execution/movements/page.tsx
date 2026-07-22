@@ -40,13 +40,28 @@ function pendingTransporter(t: PendingTruck) {
 }
 
 /**
+ * An assigned OUTBOUND truck still needs workflow action while its sale stage
+ * is open (payment not received and not CEO-cleared).
+ */
+function hasOpenSaleStage(t: PendingTruck): boolean {
+  return (
+    t.movementType === "OUTBOUND" &&
+    t.saleStage != null &&
+    t.saleStage !== "PAYMENT_RECEIVED" &&
+    t.saleStage !== "CLEARED_UNPAID"
+  );
+}
+
+/**
  * A gatepass truck is COMPLETE only when it is fully assigned to a trade AND
- * (for inbound) its gate invoice has been entered. Assigned-but-uninvoiced
- * trucks stay in the incomplete workflow list.
+ * (inbound) its gate invoice has been entered, or (outbound) its sale payment
+ * workflow has finished. Assigned-but-unfinished trucks stay in the incomplete
+ * workflow list.
  */
 function isGateWorkflowComplete(t: PendingTruck): boolean {
   if (t.status !== "ASSIGNED") return false;
-  return t.movementType === "OUTBOUND" || Boolean(t.gateInvoiceNo);
+  if (t.movementType === "OUTBOUND") return !hasOpenSaleStage(t);
+  return Boolean(t.gateInvoiceNo);
 }
 
 const fmtKg = (n: number) =>
@@ -168,13 +183,14 @@ export default function TruckMovementsPage() {
     });
 
     const pendingRows: Movement[] = (pendingTrucks ?? [])
-      .filter((t) => t.status !== "ASSIGNED")
+      // Assigned outbound trucks stay visible while the sale payment workflow is open.
+      .filter((t) => t.status !== "ASSIGNED" || hasOpenSaleStage(t))
       .map((t) => ({
         id: `pending-${t.id}`,
         type: t.movementType,
         date: t.arrivalDate,
         warehouseName: t.warehouseName,
-        tradeRef: "—",
+        tradeRef: t.status === "ASSIGNED" ? (t.assignedTradeRef ?? "—") : "—",
         commodityCode: t.commodityCode ?? "-",
         commodityName: t.commodityName ?? "Commodity",
         quantityUnit: "KG",
@@ -556,7 +572,7 @@ export default function TruckMovementsPage() {
                     {m.driverName && <div className="truncate text-subtle">{m.driverName}</div>}
                   </td>
                   <td className="px-5 py-3">
-                    {m.isPendingGatepass || m.tradeRef === "—" ? (
+                    {m.tradeRef === "—" ? (
                       <>
                         <span className="text-xs font-medium text-accent-secondary">Awaiting assignment</span>
                         <div className="text-subtle">

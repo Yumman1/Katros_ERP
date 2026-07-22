@@ -42,8 +42,8 @@ export default function TraderInvoiceApprovalsPage() {
   return (
     <div className="kastros-desk-page">
       <PageHeader
-        title="Invoice approvals"
-        subtitle="Gate invoices on your trades waiting for payment approval. Approving sends the invoice to payment; holding parks it against old dues."
+        title="Buy Invoice Approvals"
+        subtitle="Purchase-side gate invoices on your buy trades waiting for payment approval. Approving sends the invoice to payment; holding parks it against old dues."
       />
 
       <div className="kastros-desk-scroll space-y-6 pb-6">

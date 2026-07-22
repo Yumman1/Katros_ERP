@@ -126,6 +126,15 @@ enum CounterpartyType {
   BANK
 }
 
+/// Which booking direction this counterparty register belongs to. BUY-side
+/// counterparties (we purchase from them) and SELL-side counterparties (we
+/// sell to them) are fully separate registers with separate code series —
+/// the same legal name may exist once on each side.
+enum CounterpartySide {
+  BUY
+  SELL
+}
+
 enum KycStatus {
   VERIFIED
   PENDING
@@ -138,6 +147,8 @@ model Counterparty {
   name        String
   code        String           @unique
   type        CounterpartyType
+  /// BUY register (sellers we purchase from) vs SELL register (buyers we sell to).
+  side        CounterpartySide @default(BUY)
   country     String
   creditLimit Decimal?         @db.Decimal(20, 4)
   kycStatus   KycStatus        @default(NOT_ON_FILE)
@@ -146,6 +157,9 @@ model Counterparty {
   /// Legal company name as registered on NTN.
   companyNameNtn String?
   ntn         String?
+  /// Optional booking-form contact — saved once with the counterparty.
+  contactPerson String?
+  contactPhone  String?
   address     String?
   bankDetails String?
   createdAt   DateTime         @default(now())
@@ -155,6 +169,10 @@ model Counterparty {
 
   trades   Trade[]
   invoices Invoice[]
+  ledgerEntries CounterpartyLedgerEntry[]
+  vouchers      Voucher[]
+
+  @@index([side])
 }
 
 enum LocationType {
@@ -681,6 +699,25 @@ enum GateInvoiceStage {
   PAYMENT_APPROVED
 }
 
+/// Outbound (sale) truck payment workflow. Set at trade assignment and
+/// advanced by ledger balance + trader / finance / CEO approvals.
+enum SaleTruckStage {
+  /// Receivable computed but the buyer's ledger credit does not cover it yet.
+  AWAITING_BALANCE
+  /// Sent to the trade's trader for sell-invoice approval.
+  PENDING_TRADER
+  /// Trader approved — awaiting finance approval.
+  PENDING_FINANCE
+  /// Trader + finance approved — payment received, truck may gate out.
+  PAYMENT_RECEIVED
+  /// Clear-without-payment path: awaiting the trade's trader.
+  CLEAR_PENDING_TRADER
+  /// Clear-without-payment path: trader agreed — awaiting CEO.
+  CLEAR_PENDING_CEO
+  /// CEO cleared the truck without full payment.
+  CLEARED_UNPAID
+}
+
 /// Gatepass entry logged at the warehouse gate (public REST form).
 model PendingTruck {
   id         String   @id @default(cuid())
@@ -727,6 +764,24 @@ model PendingTruck {
   gateInvoiceStage     GateInvoiceStage?
   /// Expected invoice amount (PKR) computed at trade assignment — net warehouse weight × contract rate.
   gateInvoiceExpectedPkr Decimal? @db.Decimal(20, 4)
+
+  // ── Outbound sale payment workflow (movementType = OUTBOUND) ──
+  /// Sale value before tax: dispatched weight × contract rate (PKR).
+  saleBasePkr     Decimal? @db.Decimal(20, 2)
+  /// 236G advance income tax on the base amount (PKR), at the policy rate.
+  saleTaxPkr      Decimal? @db.Decimal(20, 2)
+  /// Expected receivable incl. 236G — the ledger debit for this truck (PKR).
+  saleExpectedPkr Decimal? @db.Decimal(20, 2)
+  saleStage       SaleTruckStage?
+  saleTraderApprovedBy  String?
+  saleTraderApprovedAt  DateTime?
+  saleFinanceApprovedBy String?
+  saleFinanceApprovedAt DateTime?
+  saleCeoApprovedBy     String?
+  saleCeoApprovedAt     DateTime?
+  /// Printable release documents, numbered on payment approval / CEO clearance.
+  gateOutSlipNo   String? @unique
+  deliveryOrderNo String? @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1179,6 +1234,108 @@ model TradeTraceabilityLink {
   createdBy   User               @relation("TradeTraceLinkCreatedBy", fields: [createdById], references: [id])
 
   @@unique([tradeId, batchId])
+}
+
+// ─── Finance policies, counterparty ledgers & vouchers ──────────────────────
+
+/// Company-wide finance policy knobs — single row, edited on the Finance →
+/// Policies page and read everywhere else in the app.
+model FinancePolicy {
+  id String @id @default("main")
+  /// Yearly inflow cap per SELL-side counterparty (PKR, fiscal year 1 Jul – 30 Jun).
+  yearlyInflowLimitPkr Decimal @default(200000000) @db.Decimal(20, 2)
+  /// 236G advance income tax rate (percent of price × quantity on sales).
+  advanceTaxRatePct Decimal @default(0.1) @db.Decimal(8, 4)
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+enum LedgerEntryType {
+  DEBIT
+  CREDIT
+}
+
+enum LedgerSourceType {
+  GATEPASS
+  VOUCHER
+  ADJUSTMENT
+}
+
+/// Running credit/debit ledger for SELL-side counterparties. DEBIT rows are
+/// posted when an outbound gatepass truck is assigned to a sale trade
+/// (receivable incl. 236G); CREDIT rows are posted when finance approves a
+/// payment voucher.
+model CounterpartyLedgerEntry {
+  id             String       @id @default(cuid())
+  counterpartyId String
+  counterparty   Counterparty @relation(fields: [counterpartyId], references: [id], onDelete: Cascade)
+  entryDate      DateTime     @default(now())
+  entryType      LedgerEntryType
+  amountPkr      Decimal      @db.Decimal(20, 2)
+  sourceType     LedgerSourceType
+  /// Business ref backing this entry (gatepass no / voucher no).
+  sourceRef      String?
+  tradeRef       String?
+  /// Debit entries: the outbound PendingTruck that raised the receivable.
+  truckId        String?      @unique
+  /// Credit entries: the finance-approved voucher.
+  voucherId      String?      @unique
+  voucher        Voucher?     @relation(fields: [voucherId], references: [id], onDelete: SetNull)
+  /// Aging anchor for debits on N-day credit terms (arrival + credit days).
+  dueDate        DateTime?
+  note           String?
+  createdAt      DateTime     @default(now())
+
+  @@index([counterpartyId, entryDate])
+  @@index([entryType])
+}
+
+enum VoucherStatus {
+  PENDING_FINANCE
+  APPROVED
+  REJECTED
+}
+
+/// Money-ingestion voucher entered by execution against a SELL-side
+/// counterparty. Credits the ledger only once finance approves it.
+model Voucher {
+  id             String        @id @default(cuid())
+  voucherNo      String        @unique
+  counterpartyId String
+  counterparty   Counterparty  @relation(fields: [counterpartyId], references: [id], onDelete: Cascade)
+  amountPkr      Decimal       @db.Decimal(20, 2)
+  /// Payment method (bank transfer, cheque, cash, …).
+  method         String?
+  /// Bank / cheque / deposit reference.
+  reference      String?
+  note           String?
+  status         VoucherStatus @default(PENDING_FINANCE)
+  enteredByName  String
+  resolvedByName String?
+  resolvedAt     DateTime?
+  resolutionNote String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  ledgerEntry CounterpartyLedgerEntry?
+
+  @@index([status])
+  @@index([counterpartyId])
+}
+
+/// Unfinished trade-booking form state, autosaved from the booking page so a
+/// closed tab or dropped connection never loses the trader's work.
+model TradeDraft {
+  id         String   @id @default(cuid())
+  traderName String
+  /// Full serialized booking-form state (form values + aux selections).
+  payload    Json
+  /// Light display summary for the My Trades list (labels only).
+  summary    Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([traderName, updatedAt])
 }
 
 // ─── Infrastructure ──────────────────────────────────────────────────────────

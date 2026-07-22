@@ -11,7 +11,7 @@ import {
   warehouseUtilizationSummary,
 } from "@/lib/warehouse-utilization";
 import { DESK_REFETCH_MS } from "@/lib/invalidate-caches";
-import { Boxes, Package, Truck, Warehouse } from "lucide-react";
+import { ArrowUpFromLine, Banknote, Boxes, Package, Truck, Warehouse } from "lucide-react";
 import Link from "next/link";
 import { useMemo, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,9 @@ export default function ExecutionInventoryPage() {
     {},
     { refetchInterval: DESK_REFETCH_MS },
   );
+  const { data: valuation } = trpc.execution.inventoryValuation.useQuery(undefined, {
+    refetchInterval: DESK_REFETCH_MS,
+  });
 
   const contractByRef = useMemo(
     () => new Map((contracts ?? []).map((c) => [c.tradeRef, c])),
@@ -157,11 +160,27 @@ export default function ExecutionInventoryPage() {
         </Link>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Kpi icon={<Warehouse className="h-5 w-5" />} label="Net stock (qty)" value={totalStockLabel || "0"} tone="brand" />
         <Kpi icon={<Package className="h-5 w-5" />} label="Unallocated (qty)" value={totalUnallocatedLabel || "0"} tone="info" />
         <Kpi icon={<Boxes className="h-5 w-5" />} label="Allocated (qty)" value={totalAllocatedLabel || "0"} tone="success" />
         <Kpi icon={<Warehouse className="h-5 w-5" />} label="Warehouses" value={warehouses.length} tone="info" />
+        <Kpi
+          icon={<Banknote className="h-5 w-5" />}
+          label="Total weighted purchase price"
+          value={
+            valuation
+              ? `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(valuation.weightedPurchasePricePkrPerMt)} PKR/MT`
+              : "—"
+          }
+          tone="brand"
+        />
+        <Kpi
+          icon={<ArrowUpFromLine className="h-5 w-5" />}
+          label="Total sold quantity"
+          value={valuation ? formatQtyWithUnit(valuation.totalSoldMt, "MT", 1) : "—"}
+          tone="success"
+        />
       </div>
 
       <section className="rounded-2xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>

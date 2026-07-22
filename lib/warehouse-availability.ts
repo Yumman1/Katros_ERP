@@ -41,6 +41,10 @@ export type WarehouseAvailabilityRow = {
   freeOfAllocatedMt: number | null;
   /** max(0, capacityMt − unallocatedInvMt); null when capacity isn't configured. */
   freeOfUnallocatedMt: number | null;
+  /** True free space: max(0, capacityMt − (allocatedInvMt + unallocatedInvMt)). */
+  trueAvailableMt: number | null;
+  /** trueAvailableMt as a % of capacityMt. */
+  trueAvailabilityPct: number | null;
 };
 
 type WarehouseLoc = {
@@ -103,6 +107,8 @@ const EMPTY_ROW = (loc: WarehouseLoc): WarehouseAvailabilityRow => ({
   unallocatedInvMt: 0,
   freeOfAllocatedMt: null,
   freeOfUnallocatedMt: null,
+  trueAvailableMt: null,
+  trueAvailabilityPct: null,
 });
 
 /** Same utilization math as Execution → Warehouses → Utilization. */
@@ -157,6 +163,15 @@ export function computeWarehouseAvailability(
       capacityMt != null ? Math.max(0, capacityMt - allocatedInvMt) : null;
     const freeOfUnallocatedMt =
       capacityMt != null ? Math.max(0, capacityMt - unallocatedInvMt) : null;
+    // True free space: capacity minus ALL physical inventory (allocated + unallocated).
+    const trueAvailableMt =
+      capacityMt != null
+        ? Math.max(0, capacityMt - allocatedInvMt - unallocatedInvMt)
+        : null;
+    const trueAvailabilityPct =
+      capacityMt != null && capacityMt > 0 && trueAvailableMt != null
+        ? Math.max(0, Math.min(100, (trueAvailableMt / capacityMt) * 100))
+        : null;
 
     return {
       id: loc.id,
@@ -181,6 +196,8 @@ export function computeWarehouseAvailability(
       unallocatedInvMt,
       freeOfAllocatedMt,
       freeOfUnallocatedMt,
+      trueAvailableMt,
+      trueAvailabilityPct,
     };
   });
 }

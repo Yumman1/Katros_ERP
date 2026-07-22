@@ -16,10 +16,10 @@ export type WarehouseOption = {
   storageDivision?: WarehouseStorageDivision | null;
   divisionAvailabilityPct?: number | null;
   divisionAvailableMt?: number | null;
-  /** max(0, capacity − allocated inventory) — stock on trucks assigned to trades. */
-  freeOfAllocatedMt?: number | null;
-  /** max(0, capacity − unallocated inventory) — gatepassed stock not yet assigned to a trade. */
-  freeOfUnallocatedMt?: number | null;
+  /** True free space: max(0, capacity − all physical inventory). */
+  trueAvailableMt?: number | null;
+  /** trueAvailableMt as a % of capacity. */
+  trueAvailabilityPct?: number | null;
 };
 
 type Props = {
@@ -88,8 +88,8 @@ export function WarehouseMultiSelect({
           : w.availableGrainMt;
         const tone = availabilityTone(availPct);
         const hasCapacity = availMt != null || w.grainDivisionSqFt != null;
-        const hasInventorySplit =
-          w.freeOfAllocatedMt != null && w.freeOfUnallocatedMt != null;
+        const hasTrueAvailability =
+          w.trueAvailableMt != null && w.trueAvailabilityPct != null;
 
         return (
           <label
@@ -132,13 +132,20 @@ export function WarehouseMultiSelect({
                 >
                   {availPct != null ? `${availPct.toFixed(0)}% available` : "N/A"}
                 </span>
-                {hasInventorySplit ? (
+                {hasTrueAvailability ? (
                   <span
-                    className="rounded-full border border-kastros-border bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground"
-                    title="Free of allocated = capacity − allocated inventory (stock on trucks assigned to trades). Free of unallocated = capacity − unallocated inventory (gatepassed stock not yet assigned to a trade)."
+                    className={cn(
+                      "rounded-full border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                      TONE_CLASS[availabilityTone(w.trueAvailabilityPct)],
+                    )}
+                    title="True free space: capacity minus all physical inventory (allocated + unallocated)."
                   >
-                    Free of allocated {fmtCapacityMt(w.freeOfAllocatedMt)} MT · Free of
-                    unallocated {fmtCapacityMt(w.freeOfUnallocatedMt)} MT
+                    Available{" "}
+                    {(w.trueAvailableMt as number).toLocaleString(undefined, {
+                      minimumFractionDigits: 1,
+                      maximumFractionDigits: 1,
+                    })}{" "}
+                    MT · {(w.trueAvailabilityPct as number).toFixed(0)}%
                   </span>
                 ) : hasCapacity ? (
                   <span
