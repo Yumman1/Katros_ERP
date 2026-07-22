@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AlertTriangle, Check, Pencil } from "lucide-react";
 import { formatCurrency } from "@/lib/formatters/numbers";
@@ -50,7 +51,8 @@ function commodityMatches(truck: WorkflowTruck, contract: WorkflowContract): boo
   return contract.commodityCode === truck.commodityCode;
 }
 
-type StepState = "done" | "active" | "waiting" | "error";
+/** "warn" = completed with a caveat (Check badge, warning colours). */
+type StepState = "done" | "active" | "waiting" | "error" | "warn";
 
 function StepPanel({
   step,
@@ -71,6 +73,7 @@ function StepPanel({
       className={cn(
         "flex min-w-0 flex-col gap-2 rounded-lg border p-3",
         state === "done" && "border-success/40 bg-success/[0.06]",
+        state === "warn" && "border-warning/40 bg-warning/[0.06]",
         state === "error" && "border-destructive/40 bg-destructive/[0.06]",
         state === "active" && "border-kastros-border bg-kastros-bg/60",
         state === "waiting" && "border-dashed border-kastros-border/70 bg-transparent opacity-70",
@@ -81,12 +84,13 @@ function StepPanel({
           className={cn(
             "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
             state === "done" && "bg-success text-white",
+            state === "warn" && "bg-warning text-white",
             state === "error" && "bg-destructive text-white",
             state === "active" && "border border-kastros-border text-muted-foreground",
             state === "waiting" && "border border-dashed border-kastros-border text-subtle",
           )}
         >
-          {state === "done" ? <Check className="h-3 w-3" /> : step}
+          {state === "done" || state === "warn" ? <Check className="h-3 w-3" /> : step}
         </span>
         <span className="text-[11px] font-bold uppercase tracking-wider text-foreground">
           {title}
@@ -96,6 +100,7 @@ function StepPanel({
             className={cn(
               "ml-auto truncate text-[11px] font-medium",
               state === "done" && "text-success",
+              state === "warn" && "text-warning",
               state === "error" && "text-destructive",
               (state === "active" || state === "waiting") && "text-subtle",
             )}
@@ -120,8 +125,9 @@ function ErrorLine({ message }: { message: string }) {
 
 /**
  * Two-step guided workflow strip for a gatepass truck: 1) assign to a trade,
- * 2) enter the physical gate invoice (inbound only). The card leaves the
- * incomplete list once both steps are done.
+ * 2) inbound — enter the physical gate invoice; outbound — collect the buyer's
+ * payment (or CEO clearance). The card leaves the incomplete list once both
+ * steps are done.
  */
 export function GateTruckWorkflow({
   truck,
@@ -132,9 +138,10 @@ export function GateTruckWorkflow({
 }) {
   const inbound = truck.movementType === "INBOUND";
   return (
-    <div className={cn("grid gap-2", inbound && "sm:grid-cols-2")}>
+    <div className="grid gap-2 sm:grid-cols-2">
       <TradeStep truck={truck} contracts={contracts} />
       {inbound && <InvoiceStep truck={truck} />}
+      {!inbound && <PaymentStep truck={truck} />}
     </div>
   );
 }
@@ -353,6 +360,202 @@ function InvoiceStep({ truck }: { truck: WorkflowTruck }) {
         )}
       </div>
       {save.error && <ErrorLine message={save.error.message} />}
+    </StepPanel>
+  );
+}
+
+// ─── Step 2 · Sale payment (outbound) ────────────────────────────────────────
+
+const fmtPkr = (n: number) =>
+  `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(n)} PKR`;
+
+function AmountLine({
+  label,
+  value,
+  bold,
+}: {
+  label: string;
+  value: string;
+  bold?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className={cn("text-[10px] uppercase tracking-wider", bold ? "text-muted-foreground" : "text-subtle")}>
+        {label}
+      </span>
+      <span
+        className={cn(
+          "font-mono text-[11px] tabular-nums",
+          bold ? "text-xs font-bold text-accent-secondary" : "text-foreground",
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function PrintLinks({ truckId }: { truckId: string }) {
+  return (
+    <div className="flex flex-wrap gap-3 text-[11px]">
+      <Link
+        href={`/execution/print/gate-out-slip/${truckId}`}
+        target="_blank"
+        className="font-medium text-accent-secondary hover:underline"
+      >
+        Gate out slip →
+      </Link>
+      <Link
+        href={`/execution/print/delivery-order/${truckId}`}
+        target="_blank"
+        className="font-medium text-accent-secondary hover:underline"
+      >
+        Delivery order →
+      </Link>
+    </div>
+  );
+}
+
+/**
+ * Outbound sale payment step — receivable (incl. 236G) vs the buyer's approved
+ * voucher credit, then trader/finance (or trader/CEO clearance) approvals.
+ * Queries saleWorkflowRows once — React Query dedupes it across cells.
+ */
+function PaymentStep({ truck }: { truck: WorkflowTruck }) {
+  const utils = trpc.useUtils();
+  const { data: saleRows } = trpc.execution.saleWorkflowRows.useQuery(undefined, {
+    staleTime: 15_000,
+  });
+  const row = useMemo(
+    () => saleRows?.find((r) => r.truckId === truck.id),
+    [saleRows, truck.id],
+  );
+
+  const send = trpc.execution.sendSaleForApproval.useMutation({
+    onSuccess: () => invalidateGateOpsCaches(utils),
+  });
+  const clear = trpc.execution.requestClearWithoutPayment.useMutation({
+    onSuccess: () => invalidateGateOpsCaches(utils),
+  });
+
+  if (!row || row.saleStage == null) {
+    return (
+      <StepPanel step={2} title="Payment" state="waiting" headline="After trade assignment">
+        <span className="text-[10px] text-subtle">
+          After trade assignment — the receivable (incl. 236G) and the buyer&rsquo;s ledger balance
+          appear here.
+        </span>
+      </StepPanel>
+    );
+  }
+
+  if (row.saleStage === "AWAITING_BALANCE") {
+    const expected = row.saleExpectedPkr ?? 0;
+    const available = row.availableCreditPkr ?? 0;
+    const shortfall = expected - available;
+    return (
+      <StepPanel step={2} title="Payment" state="active" headline="Awaiting balance">
+        <div className="space-y-0.5">
+          <AmountLine label="Base" value={fmtPkr(row.saleBasePkr ?? 0)} />
+          <AmountLine label="236G" value={fmtPkr(row.saleTaxPkr ?? 0)} />
+          <AmountLine label="Receivable" value={fmtPkr(expected)} bold />
+        </div>
+        <span
+          className={cn(
+            "text-[10px] font-medium",
+            row.canSendForApproval ? "text-success" : "text-destructive",
+          )}
+        >
+          Buyer credit available: {fmtPkr(available)}
+          {!row.canSendForApproval && shortfall > 0 && <> — short {fmtPkr(shortfall)}</>}
+        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={!row.canSendForApproval || send.isPending}
+            title="Needs approved voucher credit ≥ receivable"
+            onClick={() => send.mutate({ truckId: truck.id })}
+            className="kastros-btn-primary px-3 py-1.5 text-[11px] disabled:opacity-50"
+          >
+            {send.isPending ? "Sending…" : "Send for approval"}
+          </button>
+          <button
+            type="button"
+            disabled={clear.isPending}
+            onClick={() => {
+              if (confirm("Release without full payment? Needs trader + CEO approval.")) {
+                clear.mutate({ truckId: truck.id });
+              }
+            }}
+            className="rounded-md border border-destructive/40 px-3 py-1.5 text-[11px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+          >
+            {clear.isPending ? "Requesting…" : "Clear w/o payment"}
+          </button>
+        </div>
+        {send.error && <ErrorLine message={send.error.message} />}
+        {clear.error && <ErrorLine message={clear.error.message} />}
+      </StepPanel>
+    );
+  }
+
+  if (row.saleStage === "PENDING_TRADER") {
+    return (
+      <StepPanel step={2} title="Payment" state="active" headline="With trader">
+        <span className="text-[10px] text-subtle">
+          Awaiting trader approval — {row.tradeRef ?? "the trade"}&rsquo;s trader must approve the
+          sell invoice.
+        </span>
+      </StepPanel>
+    );
+  }
+
+  if (row.saleStage === "PENDING_FINANCE") {
+    return (
+      <StepPanel step={2} title="Payment" state="active" headline="With finance">
+        <span className="text-[10px] text-subtle">Trader approved — awaiting finance.</span>
+      </StepPanel>
+    );
+  }
+
+  if (row.saleStage === "CLEAR_PENDING_TRADER" || row.saleStage === "CLEAR_PENDING_CEO") {
+    return (
+      <StepPanel step={2} title="Payment" state="active" headline="Clearance">
+        <span className="text-[10px] font-medium text-warning">
+          {row.saleStage === "CLEAR_PENDING_TRADER"
+            ? `Clear-without-payment requested — awaiting ${row.tradeRef ?? "the trade"}'s trader.`
+            : "Trader agreed to release without payment — awaiting CEO clearance."}
+        </span>
+      </StepPanel>
+    );
+  }
+
+  if (row.saleStage === "CLEARED_UNPAID") {
+    return (
+      <StepPanel step={2} title="Payment" state="warn" headline="Cleared unpaid">
+        <span className="truncate font-mono text-xs font-semibold text-foreground">
+          {row.gateOutSlipNo ?? "—"}
+          {row.deliveryOrderNo && (
+            <span className="text-muted-foreground"> · {row.deliveryOrderNo}</span>
+          )}
+        </span>
+        <PrintLinks truckId={truck.id} />
+        <span className="text-[10px] text-warning">
+          Receivable remains open in the buyer&rsquo;s ledger.
+        </span>
+      </StepPanel>
+    );
+  }
+
+  // PAYMENT_RECEIVED
+  return (
+    <StepPanel step={2} title="Payment" state="done" headline="Payment received">
+      <span className="truncate font-mono text-xs font-semibold text-foreground">
+        {row.gateOutSlipNo ?? "—"}
+        {row.deliveryOrderNo && (
+          <span className="text-muted-foreground"> · {row.deliveryOrderNo}</span>
+        )}
+      </span>
+      <PrintLinks truckId={truck.id} />
     </StepPanel>
   );
 }

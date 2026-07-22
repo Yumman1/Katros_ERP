@@ -33,6 +33,8 @@ export function invalidateGateOpsCaches(utils: Utils) {
   void utils.execution.deskSummary.invalidate();
   void utils.execution.spotPipeline.invalidate();
   void utils.execution.pendingForLock.invalidate();
+  void utils.execution.saleWorkflowRows.invalidate();
+  void utils.execution.counterpartyLedgers.invalidate();
 }
 
 /** After CEO / department head resolves an approval that may touch master data or trades. */

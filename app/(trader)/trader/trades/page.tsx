@@ -10,14 +10,14 @@ import {
 } from "@/lib/trade-lifecycle";
 import Link from "next/link";
 import { TradeStatus } from "@prisma/client";
-import { endOfMonth, startOfMonth } from "date-fns";
+import { endOfMonth, format, startOfMonth } from "date-fns";
 import { PenLine } from "lucide-react";
 import { useState } from "react";
 import { TradeEditModal } from "@/components/trader/trade-edit-modal";
 
-type TradeFilter = "ALL" | "DRAFTS" | "LOCKED" | "CLOSED";
+type TradeFilter = "UNFINISHED" | "ALL" | "DRAFTS" | "LOCKED" | "CLOSED";
 
-const FILTERS: TradeFilter[] = ["ALL", "DRAFTS", "LOCKED", "CLOSED"];
+const FILTERS: TradeFilter[] = ["UNFINISHED", "ALL", "DRAFTS", "LOCKED", "CLOSED"];
 
 const statusStyle: Partial<Record<TradeStatus, string>> = {
   PENDING: "bg-warning/20 text-warning",
@@ -38,6 +38,11 @@ function filterInput(filter: TradeFilter) {
 export default function MyTradesPage() {
   const [filter, setFilter] = useState<TradeFilter>("ALL");
   const [editRef, setEditRef] = useState<string | null>(null);
+  const utils = trpc.useUtils();
+  const { data: drafts, isLoading: draftsLoading } = trpc.trader.bookingDrafts.useQuery();
+  const deleteDraft = trpc.trader.deleteBookingDraft.useMutation({
+    onSuccess: () => void utils.trader.bookingDrafts.invalidate(),
+  });
   const exportCsv = trpc.trader.exportLockedTrades.useMutation({
     onSuccess: (res) => {
       const blob = new Blob([res.csv], { type: "text/csv;charset=utf-8" });
@@ -97,12 +102,78 @@ export default function MyTradesPage() {
                 : "border-kastros-border text-muted-foreground hover:bg-foreground/5"
             }`}
           >
-            {f === "DRAFTS" ? "Drafts" : f === "CLOSED" ? "Closed" : f === "ALL" ? "All" : "Locked"}
+            {f === "UNFINISHED"
+              ? `Unfinished (${drafts?.length ?? 0})`
+              : f === "DRAFTS"
+                ? "Drafts"
+                : f === "CLOSED"
+                  ? "Closed"
+                  : f === "ALL"
+                    ? "All"
+                    : "Locked"}
           </button>
         ))}
       </div>
 
-      {isLoading ? (
+      {filter === "UNFINISHED" ? (
+        draftsLoading ? (
+          <div className="text-subtle">Loading unfinished bookings…</div>
+        ) : !drafts?.length ? (
+          <div className="rounded-xl border border-kastros-border bg-kastros-card px-6 py-10 text-center text-sm text-subtle">
+            No unfinished bookings. Booking forms autosave here while you fill them in.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {drafts.map((d) => {
+              const label =
+                [
+                  d.summary?.commodityLabel,
+                  d.summary?.counterpartyLabel,
+                  d.summary?.direction,
+                  d.summary?.quantityLabel,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "Untitled draft";
+              return (
+                <article
+                  key={d.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-kastros-border bg-kastros-card px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-foreground">{label}</div>
+                    <div className="mt-0.5 text-xs text-subtle">
+                      Last saved {format(new Date(d.updatedAt), "dd MMM yyyy HH:mm")}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={`/trader/trades/new?draft=${encodeURIComponent(d.id)}`}
+                      className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-kastros-bg hover:opacity-90"
+                    >
+                      Resume
+                    </Link>
+                    <button
+                      type="button"
+                      disabled={deleteDraft.isPending}
+                      onClick={() => {
+                        if (confirm("Delete this unfinished booking draft?")) {
+                          deleteDraft.mutate({ id: d.id });
+                        }
+                      }}
+                      className="rounded-md border border-kastros-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5 hover:text-destructive disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+            {deleteDraft.error && (
+              <p className="text-xs text-kastros-red">{deleteDraft.error.message}</p>
+            )}
+          </div>
+        )
+      ) : isLoading ? (
         <div className="text-subtle">Loading trades…</div>
       ) : (
       <div className="kastros-table-wrap text-sm">

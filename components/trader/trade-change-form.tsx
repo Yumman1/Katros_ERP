@@ -259,8 +259,8 @@ export function TradeChangeForm({
         {mode === "ceo" && (
           <>
             Track it under{" "}
-            <Link href="/trader/change-requests" className="font-medium underline">
-              Change Requests
+            <Link href="/trader/approvals" className="font-medium underline">
+              Approvals
             </Link>
             .
           </>
