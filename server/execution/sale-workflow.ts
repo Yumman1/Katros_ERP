@@ -22,8 +22,9 @@ import { TraderInvoiceOwnershipError, truckTransporterName, truckTransporterPhon
  *   AWAITING_BALANCE ──clear w/o payment──▶ CLEAR_PENDING_TRADER ──trader──▶
  *     CLEAR_PENDING_CEO ──CEO──▶ CLEARED_UNPAID
  *
- * PAYMENT_RECEIVED / CLEARED_UNPAID release the truck: dispatches flip to
- * RELEASED and the Gate Out Slip + Delivery Order numbers are issued.
+ * PAYMENT_RECEIVED / CLEARED_UNPAID issue the Gate Out Slip + Delivery Order
+ * numbers; execution prints them and flips the manual release toggle
+ * (markSaleTruckReleased) — only then does the register show RELEASED.
  */
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
@@ -86,11 +87,15 @@ async function transition(
   }
 }
 
-/** Issue Gate Out Slip + Delivery Order numbers and release the dispatches. */
-async function releaseTruck(truckId: string): Promise<void> {
+/**
+ * Issue Gate Out Slip + Delivery Order numbers. This does NOT release the
+ * truck — execution prints the documents and, once they are handed to the
+ * warehouse manager, flips the manual release toggle (markSaleTruckReleased).
+ */
+async function issueReleaseDocuments(truckId: string): Promise<void> {
   const row = await prisma.pendingTruck.findUnique({
     where: { id: truckId },
-    select: { gatepassNo: true, gateOutSlipNo: true, deliveryOrderNo: true },
+    select: { gateOutSlipNo: true, deliveryOrderNo: true },
   });
   if (!row) return;
   const gateOutSlipNo =
@@ -101,10 +106,36 @@ async function releaseTruck(truckId: string): Promise<void> {
     where: { id: truckId },
     data: { gateOutSlipNo, deliveryOrderNo },
   });
+}
+
+/**
+ * Manual release toggle (execution): confirms the printed Gate Out Slip +
+ * Delivery Order were handed to the warehouse manager. Flips the gate
+ * register dispatch to RELEASED and drops the truck from the workflow.
+ */
+export async function markSaleTruckReleased(
+  truckId: string,
+  releasedByName: string,
+): Promise<PendingTruck> {
+  const row = await saleTruckOrThrow(truckId);
+  if (row.saleStage !== "PAYMENT_RECEIVED" && row.saleStage !== "CLEARED_UNPAID") {
+    throw new Error("Only trucks with payment received (or CEO clearance) can be released");
+  }
+  if (!row.gateOutSlipNo || !row.deliveryOrderNo) {
+    throw new Error("Release documents have not been issued yet");
+  }
+  if (row.saleReleasedAt) {
+    throw new Error("This truck is already released");
+  }
+  await prisma.pendingTruck.update({
+    where: { id: truckId },
+    data: { saleReleasedAt: new Date(), saleReleasedBy: releasedByName },
+  });
   await prisma.outboundDispatch.updateMany({
     where: { gatepassNo: row.gatepassNo },
     data: { status: "RELEASED" },
   });
+  return freshTruck(truckId);
 }
 
 // ─── Execution: workflow rows + actions ──────────────────────────────────────
@@ -131,6 +162,9 @@ export type SaleWorkflowRow = {
   saleTraderApprovedBy: string | null;
   saleFinanceApprovedBy: string | null;
   saleCeoApprovedBy: string | null;
+  /** Manual release toggle state (null = not yet handed to warehouse manager). */
+  saleReleasedAt: Date | null;
+  saleReleasedBy: string | null;
 };
 
 /** Outbound trucks in the sale payment workflow with per-buyer credit state. */
@@ -180,6 +214,8 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
       saleTraderApprovedBy: r.saleTraderApprovedBy,
       saleFinanceApprovedBy: r.saleFinanceApprovedBy,
       saleCeoApprovedBy: r.saleCeoApprovedBy,
+      saleReleasedAt: r.saleReleasedAt,
+      saleReleasedBy: r.saleReleasedBy,
     };
   });
 }
@@ -428,7 +464,7 @@ export async function financeResolveSaleTruck(
     saleFinanceApprovedBy: financeName,
     saleFinanceApprovedAt: new Date(),
   });
-  await releaseTruck(truckId);
+  await issueReleaseDocuments(truckId);
   return freshTruck(truckId);
 }
 
@@ -508,7 +544,7 @@ export async function ceoResolveClearWithoutPayment(
     saleCeoApprovedBy: ceoName,
     saleCeoApprovedAt: new Date(),
   });
-  await releaseTruck(truckId);
+  await issueReleaseDocuments(truckId);
   return freshTruck(truckId);
 }
 
@@ -539,6 +575,8 @@ export type SaleTruckPrintable = {
   saleFinanceApprovedAt: Date | null;
   saleCeoApprovedBy: string | null;
   saleCeoApprovedAt: Date | null;
+  saleReleasedAt: Date | null;
+  saleReleasedBy: string | null;
   arrivalDate: Date;
   remarks: string | null;
 };
@@ -576,6 +614,8 @@ export async function getSaleTruckPrintable(truckId: string): Promise<SaleTruckP
     saleFinanceApprovedAt: truck.saleFinanceApprovedAt ?? null,
     saleCeoApprovedBy: truck.saleCeoApprovedBy ?? null,
     saleCeoApprovedAt: truck.saleCeoApprovedAt ?? null,
+    saleReleasedAt: truck.saleReleasedAt ?? null,
+    saleReleasedBy: truck.saleReleasedBy ?? null,
     arrivalDate: truck.arrivalDate,
     remarks: truck.remarks ?? null,
   };

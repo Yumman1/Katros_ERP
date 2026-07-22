@@ -438,11 +438,12 @@ export async function getPendingTrucks(filter?: {
     where.OR = [
       { status: { not: "ASSIGNED" } },
       { movementType: "INBOUND", gateInvoiceNo: null },
-      // Outbound trucks stay in the workflow until their payment is received
-      // (trader + finance approved) or the CEO cleared them without payment.
+      // Outbound trucks stay in the workflow until execution flips the manual
+      // release toggle (printed slips handed to the warehouse manager).
       {
         movementType: "OUTBOUND",
-        saleStage: { notIn: ["PAYMENT_RECEIVED", "CLEARED_UNPAID"] },
+        saleStage: { not: null },
+        saleReleasedAt: null,
       },
     ];
   }

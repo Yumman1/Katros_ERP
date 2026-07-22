@@ -782,6 +782,10 @@ model PendingTruck {
   /// Printable release documents, numbered on payment approval / CEO clearance.
   gateOutSlipNo   String? @unique
   deliveryOrderNo String? @unique
+  /// Manual release toggle — set by execution once the printed slips are
+  /// handed to the warehouse manager. Only then does the register show Released.
+  saleReleasedAt DateTime?
+  saleReleasedBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

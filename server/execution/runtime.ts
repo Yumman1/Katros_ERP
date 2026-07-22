@@ -94,6 +94,9 @@ export type PendingTruck = {
   saleCeoApprovedAt?: Date | null;
   gateOutSlipNo?: string | null;
   deliveryOrderNo?: string | null;
+  /** Manual release toggle — set once printed slips reach the warehouse manager. */
+  saleReleasedAt?: Date | null;
+  saleReleasedBy?: string | null;
   /** @deprecated legacy persisted trucks only */
   driverCnic?: string | null;
 };
@@ -328,6 +331,8 @@ export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
     saleCeoApprovedAt: row.saleCeoApprovedAt,
     gateOutSlipNo: row.gateOutSlipNo,
     deliveryOrderNo: row.deliveryOrderNo,
+    saleReleasedAt: row.saleReleasedAt,
+    saleReleasedBy: row.saleReleasedBy,
     driverCnic: null,
   };
 }
