@@ -13,6 +13,8 @@ import {
 import { applyApprovedChangeRequest } from "@/server/change-request-apply";
 import { recordTradeChangeResolved } from "@/server/trade-activity";
 import {
+  ceoResolveClearWithoutPayment,
+  getCeoClearApprovals,
   getInboundReceipts,
   getLockedContracts,
   getOutboundDispatches,
@@ -283,4 +285,30 @@ export const ceoRouter = router({
       inventoryRows,
     };
   }),
+
+  // ─── Clear-without-payment approvals (trader approved, CEO decides) ────────
+
+  clearWithoutPaymentApprovals: ceoProcedure().query(() => getCeoClearApprovals()),
+
+  clearWithoutPaymentCount: ceoProcedure().query(
+    async () => (await getCeoClearApprovals()).length,
+  ),
+
+  /** APPROVE → truck cleared unpaid + released (gate out slip + DO issued). */
+  resolveClearWithoutPayment: ceoProcedure()
+    .input(z.object({ truckId: z.string(), decision: z.enum(["APPROVE", "REJECT"]) }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await ceoResolveClearWithoutPayment(
+          input.truckId,
+          ctx.session.user.name ?? ctx.session.user.email ?? "CEO",
+          input.decision,
+        );
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Failed",
+        });
+      }
+    }),
 });

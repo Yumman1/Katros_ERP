@@ -45,6 +45,9 @@ import {
   assertSufficientOutboundStock,
   syncLinkedMovementsFromGatepass,
 } from "./movements";
+import { advanceTaxOn } from "@/lib/finance-policy";
+import { getFinancePolicy } from "@/server/finance/policy";
+import { postSaleDebitForTruck, removeSaleDebitForTruck } from "@/server/finance/ledger";
 
 export function truckTransporterName(truck: PendingTruck): string | null {
   return truck.transporterName?.trim() || truck.driverName?.trim() || null;
@@ -275,6 +278,7 @@ export async function updatePendingTruck(
 }
 
 export async function deletePendingTruck(id: string): Promise<{ ok: true }> {
+  await removeSaleDebitForTruck(id);
   const deleted = await prisma.pendingTruck.deleteMany({ where: { id } });
   if (deleted.count === 0) throw new Error("Gate entry not found");
   return { ok: true };
@@ -434,6 +438,12 @@ export async function getPendingTrucks(filter?: {
     where.OR = [
       { status: { not: "ASSIGNED" } },
       { movementType: "INBOUND", gateInvoiceNo: null },
+      // Outbound trucks stay in the workflow until their payment is received
+      // (trader + finance approved) or the CEO cleared them without payment.
+      {
+        movementType: "OUTBOUND",
+        saleStage: { notIn: ["PAYMENT_RECEIVED", "CLEARED_UNPAID"] },
+      },
     ];
   }
   if (filter?.from || filter?.to) {
@@ -471,6 +481,7 @@ export async function assignTruckToTrade(
   dispatch?: OutboundDispatch;
   splitRemainingKg: number;
 }> {
+  const financePolicy = await getFinancePolicy();
   const result = await prisma.$transaction(async (tx) => {
     // Row locks — two operators cannot double-assign the same truck or race the
     // same contract's open quantity.
@@ -690,6 +701,23 @@ export async function assignTruckToTrade(
         include: { paymentRequest: { select: { requestRef: true } } },
       });
 
+      // ── Sale payment workflow: receivable = base (weight × rate) + 236G ──
+      // advance income tax at the finance-policy rate. Posted as a DEBIT on
+      // the buyer's ledger immediately; the truck then waits for enough
+      // approved voucher credit before it can be sent for approvals.
+      const tradeRow = await tx.trade.findUnique({
+        where: { tradeRef },
+        select: { counterpartyId: true, paymentType: true, tradeParams: true },
+      });
+      const addedBasePkr = Math.round(allocateKg * rateKg * 100) / 100;
+      const saleBasePkr =
+        Math.round(((numOrNull(truckRow.saleBasePkr) ?? 0) + addedBasePkr) * 100) / 100;
+      const saleTaxPkr = advanceTaxOn(saleBasePkr, financePolicy.advanceTaxRatePct);
+      const saleExpectedPkr = Math.round((saleBasePkr + saleTaxPkr) * 100) / 100;
+      // Keep an already-advanced stage (partial re-assignment); fresh trucks
+      // start waiting on ledger balance.
+      const saleStage = truckRow.saleStage ?? "AWAITING_BALANCE";
+
       const updatedTruck = await tx.pendingTruck.update({
         where: { id: truckId },
         data: {
@@ -697,9 +725,41 @@ export async function assignTruckToTrade(
           status: truckStatus,
           assignedTradeRef: tradeRef,
           assignedAt,
+          saleBasePkr,
+          saleTaxPkr,
+          saleExpectedPkr,
+          saleStage,
         },
         include: TRUCK_INCLUDE,
       });
+
+      if (tradeRow) {
+        const params = (tradeRow.tradeParams ?? {}) as Record<string, unknown>;
+        const creditDaysRaw = params.creditDays;
+        const creditDays =
+          tradeRow.paymentType === "CREDIT_30"
+            ? 30
+            : tradeRow.paymentType === "CREDIT"
+              ? Number(creditDaysRaw) || null
+              : null;
+        const dueDate =
+          creditDays != null
+            ? new Date(truck.arrivalDate.getTime() + creditDays * 86_400_000)
+            : null;
+        await postSaleDebitForTruck(
+          {
+            truckId,
+            gatepassNo: truck.gatepassNo,
+            tradeRef,
+            counterpartyId: tradeRow.counterpartyId,
+            amountPkr: saleExpectedPkr,
+            dueDate,
+            note: `Outbound ${truck.gatepassNo} · ${truck.truckNo} — incl. 236G ${saleTaxPkr.toLocaleString("en-PK")} PKR`,
+          },
+          tx,
+        );
+      }
+
       return {
         truck: truckRowToRuntime(updatedTruck),
         dispatch: outboundRowToRuntime(dispatchRow),

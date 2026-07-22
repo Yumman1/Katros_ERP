@@ -35,7 +35,7 @@ import {
 import { lockTradeInStore, syncAllLockedContracts } from "@/server/execution-store";
 import type { PaymentType } from "@/server/dummy-data";
 import { updateCustomCounterparty } from "@/server/trader-master-data";
-import { recordTradeEditApplied } from "@/server/trade-activity";
+import { appendTradeActivity, recordTradeEditApplied } from "@/server/trade-activity";
 import { traderNamesMatch, canonicalTraderName } from "@/lib/trader-identity";
 
 export type OpenTradeSummary = {
@@ -563,6 +563,36 @@ export async function lockOpenTradeAfterTraderReview(
 
 export async function getPendingTraderReviewTrades(): Promise<OpenTradeSummary[]> {
   return (await getOpenTradesForExecution()).filter((t) => t.pendingTraderReview);
+}
+
+/**
+ * Trader approves execution's edits on their trade (from the Approvals page)
+ * WITHOUT locking it — clears pendingTraderReview so execution can lock the
+ * contract from their side.
+ */
+export async function traderApproveExecutionEdits(
+  traderName: string,
+  tradeRef: string,
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
+  if (!trade) throw new Error("Trade not found");
+  if (!traderNamesMatch(trade.traderName, canonicalTraderName(traderName))) {
+    throw new Error("You can only approve changes on your own trades");
+  }
+  if (!trade.pendingTraderReview) {
+    throw new Error("No execution changes awaiting your approval on this trade");
+  }
+  trade.pendingTraderReview = false;
+  await upsertBookedTrade(trade);
+  await appendTradeActivity(tradeRef, {
+    actorName: traderName,
+    actorSide: "TRADER",
+    kind: "EDIT_APPROVED",
+    requiresApproval: false,
+    summary: "Trader approved execution changes — trade can be locked by execution",
+    note: trade.executionEditNote ?? null,
+  });
+  return trade;
 }
 
 /** Whether this trade profile uses warehouse allocation on lock. */

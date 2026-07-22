@@ -1,4 +1,10 @@
-import { CommodityCategory, CounterpartyType, LocationType, Prisma } from "@prisma/client";
+import {
+  CommodityCategory,
+  CounterpartySide,
+  CounterpartyType,
+  LocationType,
+  Prisma,
+} from "@prisma/client";
 import type { Commodity, Counterparty, Location } from "@prisma/client";
 import {
   DEFAULT_GRADES,
@@ -48,6 +54,8 @@ export type MockCounterpartyOption = {
   name: string;
   code: string;
   type: CounterpartyType;
+  /** BUY register (we purchase from them) vs SELL register (we sell to them). */
+  side: CounterpartySide;
   country: string;
   kycStatus: KycStatus;
   kycRef: string | null;
@@ -55,6 +63,8 @@ export type MockCounterpartyOption = {
   /** Legal company name as registered on NTN */
   companyNameNtn: string | null;
   ntn: string | null;
+  contactPerson: string | null;
+  contactPhone: string | null;
   address: string | null;
   bankDetails: string | null;
 };
@@ -108,12 +118,15 @@ export function counterpartyRowToOption(row: Counterparty): MockCounterpartyOpti
     name: row.name,
     code: row.code,
     type: row.type,
+    side: row.side,
     country: row.country,
     kycStatus: row.kycStatus,
     kycRef: row.kycRef,
     kycExpires: row.kycExpires,
     companyNameNtn: row.companyNameNtn,
     ntn: row.ntn,
+    contactPerson: row.contactPerson,
+    contactPhone: row.contactPhone,
     address: row.address,
     bankDetails: row.bankDetails,
   };
@@ -146,15 +159,21 @@ function norm(s: string) {
   return s.trim().toLowerCase();
 }
 
-/** Unique counterparty business key, e.g. CP-00101 */
-export function formatCounterpartyCode(seq: number): string {
-  return `CP-${String(seq).padStart(5, "0")}`;
+/**
+ * Unique counterparty business key. The BUY and SELL registers run separate
+ * series so the same trading name can exist once per side with its own id:
+ * BUY → CP-00101, SELL → CPS-00101.
+ */
+export function formatCounterpartyCode(seq: number, side: CounterpartySide = "BUY"): string {
+  const prefix = side === "SELL" ? "CPS" : "CP";
+  return `${prefix}-${String(seq).padStart(5, "0")}`;
 }
 
-async function nextCounterpartyCode(): Promise<string> {
+async function nextCounterpartyCode(side: CounterpartySide): Promise<string> {
+  const counter = side === "SELL" ? COUNTER.COUNTERPARTY_SELL : COUNTER.COUNTERPARTY;
   for (let attempt = 0; attempt < 10_000; attempt += 1) {
-    const seq = await nextRef(COUNTER.COUNTERPARTY);
-    const code = formatCounterpartyCode(seq + 100);
+    const seq = await nextRef(counter);
+    const code = formatCounterpartyCode(seq + 100, side);
     const exists = await prisma.counterparty.findFirst({
       where: { code: { equals: code, mode: "insensitive" } },
       select: { id: true },
@@ -359,8 +378,13 @@ export async function addCustomGrade(commodityCode: string, grade: string): Prom
 
 // ─── Counterparties ──────────────────────────────────────────────────────────
 
-export async function getMergedCounterparties(): Promise<MockCounterpartyOption[]> {
-  const rows = await prisma.counterparty.findMany({ orderBy: { createdAt: "asc" } });
+export async function getMergedCounterparties(
+  side?: CounterpartySide,
+): Promise<MockCounterpartyOption[]> {
+  const rows = await prisma.counterparty.findMany({
+    where: side ? { side } : undefined,
+    orderBy: { createdAt: "asc" },
+  });
   return rows.map(counterpartyRowToOption);
 }
 
@@ -375,17 +399,30 @@ export async function addCustomCounterparty(input: {
   name: string;
   code?: string;
   type?: CounterpartyType;
+  side?: CounterpartySide;
   country: string;
   kycStatus?: KycStatus;
   kycRef?: string | null;
   kycExpires?: Date | null;
   companyNameNtn?: string | null;
   ntn?: string | null;
+  contactPerson?: string | null;
+  contactPhone?: string | null;
   address?: string | null;
   bankDetails?: string | null;
 }): Promise<MockCounterpartyOption> {
   const name = input.name.trim();
   if (!name) throw new Error("Name is required");
+  const side = input.side ?? CounterpartySide.BUY;
+  const dupeName = await prisma.counterparty.findFirst({
+    where: { side, name: { equals: name, mode: "insensitive" } },
+    select: { code: true },
+  });
+  if (dupeName) {
+    throw new Error(
+      `${name} is already registered on the ${side === "SELL" ? "sell" : "buy"} side as ${dupeName.code}`,
+    );
+  }
   let code: string;
   if (input.code?.trim()) {
     code = input.code.trim().toUpperCase();
@@ -395,19 +432,24 @@ export async function addCustomCounterparty(input: {
     });
     if (dupe) throw new Error(`Counterparty code ${code} already exists`);
   } else {
-    code = await nextCounterpartyCode();
+    code = await nextCounterpartyCode(side);
   }
   const row = await prisma.counterparty.create({
     data: {
       name,
       code,
-      type: input.type ?? CounterpartyType.TRADING_PARTNER,
+      type:
+        input.type ??
+        (side === "SELL" ? CounterpartyType.BUYER : CounterpartyType.TRADING_PARTNER),
+      side,
       country: input.country.trim(),
       kycStatus: input.kycStatus ?? "PENDING",
       kycRef: input.kycRef?.trim() || null,
       kycExpires: input.kycExpires ?? null,
       companyNameNtn: input.companyNameNtn?.trim() || null,
       ntn: input.ntn?.trim() || null,
+      contactPerson: input.contactPerson?.trim() || null,
+      contactPhone: input.contactPhone?.trim() || null,
       address: input.address?.trim() || null,
       bankDetails: input.bankDetails?.trim() || null,
       createdById: await getSystemUserId(),
@@ -429,6 +471,8 @@ export async function updateCustomCounterparty(
       | "kycExpires"
       | "companyNameNtn"
       | "ntn"
+      | "contactPerson"
+      | "contactPhone"
       | "address"
       | "bankDetails"
     >
@@ -449,6 +493,8 @@ export async function updateCustomCounterparty(
   if (patch.kycExpires !== undefined) data.kycExpires = patch.kycExpires ?? null;
   if (patch.companyNameNtn !== undefined) data.companyNameNtn = patch.companyNameNtn?.trim() || null;
   if (patch.ntn !== undefined) data.ntn = patch.ntn?.trim() || null;
+  if (patch.contactPerson !== undefined) data.contactPerson = patch.contactPerson?.trim() || null;
+  if (patch.contactPhone !== undefined) data.contactPhone = patch.contactPhone?.trim() || null;
   if (patch.address !== undefined) data.address = patch.address?.trim() || null;
   if (patch.bankDetails !== undefined) data.bankDetails = patch.bankDetails?.trim() || null;
   const row = await prisma.counterparty.update({ where: { id }, data });
@@ -627,6 +673,10 @@ export async function getTraderReferenceData() {
   return {
     commodities,
     counterparties,
+    /** BUY register — counterparties we purchase from (direction = BUY). */
+    buyCounterparties: counterparties.filter((cp) => cp.side === "BUY"),
+    /** SELL register — buyers we sell to (direction = SELL); ledgers live here. */
+    sellCounterparties: counterparties.filter((cp) => cp.side === "SELL"),
     locations,
     incoterms: [...INCOTERMS],
     incotermsByDirection: {

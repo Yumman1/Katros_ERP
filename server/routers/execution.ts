@@ -44,11 +44,20 @@ import {
   updatePendingTruck,
   updateInboundReceipt,
   updateOutboundDispatch,
+  getSaleWorkflowRows,
+  getSaleTruckPrintable,
+  sendSaleTruckForApproval,
+  requestClearWithoutPayment,
 } from "@/server/execution-store";
+import { getCounterpartyLedgers } from "@/server/finance/ledger";
+import { createVoucher, listVouchers } from "@/server/finance/vouchers";
+import { prisma } from "@/server/db";
+import { num } from "@/server/db/convert";
 import {
   addCustomLocation,
   deleteWarehouseLocation,
   getCompanyWarehouses,
+  getMergedCounterparties,
   getMergedLocations,
   updateWarehouseLocation,
 } from "@/server/trader-master-data";
@@ -911,4 +920,140 @@ export const executionRouter = router({
       await setPositionAdjustment(input.commodityCode, input.deltaMt);
       return computePositionLedger();
     }),
+
+  // ─── Outbound sale payment workflow ────────────────────────────────────────
+
+  /** Outbound trucks in the sale workflow with per-buyer ledger credit state. */
+  saleWorkflowRows: roleProcedure([...execRoles]).query(() => getSaleWorkflowRows()),
+
+  /** Send a truck to the trade's trader — blocked until ledger credit covers it. */
+  sendSaleForApproval: roleProcedure([...execRoles])
+    .input(z.object({ truckId: z.string() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await sendSaleTruckForApproval(input.truckId);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  /** Clear-without-payment path: trader approval, then CEO approval. */
+  requestClearWithoutPayment: roleProcedure([...execRoles])
+    .input(z.object({ truckId: z.string() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await requestClearWithoutPayment(input.truckId);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  /** Printable Gate Out Slip / Delivery Order data for a released truck. */
+  saleTruckPrintable: roleProcedure([...execRoles, Role.FINANCE, Role.CEO])
+    .input(z.object({ truckId: z.string() }))
+    .query(async ({ input }) => {
+      try {
+        return await getSaleTruckPrintable(input.truckId);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  // ─── Counterparty ledgers & payment vouchers ───────────────────────────────
+
+  /** SELL-side counterparty ledgers (mirror of Finance → Counterparty Ledgers). */
+  counterpartyLedgers: roleProcedure([...execRoles, Role.FINANCE]).query(() =>
+    getCounterpartyLedgers(),
+  ),
+
+  /** SELL-side (buyer) counterparties — voucher entry dropdown. */
+  sellCounterparties: roleProcedure([...execRoles, Role.FINANCE]).query(async () =>
+    (await getMergedCounterparties("SELL")).map((cp) => ({
+      id: cp.id,
+      name: cp.name,
+      code: cp.code,
+    })),
+  ),
+
+  /** Enter a payment voucher — credits the ledger once finance approves it. */
+  createVoucher: roleProcedure([...execRoles])
+    .input(
+      z.object({
+        counterpartyId: z.string().min(1),
+        amountPkr: z.number().positive(),
+        method: z.string().optional(),
+        reference: z.string().optional(),
+        note: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await createVoucher({
+          ...input,
+          enteredByName: ctx.session.user.name ?? ctx.session.user.email ?? "execution",
+        });
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  vouchers: roleProcedure([...execRoles, Role.FINANCE])
+    .input(
+      z
+        .object({
+          status: z.enum(["PENDING_FINANCE", "APPROVED", "REJECTED"]).optional(),
+          counterpartyId: z.string().optional(),
+        })
+        .optional(),
+    )
+    .query(({ input }) => listVouchers(input ?? undefined)),
+
+  // ─── Inventory valuation (execution inventory stat cards) ─────────────────
+
+  /**
+   * Stock-weighted average purchase price across all inbound receipts
+   * (Σ receipt qty × its trade's contract rate ÷ Σ receipt qty, PKR/MT) and
+   * the total quantity dispatched to buyers (MT).
+   */
+  inventoryValuation: roleProcedure([...execRoles]).query(async () => {
+    const [inboundByTrade, outboundAgg, contracts] = await Promise.all([
+      prisma.inboundReceipt.groupBy({
+        by: ["tradeRef"],
+        _sum: { allocatedQtyMt: true },
+      }),
+      prisma.outboundDispatch.aggregate({ _sum: { allocatedQtyMt: true } }),
+      prisma.executionContract.findMany({
+        select: { tradeRef: true, ratePerKg: true, ratePerMaund: true },
+      }),
+    ]);
+
+    // Contract rate in PKR/MT — prefer ratePerKg × 1000, fall back to ratePerMaund × 25 (1000 kg / 40 kg).
+    const ratePkrPerMtByRef = new Map<string, number>();
+    for (const c of contracts) {
+      const perKg = c.ratePerKg != null ? num(c.ratePerKg) : null;
+      const perMaund = c.ratePerMaund != null ? num(c.ratePerMaund) : null;
+      const rate = perKg != null && perKg > 0 ? perKg * 1000 : perMaund != null && perMaund > 0 ? perMaund * 25 : null;
+      if (rate != null) ratePkrPerMtByRef.set(c.tradeRef, rate);
+    }
+
+    let totalPurchasedMt = 0;
+    let ratedQtyMt = 0;
+    let ratedValuePkr = 0;
+    for (const g of inboundByTrade) {
+      const qty = num(g._sum.allocatedQtyMt);
+      if (qty <= 0) continue;
+      totalPurchasedMt += qty;
+      const rate = ratePkrPerMtByRef.get(g.tradeRef);
+      if (rate != null) {
+        ratedQtyMt += qty;
+        ratedValuePkr += qty * rate;
+      }
+    }
+
+    return {
+      weightedPurchasePricePkrPerMt: ratedQtyMt > 0 ? ratedValuePkr / ratedQtyMt : 0,
+      totalPurchasedMt,
+      totalSoldMt: num(outboundAgg._sum.allocatedQtyMt),
+    };
+  }),
 });

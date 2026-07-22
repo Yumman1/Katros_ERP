@@ -10,7 +10,8 @@
 
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- ── 1. Schema (mirrors prisma/migrations/0_init) ──
+-- ── 1. Schema (mirrors prisma/migrations, through 20260722_sale_ledger_policies) ──
+
 
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('ADMIN', 'CEO', 'TRADER', 'EXECUTION', 'RISK_MANAGER', 'FINANCE', 'READ_ONLY');
@@ -20,6 +21,9 @@ CREATE TYPE "CommodityCategory" AS ENUM ('GRAINS', 'OILSEEDS', 'SOFTS', 'VEGOIL'
 
 -- CreateEnum
 CREATE TYPE "CounterpartyType" AS ENUM ('TRADING_PARTNER', 'BUYER', 'SELLER', 'BROKER', 'BANK');
+
+-- CreateEnum
+CREATE TYPE "CounterpartySide" AS ENUM ('BUY', 'SELL');
 
 -- CreateEnum
 CREATE TYPE "KycStatus" AS ENUM ('VERIFIED', 'PENDING', 'EXPIRED', 'NOT_ON_FILE');
@@ -64,6 +68,12 @@ CREATE TYPE "TruckMovementType" AS ENUM ('INBOUND', 'OUTBOUND');
 CREATE TYPE "PendingTruckStatus" AS ENUM ('PENDING', 'ASSIGNED', 'PARTIAL');
 
 -- CreateEnum
+CREATE TYPE "GateInvoiceStage" AS ENUM ('PENDING_TRADE_APPROVAL', 'HOLD_OLD_DUES', 'WRONG_INVOICING', 'PAYMENT_APPROVED');
+
+-- CreateEnum
+CREATE TYPE "SaleTruckStage" AS ENUM ('AWAITING_BALANCE', 'PENDING_TRADER', 'PENDING_FINANCE', 'PAYMENT_RECEIVED', 'CLEAR_PENDING_TRADER', 'CLEAR_PENDING_CEO', 'CLEARED_UNPAID');
+
+-- CreateEnum
 CREATE TYPE "InboundReceiptStatus" AS ENUM ('DRAFT', 'ALLOCATED', 'FINANCE_PENDING', 'PAID');
 
 -- CreateEnum
@@ -105,6 +115,15 @@ CREATE TYPE "ReconStatus" AS ENUM ('MATCHED', 'BREAK', 'PENDING_REVIEW', 'RESOLV
 -- CreateEnum
 CREATE TYPE "TraceEventType" AS ENUM ('HARVEST', 'PROCESSING', 'STORAGE', 'TRANSPORT', 'SALE');
 
+-- CreateEnum
+CREATE TYPE "LedgerEntryType" AS ENUM ('DEBIT', 'CREDIT');
+
+-- CreateEnum
+CREATE TYPE "LedgerSourceType" AS ENUM ('GATEPASS', 'VOUCHER', 'ADJUSTMENT');
+
+-- CreateEnum
+CREATE TYPE "VoucherStatus" AS ENUM ('PENDING_FINANCE', 'APPROVED', 'REJECTED');
+
 -- CreateTable
 CREATE TABLE "User" (
     "id" TEXT NOT NULL,
@@ -113,6 +132,8 @@ CREATE TABLE "User" (
     "name" TEXT,
     "role" "Role" NOT NULL DEFAULT 'READ_ONLY',
     "isHead" BOOLEAN NOT NULL DEFAULT false,
+    "disabled" BOOLEAN NOT NULL DEFAULT false,
+    "lastSeenAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -154,6 +175,7 @@ CREATE TABLE "Counterparty" (
     "name" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "type" "CounterpartyType" NOT NULL,
+    "side" "CounterpartySide" NOT NULL DEFAULT 'BUY',
     "country" TEXT NOT NULL,
     "creditLimit" DECIMAL(20,4),
     "kycStatus" "KycStatus" NOT NULL DEFAULT 'NOT_ON_FILE',
@@ -161,6 +183,8 @@ CREATE TABLE "Counterparty" (
     "kycExpires" TIMESTAMP(3),
     "companyNameNtn" TEXT,
     "ntn" TEXT,
+    "contactPerson" TEXT,
+    "contactPhone" TEXT,
     "address" TEXT,
     "bankDetails" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -528,6 +552,20 @@ CREATE TABLE "PendingTruck" (
     "gateInvoiceCurrency" TEXT,
     "gateInvoiceRatePerKg" DECIMAL(20,6),
     "gateInvoiceTradeRef" TEXT,
+    "gateInvoiceStage" "GateInvoiceStage",
+    "gateInvoiceExpectedPkr" DECIMAL(20,4),
+    "saleBasePkr" DECIMAL(20,2),
+    "saleTaxPkr" DECIMAL(20,2),
+    "saleExpectedPkr" DECIMAL(20,2),
+    "saleStage" "SaleTruckStage",
+    "saleTraderApprovedBy" TEXT,
+    "saleTraderApprovedAt" TIMESTAMP(3),
+    "saleFinanceApprovedBy" TEXT,
+    "saleFinanceApprovedAt" TIMESTAMP(3),
+    "saleCeoApprovedBy" TEXT,
+    "saleCeoApprovedAt" TIMESTAMP(3),
+    "gateOutSlipNo" TEXT,
+    "deliveryOrderNo" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -823,6 +861,68 @@ CREATE TABLE "TradeTraceabilityLink" (
 );
 
 -- CreateTable
+CREATE TABLE "FinancePolicy" (
+    "id" TEXT NOT NULL DEFAULT 'main',
+    "yearlyInflowLimitPkr" DECIMAL(20,2) NOT NULL DEFAULT 200000000,
+    "advanceTaxRatePct" DECIMAL(8,4) NOT NULL DEFAULT 0.1,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "updatedBy" TEXT,
+
+    CONSTRAINT "FinancePolicy_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "CounterpartyLedgerEntry" (
+    "id" TEXT NOT NULL,
+    "counterpartyId" TEXT NOT NULL,
+    "entryDate" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "entryType" "LedgerEntryType" NOT NULL,
+    "amountPkr" DECIMAL(20,2) NOT NULL,
+    "sourceType" "LedgerSourceType" NOT NULL,
+    "sourceRef" TEXT,
+    "tradeRef" TEXT,
+    "truckId" TEXT,
+    "voucherId" TEXT,
+    "dueDate" TIMESTAMP(3),
+    "note" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "CounterpartyLedgerEntry_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Voucher" (
+    "id" TEXT NOT NULL,
+    "voucherNo" TEXT NOT NULL,
+    "counterpartyId" TEXT NOT NULL,
+    "amountPkr" DECIMAL(20,2) NOT NULL,
+    "method" TEXT,
+    "reference" TEXT,
+    "note" TEXT,
+    "status" "VoucherStatus" NOT NULL DEFAULT 'PENDING_FINANCE',
+    "enteredByName" TEXT NOT NULL,
+    "resolvedByName" TEXT,
+    "resolvedAt" TIMESTAMP(3),
+    "resolutionNote" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Voucher_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "TradeDraft" (
+    "id" TEXT NOT NULL,
+    "traderName" TEXT NOT NULL,
+    "payload" JSONB NOT NULL,
+    "summary" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "TradeDraft_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "RefCounter" (
     "name" TEXT NOT NULL,
     "value" BIGINT NOT NULL DEFAULT 0,
@@ -838,6 +938,9 @@ CREATE UNIQUE INDEX "Commodity_code_key" ON "Commodity"("code");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Counterparty_code_key" ON "Counterparty"("code");
+
+-- CreateIndex
+CREATE INDEX "Counterparty_side_idx" ON "Counterparty"("side");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Location_name_key" ON "Location"("name");
@@ -907,6 +1010,12 @@ CREATE UNIQUE INDEX "ContractWarehouseAllocation_contractId_warehouseName_key" O
 
 -- CreateIndex
 CREATE UNIQUE INDEX "PendingTruck_gatepassNo_key" ON "PendingTruck"("gatepassNo");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PendingTruck_gateOutSlipNo_key" ON "PendingTruck"("gateOutSlipNo");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PendingTruck_deliveryOrderNo_key" ON "PendingTruck"("deliveryOrderNo");
 
 -- CreateIndex
 CREATE INDEX "PendingTruck_status_movementType_idx" ON "PendingTruck"("status", "movementType");
@@ -982,6 +1091,30 @@ CREATE INDEX "TraceChainEntry_batchId_eventDate_idx" ON "TraceChainEntry"("batch
 
 -- CreateIndex
 CREATE UNIQUE INDEX "TradeTraceabilityLink_tradeId_batchId_key" ON "TradeTraceabilityLink"("tradeId", "batchId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "CounterpartyLedgerEntry_truckId_key" ON "CounterpartyLedgerEntry"("truckId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "CounterpartyLedgerEntry_voucherId_key" ON "CounterpartyLedgerEntry"("voucherId");
+
+-- CreateIndex
+CREATE INDEX "CounterpartyLedgerEntry_counterpartyId_entryDate_idx" ON "CounterpartyLedgerEntry"("counterpartyId", "entryDate");
+
+-- CreateIndex
+CREATE INDEX "CounterpartyLedgerEntry_entryType_idx" ON "CounterpartyLedgerEntry"("entryType");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Voucher_voucherNo_key" ON "Voucher"("voucherNo");
+
+-- CreateIndex
+CREATE INDEX "Voucher_status_idx" ON "Voucher"("status");
+
+-- CreateIndex
+CREATE INDEX "Voucher_counterpartyId_idx" ON "Voucher"("counterpartyId");
+
+-- CreateIndex
+CREATE INDEX "TradeDraft_traderName_updatedAt_idx" ON "TradeDraft"("traderName", "updatedAt");
 
 -- AddForeignKey
 ALTER TABLE "Commodity" ADD CONSTRAINT "Commodity_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1166,6 +1299,14 @@ ALTER TABLE "TradeTraceabilityLink" ADD CONSTRAINT "TradeTraceabilityLink_batchI
 -- AddForeignKey
 ALTER TABLE "TradeTraceabilityLink" ADD CONSTRAINT "TradeTraceabilityLink_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+-- AddForeignKey
+ALTER TABLE "CounterpartyLedgerEntry" ADD CONSTRAINT "CounterpartyLedgerEntry_counterpartyId_fkey" FOREIGN KEY ("counterpartyId") REFERENCES "Counterparty"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CounterpartyLedgerEntry" ADD CONSTRAINT "CounterpartyLedgerEntry_voucherId_fkey" FOREIGN KEY ("voucherId") REFERENCES "Voucher"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Voucher" ADD CONSTRAINT "Voucher_counterpartyId_fkey" FOREIGN KEY ("counterpartyId") REFERENCES "Counterparty"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 
 -- ── 2. Row Level Security (app connects as postgres via Prisma; anon REST API sees nothing) ──
@@ -1205,7 +1346,12 @@ ALTER TABLE public."TraceChainEntry" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."TradeTraceabilityLink" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."RefCounter" ENABLE ROW LEVEL SECURITY;
 
--- ── 3. Prisma migration history (so `prisma migrate deploy` treats 0_init as applied) ──
+ALTER TABLE public."FinancePolicy" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."Voucher" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."CounterpartyLedgerEntry" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."TradeDraft" ENABLE ROW LEVEL SECURITY;
+
+-- ── 3. Prisma migration history (so `prisma migrate deploy` treats everything as applied) ──
 
 CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
     "id" varchar(36) NOT NULL PRIMARY KEY,
@@ -1219,8 +1365,14 @@ CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
 );
 INSERT INTO "_prisma_migrations" ("id","checksum","finished_at","migration_name","applied_steps_count")
 VALUES (gen_random_uuid()::text, '', now(), '0_init', 1),
-       (gen_random_uuid()::text, '', now(), '20260718_user_presence_ceo_top', 1)
+       (gen_random_uuid()::text, '', now(), '20260718_user_presence_ceo_top', 1),
+       (gen_random_uuid()::text, '', now(), '20260719_gate_invoice_stage', 1),
+       (gen_random_uuid()::text, '', now(), '20260720_gate_invoice_expected', 1),
+       (gen_random_uuid()::text, '', now(), '20260722_sale_ledger_policies', 1)
 ON CONFLICT DO NOTHING;
+
+-- Policy singleton row.
+INSERT INTO "FinancePolicy" ("id") VALUES ('main') ON CONFLICT DO NOTHING;
 
 -- ── 4. Storage bucket for gatepass documents ──
 
@@ -1268,4 +1420,3 @@ ON CONFLICT ("name") DO NOTHING;
 INSERT INTO "RefCounter" ("name","value") VALUES ('trade',10020),('change-request',0)
 ON CONFLICT ("name") DO NOTHING;
 
--- Done. Login: ceo@kastros.com / Kastros123!
