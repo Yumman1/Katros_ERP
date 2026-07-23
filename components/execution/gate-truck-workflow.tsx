@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, Check, Pencil } from "lucide-react";
 import { formatCurrency } from "@/lib/formatters/numbers";
 import { invalidateGateOpsCaches } from "@/lib/invalidate-caches";
+import { normWarehouseName } from "@/lib/warehouse-allocation";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +35,10 @@ export type WorkflowContract = {
   contractStatus?: string;
   openQtyMt: number;
   quantityUnit: string;
+  /** Head-approved per-warehouse allocation lines with open qty. */
+  warehouseAllocationProgress?:
+    | { warehouseName: string; openQtyMt: number }[]
+    | null;
 };
 
 function normCp(s: string) {
@@ -49,6 +54,30 @@ function counterpartyMatches(truck: WorkflowTruck, contract: WorkflowContract): 
 function commodityMatches(truck: WorkflowTruck, contract: WorkflowContract): boolean {
   if (!truck.commodityCode?.trim()) return true;
   return contract.commodityCode === truck.commodityCode;
+}
+
+/**
+ * Only offer trades allocated to the truck's warehouse (with open quantity
+ * there). Spot purchases don't use warehouse allocation; delivered purchases
+ * and ex-warehouse sales require an allocation line at this warehouse — the
+ * server enforces the same rule at assignment.
+ */
+function warehouseMatches(truck: WorkflowTruck, contract: WorkflowContract): boolean {
+  if (contract.executionProfile === "PURCHASE_SPOT") return true;
+  const lines = contract.warehouseAllocationProgress ?? [];
+  if (lines.length === 0) return false;
+  const wh = normWarehouseName(truck.warehouseName);
+  return lines.some(
+    (l) => normWarehouseName(l.warehouseName) === wh && l.openQtyMt > 0.001,
+  );
+}
+
+/** Open quantity of this contract at the truck's warehouse (for the dropdown label). */
+function openQtyAtWarehouse(truck: WorkflowTruck, contract: WorkflowContract): number {
+  const lines = contract.warehouseAllocationProgress ?? [];
+  const wh = normWarehouseName(truck.warehouseName);
+  const line = lines.find((l) => normWarehouseName(l.warehouseName) === wh);
+  return line?.openQtyMt ?? contract.openQtyMt;
 }
 
 /** "warn" = completed with a caveat (Check badge, warning colours). */
@@ -165,6 +194,7 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
       .filter((c) => (c.contractStatus ?? "Open") === "Open" && c.openQtyMt > 0.001)
       .filter((c) => profiles.includes(c.executionProfile))
       .filter((c) => counterpartyMatches(truck, c) && commodityMatches(truck, c))
+      .filter((c) => warehouseMatches(truck, c))
       .sort((a, b) => a.tradeRef.localeCompare(b.tradeRef));
   }, [contracts, truck]);
 
@@ -196,7 +226,8 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
             <option value="">Select trade…</option>
             {eligible.map((c) => (
               <option key={c.tradeRef} value={c.tradeRef}>
-                {c.tradeRef} · {c.commodityCode} · open {c.openQtyMt.toFixed(1)} {c.quantityUnit}
+                {c.tradeRef} · {c.commodityCode} · open here{" "}
+                {openQtyAtWarehouse(truck, c).toFixed(1)} {c.quantityUnit}
               </option>
             ))}
           </select>
