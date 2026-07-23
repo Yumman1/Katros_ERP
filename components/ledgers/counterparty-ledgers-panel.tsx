@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { AGING_BUCKETS, AGING_BUCKET_LABELS, type AgingBucket } from "@/lib/finance-policy";
 import { cn } from "@/lib/utils";
 
@@ -11,7 +11,7 @@ export type LedgerEntryRow = {
   entryDate: Date;
   entryType: "DEBIT" | "CREDIT";
   amountPkr: number;
-  sourceType: "GATEPASS" | "VOUCHER" | "ADJUSTMENT";
+  sourceType: "GATEPASS" | "VOUCHER" | "PAYMENT" | "ADJUSTMENT";
   sourceRef: string | null;
   tradeRef: string | null;
   truckId: string | null;
@@ -22,16 +22,22 @@ export type LedgerEntryRow = {
   note: string | null;
 };
 
+/** One ledger ACCOUNT — a counterparty side. BUY and SELL never mix. */
 export type LedgerRow = {
   counterpartyId: string;
   counterpartyName: string;
   counterpartyCode: string;
+  /** SELL = receivables from buyers, BUY = payables to sellers. */
+  side: "BUY" | "SELL";
+  /** Display account id, e.g. "CP-00101-S". */
+  ledgerAccountId: string;
   totalDebitPkr: number;
   totalCreditPkr: number;
-  /** credit − debit; negative = the buyer owes us. */
+  /** credit − debit; negative = money outstanding on this account. */
   balancePkr: number;
+  /** SELL only — credit available for settling trucks; 0 for BUY. */
   availableCreditPkr: number;
-  /** Open (unsettled) receivables by aging bucket. */
+  /** Open (unsettled) debits by aging bucket. */
   aging: Record<AgingBucket, number>;
   entries: LedgerEntryRow[];
 };
@@ -46,12 +52,26 @@ function fmtDate(d: Date | string): string {
   return format(new Date(d), "d MMM yyyy");
 }
 
-/** PAYMENT_RECEIVED → "Payment received". */
+const STAGE_LABELS: Record<string, string> = {
+  CLEARED_UNPAID: "Released unpaid",
+  SETTLED: "Settled",
+  PAYMENT_RECEIVED: "Payment received",
+};
+
+/** CLEARED_UNPAID → "Released unpaid", PENDING_TRADER → "Pending trader". */
 function humanizeStage(stage: string | null): string {
   if (!stage) return "—";
+  if (STAGE_LABELS[stage]) return STAGE_LABELS[stage];
   const words = stage.replace(/_/g, " ").toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+const SOURCE_LABELS: Record<LedgerEntryRow["sourceType"], string> = {
+  GATEPASS: "Gatepass",
+  VOUCHER: "Voucher",
+  PAYMENT: "Payment",
+  ADJUSTMENT: "Adjustment",
+};
 
 function agingCellTone(bucket: AgingBucket, amount: number): string {
   if (amount <= 0) return "border-border bg-foreground/[0.03] text-subtle";
@@ -67,29 +87,87 @@ function agingCellTone(bucket: AgingBucket, amount: number): string {
 export function CounterpartyLedgersPanel({
   rows,
   isLoading,
+  onSettle,
+  settlingTruckId,
 }: {
   rows: LedgerRow[] | undefined;
   isLoading?: boolean;
-}) {
+  onSettle?: (truckId: string) => void;
+  settlingTruckId?: string | null;
+}): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  const totals = useMemo(() => {
-    const debit = (rows ?? []).reduce((s, r) => s + r.totalDebitPkr, 0);
-    const credit = (rows ?? []).reduce((s, r) => s + r.totalCreditPkr, 0);
-    return { debit, credit, balance: credit - debit };
-  }, [rows]);
+  const sellRows = useMemo(() => (rows ?? []).filter((r) => r.side === "SELL"), [rows]);
+  const buyRows = useMemo(() => (rows ?? []).filter((r) => r.side === "BUY"), [rows]);
 
   if (isLoading) {
     return <div className="py-12 text-center text-sm text-subtle">Loading counterparty ledgers…</div>;
   }
 
   if (!rows?.length) {
-    return <div className="exec-empty">No sell-side counterparties registered yet.</div>;
+    return <div className="exec-empty">No counterparty ledger accounts yet.</div>;
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
+    <div className="space-y-8">
+      <SideSection
+        side="SELL"
+        heading="Sell ledgers (receivables)"
+        description="What buyers owe us — truck debits vs voucher credits."
+        accounts={sellRows}
+        expanded={expanded}
+        setExpanded={setExpanded}
+        onSettle={onSettle}
+        settlingTruckId={settlingTruckId}
+      />
+      <SideSection
+        side="BUY"
+        heading="Buy ledgers (payables)"
+        description="What we owe sellers — expected-invoice debits vs payment-out credits."
+        accounts={buyRows}
+        expanded={expanded}
+        setExpanded={setExpanded}
+        onSettle={onSettle}
+        settlingTruckId={settlingTruckId}
+      />
+    </div>
+  );
+}
+
+function SideSection({
+  side,
+  heading,
+  description,
+  accounts,
+  expanded,
+  setExpanded,
+  onSettle,
+  settlingTruckId,
+}: {
+  side: "BUY" | "SELL";
+  heading: string;
+  description: string;
+  accounts: LedgerRow[];
+  expanded: Record<string, boolean>;
+  setExpanded: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  onSettle?: (truckId: string) => void;
+  settlingTruckId?: string | null;
+}) {
+  const totals = useMemo(() => {
+    const debit = accounts.reduce((s, r) => s + r.totalDebitPkr, 0);
+    const credit = accounts.reduce((s, r) => s + r.totalCreditPkr, 0);
+    const available = accounts.reduce((s, r) => s + r.availableCreditPkr, 0);
+    return { debit, credit, balance: credit - debit, available };
+  }, [accounts]);
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground">{heading}</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+      </div>
+
+      <div className={cn("grid gap-3 sm:grid-cols-3", side === "SELL" && "lg:grid-cols-4")}>
         <SummaryCell label="Total debit" value={fmtPkr(totals.debit)} tone="text-destructive" />
         <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
         <SummaryCell
@@ -97,119 +175,188 @@ export function CounterpartyLedgersPanel({
           value={fmtPkr(totals.balance)}
           tone={totals.balance >= 0 ? "text-success" : "text-destructive"}
         />
+        {side === "SELL" && (
+          <SummaryCell label="Available credit" value={fmtPkr(totals.available)} tone="text-foreground" />
+        )}
       </div>
 
-      {rows.map((r) => {
-        const open = !!expanded[r.counterpartyId];
-        return (
-          <section key={r.counterpartyId} className="exec-panel">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-sm font-semibold text-foreground">{r.counterpartyName}</h3>
-                <span className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 font-mono text-[10px] font-bold text-muted-foreground">
-                  {r.counterpartyCode}
-                </span>
-              </div>
-              <div className="flex flex-wrap justify-end gap-x-6 gap-y-2 text-right">
-                <Metric label="Debit" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
-                <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
-                <Metric
-                  label="Balance"
-                  value={fmtPkr(r.balancePkr)}
-                  tone={r.balancePkr >= 0 ? "text-success" : "text-destructive"}
-                />
-                <Metric label="Available credit" value={fmtPkr(r.availableCreditPkr)} tone="text-foreground" />
-              </div>
-            </div>
+      {accounts.length === 0 ? (
+        <div className="exec-empty">
+          {side === "SELL" ? "No sell-side ledger accounts yet." : "No buy-side ledger accounts yet."}
+        </div>
+      ) : (
+        accounts.map((r) => (
+          <AccountCard
+            key={r.ledgerAccountId}
+            account={r}
+            open={!!expanded[r.ledgerAccountId]}
+            onToggle={() =>
+              setExpanded((e) => ({ ...e, [r.ledgerAccountId]: !e[r.ledgerAccountId] }))
+            }
+            onSettle={onSettle}
+            settlingTruckId={settlingTruckId}
+          />
+        ))
+      )}
+    </section>
+  );
+}
 
-            <div className="mt-3 grid gap-2 sm:grid-cols-5">
-              {AGING_BUCKETS.map((bucket) => (
-                <div
-                  key={bucket}
-                  className={cn("rounded-lg border px-2.5 py-1.5", agingCellTone(bucket, r.aging[bucket]))}
-                >
-                  <div className="text-[10px] font-semibold uppercase tracking-wider opacity-80">
-                    {AGING_BUCKET_LABELS[bucket]}
-                  </div>
-                  <div className="mt-0.5 truncate text-xs font-bold tabular-nums">{fmtPkr(r.aging[bucket])}</div>
-                </div>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setExpanded((e) => ({ ...e, [r.counterpartyId]: !open }))}
-              className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-accent-secondary hover:underline"
-            >
-              {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-              {open ? "Hide entries" : "View entries"}
-              <span className="text-subtle">({r.entries.length})</span>
-            </button>
-
-            {open && (
-              <div className="kastros-table-wrap mt-3">
-                {r.entries.length === 0 ? (
-                  <div className="px-4 py-6 text-center text-xs text-subtle">No ledger entries yet.</div>
-                ) : (
-                  <table className="kastros-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Type</th>
-                        <th className="text-right">Amount</th>
-                        <th>Source</th>
-                        <th>Trade</th>
-                        <th>Due date</th>
-                        <th>Aging</th>
-                        <th>Status</th>
-                        <th>Note</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {r.entries.map((e) => (
-                        <tr key={e.id}>
-                          <td className="whitespace-nowrap">{fmtDate(e.entryDate)}</td>
-                          <td>
-                            <span
-                              className={cn(
-                                "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                                e.entryType === "DEBIT"
-                                  ? "bg-destructive/15 text-destructive"
-                                  : "bg-success/15 text-success",
-                              )}
-                            >
-                              {e.entryType}
-                            </span>
-                          </td>
-                          <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(e.amountPkr)}</td>
-                          <td className="whitespace-nowrap">
-                            <span className="font-mono text-xs">{e.sourceRef ?? e.voucherNo ?? "—"}</span>
-                            <span className="ml-1.5 text-[10px] uppercase tracking-wider text-subtle">
-                              {e.sourceType}
-                            </span>
-                          </td>
-                          <td className="whitespace-nowrap font-mono text-xs">{e.tradeRef ?? "—"}</td>
-                          <td className="whitespace-nowrap">{e.dueDate ? fmtDate(e.dueDate) : "—"}</td>
-                          <td className="whitespace-nowrap">
-                            {e.agingBucket && e.agingBucket in AGING_BUCKET_LABELS
-                              ? AGING_BUCKET_LABELS[e.agingBucket as AgingBucket]
-                              : "—"}
-                          </td>
-                          <td className="whitespace-nowrap">{humanizeStage(e.saleStage)}</td>
-                          <td className="max-w-[220px] truncate text-muted-foreground" title={e.note ?? undefined}>
-                            {e.note ?? "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+function AccountCard({
+  account: r,
+  open,
+  onToggle,
+  onSettle,
+  settlingTruckId,
+}: {
+  account: LedgerRow;
+  open: boolean;
+  onToggle: () => void;
+  onSettle?: (truckId: string) => void;
+  settlingTruckId?: string | null;
+}) {
+  const isSell = r.side === "SELL";
+  return (
+    <section className="exec-panel">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-semibold text-foreground">{r.counterpartyName}</h3>
+          <span className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 font-mono text-[10px] font-bold text-muted-foreground">
+            {r.counterpartyCode}
+          </span>
+          <span className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 font-mono text-[10px] font-bold text-accent-secondary">
+            {r.ledgerAccountId}
+          </span>
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+              isSell ? "bg-success/15 text-success" : "bg-warning/15 text-warning",
             )}
-          </section>
-        );
-      })}
-    </div>
+          >
+            {isSell ? "Sell · receivable" : "Buy · payable"}
+          </span>
+        </div>
+        <div className="flex flex-wrap justify-end gap-x-6 gap-y-2 text-right">
+          <Metric label="Debit" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
+          <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
+          <Metric
+            label="Balance"
+            value={fmtPkr(r.balancePkr)}
+            tone={r.balancePkr >= 0 ? "text-success" : "text-destructive"}
+          />
+          {isSell && (
+            <Metric label="Available credit" value={fmtPkr(r.availableCreditPkr)} tone="text-foreground" />
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-5">
+        {AGING_BUCKETS.map((bucket) => (
+          <div
+            key={bucket}
+            className={cn("rounded-lg border px-2.5 py-1.5", agingCellTone(bucket, r.aging[bucket]))}
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-wider opacity-80">
+              {AGING_BUCKET_LABELS[bucket]}
+            </div>
+            <div className="mt-0.5 truncate text-xs font-bold tabular-nums">{fmtPkr(r.aging[bucket])}</div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={onToggle}
+        className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-accent-secondary hover:underline"
+      >
+        {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        {open ? "Hide entries" : "View entries"}
+        <span className="text-subtle">({r.entries.length})</span>
+      </button>
+
+      {open && (
+        <div className="kastros-table-wrap mt-3">
+          {r.entries.length === 0 ? (
+            <div className="px-4 py-6 text-center text-xs text-subtle">No ledger entries yet.</div>
+          ) : (
+            <table className="kastros-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th className="text-right">Amount</th>
+                  <th>Source</th>
+                  <th>Trade</th>
+                  <th>Due date</th>
+                  <th>Aging</th>
+                  <th>Status</th>
+                  <th>Note</th>
+                  {onSettle && <th />}
+                </tr>
+              </thead>
+              <tbody>
+                {r.entries.map((e) => {
+                  const settleable =
+                    !!onSettle && e.entryType === "DEBIT" && e.saleStage === "CLEARED_UNPAID" && !!e.truckId;
+                  const settling = settleable && settlingTruckId === e.truckId;
+                  return (
+                    <tr key={e.id}>
+                      <td className="whitespace-nowrap">{fmtDate(e.entryDate)}</td>
+                      <td>
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+                            e.entryType === "DEBIT"
+                              ? "bg-destructive/15 text-destructive"
+                              : "bg-success/15 text-success",
+                          )}
+                        >
+                          {e.entryType}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(e.amountPkr)}</td>
+                      <td className="whitespace-nowrap">
+                        <span className="text-[10px] uppercase tracking-wider text-subtle">
+                          {SOURCE_LABELS[e.sourceType]}
+                        </span>
+                        <span className="ml-1.5 font-mono text-xs">{e.sourceRef ?? e.voucherNo ?? "—"}</span>
+                      </td>
+                      <td className="whitespace-nowrap font-mono text-xs">{e.tradeRef ?? "—"}</td>
+                      <td className="whitespace-nowrap">{e.dueDate ? fmtDate(e.dueDate) : "—"}</td>
+                      <td className="whitespace-nowrap">
+                        {e.agingBucket && e.agingBucket in AGING_BUCKET_LABELS
+                          ? AGING_BUCKET_LABELS[e.agingBucket as AgingBucket]
+                          : "—"}
+                      </td>
+                      <td className="whitespace-nowrap">{humanizeStage(e.saleStage)}</td>
+                      <td className="max-w-[220px] truncate text-muted-foreground" title={e.note ?? undefined}>
+                        {e.note ?? "—"}
+                      </td>
+                      {onSettle && (
+                        <td className="whitespace-nowrap text-right">
+                          {settleable && (
+                            <button
+                              type="button"
+                              disabled={settling}
+                              title="Applies available credit against this truck"
+                              onClick={() => onSettle(e.truckId!)}
+                              className="kastros-btn-primary inline-flex items-center gap-1.5 !px-3 !py-1 text-xs disabled:opacity-50"
+                            >
+                              {settling && <Loader2 className="h-3 w-3 animate-spin" />}
+                              {settling ? "Settling…" : "Settle"}
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

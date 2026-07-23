@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import Link from "next/link";
 import { TradeStatus } from "@prisma/client";
+import { OverdueAlertsCard } from "@/components/ledgers/overdue-alerts-card";
 
 const statusStyle: Partial<Record<TradeStatus, string>> = {
   PENDING: "bg-warning/20 text-warning",
@@ -42,6 +43,8 @@ export default function TraderDeskPage() {
           Book new trade
         </Link>
       </div>
+
+      <OverdueAlertsCard title="Overdue payments" />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
         {[

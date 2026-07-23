@@ -25,6 +25,7 @@ export default function FinanceVouchersPage() {
   const utils = trpc.useUtils();
   const { data: vouchers, isLoading } = trpc.finance.vouchers.useQuery({}, { refetchInterval: 60_000 });
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
 
   const invalidate = () => {
     void utils.finance.vouchers.invalidate();
@@ -125,15 +126,28 @@ export default function FinanceVouchersPage() {
                         <Check className="h-3.5 w-3.5" />
                         {busy && approve.variables?.voucherId === v.id ? "Approving…" : "Approve"}
                       </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => reject.mutate({ voucherId: v.id, note: notes[v.id] || undefined })}
-                        className="kastros-btn-secondary inline-flex items-center gap-1.5 text-xs disabled:opacity-50"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                        Reject
-                      </button>
+                    </div>
+                    <div className="mt-2">
+                      <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-subtle">
+                        Rejection reason *
+                      </label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          value={rejectReasons[v.id] ?? ""}
+                          onChange={(e) => setRejectReasons((n) => ({ ...n, [v.id]: e.target.value }))}
+                          placeholder="Required to reject…"
+                          className="kastros-input w-64 text-xs"
+                        />
+                        <button
+                          type="button"
+                          disabled={busy || !(rejectReasons[v.id] ?? "").trim()}
+                          onClick={() => reject.mutate({ voucherId: v.id, note: rejectReasons[v.id].trim() })}
+                          className="kastros-btn-secondary inline-flex items-center gap-1.5 text-xs disabled:opacity-50"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                          {busy && reject.variables?.voucherId === v.id ? "Rejecting…" : "Reject"}
+                        </button>
+                      </div>
                     </div>
                     {errorHere && <p className="mt-2 text-xs text-destructive">{errorHere}</p>}
                   </article>

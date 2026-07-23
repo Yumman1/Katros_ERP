@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { LayoutDashboard, LineChart, ListOrdered, PenLine, Plus, Receipt, Truck } from "lucide-react";
+import { LayoutDashboard, LineChart, ListOrdered, PenLine, Plus, Receipt, Truck, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ShellHeader } from "@/components/layout/shell-header";
@@ -18,6 +18,7 @@ const nav = [
   { href: "/trader/invoice-approvals", label: "Buy invoices", icon: <Receipt className="h-4 w-4" /> },
   { href: "/trader/sell-invoice-approvals", label: "Sell invoices", icon: <Receipt className="h-4 w-4" /> },
   { href: "/trader/approvals", label: "Approvals", icon: <PenLine className="h-4 w-4" /> },
+  { href: "/trader/rejections", label: "Rejections", icon: <XCircle className="h-4 w-4" /> },
   { href: "/trader/positions", label: "Positions", icon: <LineChart className="h-4 w-4" /> },
   { href: "/trader/market", label: "Market", icon: <LineChart className="h-4 w-4" /> },
 ];
