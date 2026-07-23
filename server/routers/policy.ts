@@ -6,7 +6,11 @@ import {
   getYearlySellInflowByCounterparty,
   updateFinancePolicy,
 } from "@/server/finance/policy";
+import { getOverdueLedgerAlerts } from "@/server/finance/ledger";
+import { listRejections } from "@/server/rejections";
 import { fiscalYearLabel } from "@/lib/finance-policy";
+import { canonicalTraderName } from "@/lib/trader-identity";
+import { traderDisplayName } from "@/lib/trader-display-name";
 
 /**
  * Company-wide finance policies — the 236G advance tax rate and the yearly
@@ -21,6 +25,7 @@ export const policyRouter = router({
       z.object({
         yearlyInflowLimitPkr: z.number().positive().optional(),
         advanceTaxRatePct: z.number().min(0).max(100).optional(),
+        advanceTaxRatePctNonFiler: z.number().min(0).max(100).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -52,5 +57,22 @@ export const policyRouter = router({
       limitPkr: policy.yearlyInflowLimitPkr,
       byCounterparty: Object.fromEntries(byCp),
     };
+  }),
+
+  /** Debits past their due date — the overdue alert card on every dashboard. */
+  overdueLedgerAlerts: protectedProcedure.query(() => getOverdueLedgerAlerts()),
+
+  /**
+   * Rejections page data — traders see rejections on their own trades,
+   * every other role sees everything.
+   */
+  rejections: protectedProcedure.query(({ ctx }) => {
+    const user = ctx.session.user;
+    if (user.role === "TRADER") {
+      return listRejections({
+        traderName: canonicalTraderName(traderDisplayName({ user } as never)),
+      });
+    }
+    return listRejections();
   }),
 });

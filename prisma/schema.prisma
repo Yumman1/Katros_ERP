@@ -126,13 +126,20 @@ enum CounterpartyType {
   BANK
 }
 
-/// Which booking direction this counterparty register belongs to. BUY-side
-/// counterparties (we purchase from them) and SELL-side counterparties (we
-/// sell to them) are fully separate registers with separate code series —
-/// the same legal name may exist once on each side.
+/// Ledger side. A counterparty is ONE record (one CP id — inventory, trades
+/// and gatepasses all reference the same party) but keeps two fully separate
+/// ledger accounts: BUY (payables — what we owe them on purchases) and SELL
+/// (receivables — what they owe us on sales). Balances never mix.
 enum CounterpartySide {
   BUY
   SELL
+}
+
+/// FBR Active Taxpayer List status — selects the 236G advance tax rate
+/// (filer vs non-filer) on sales to this counterparty.
+enum TaxFilerStatus {
+  FILER
+  NON_FILER
 }
 
 enum KycStatus {
@@ -147,8 +154,10 @@ model Counterparty {
   name        String
   code        String           @unique
   type        CounterpartyType
-  /// BUY register (sellers we purchase from) vs SELL register (buyers we sell to).
+  /// @deprecated Registers are unified — kept for data compatibility only.
   side        CounterpartySide @default(BUY)
+  /// 236G rate selector for sales to this counterparty.
+  taxFilerStatus TaxFilerStatus @default(FILER)
   country     String
   creditLimit Decimal?         @db.Decimal(20, 4)
   kycStatus   KycStatus        @default(NOT_ON_FILE)
@@ -716,6 +725,8 @@ enum SaleTruckStage {
   CLEAR_PENDING_CEO
   /// CEO cleared the truck without full payment.
   CLEARED_UNPAID
+  /// A released-on-credit truck later settled against ledger credit by finance.
+  SETTLED
 }
 
 /// Gatepass entry logged at the warehouse gate (public REST form).
@@ -782,10 +793,12 @@ model PendingTruck {
   /// Printable release documents, numbered on payment approval / CEO clearance.
   gateOutSlipNo   String? @unique
   deliveryOrderNo String? @unique
-  /// Manual release toggle — set by execution once the printed slips are
-  /// handed to the warehouse manager. Only then does the register show Released.
-  saleReleasedAt DateTime?
-  saleReleasedBy String?
+  /// Manual release toggle — printed slips handed to the warehouse manager.
+  saleReleasedAt  DateTime?
+  saleReleasedBy  String?
+  /// Settle-against-old-dues (finance) for released-unpaid trucks.
+  saleSettledAt   DateTime?
+  saleSettledBy   String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1246,10 +1259,12 @@ model TradeTraceabilityLink {
 /// Policies page and read everywhere else in the app.
 model FinancePolicy {
   id String @id @default("main")
-  /// Yearly inflow cap per SELL-side counterparty (PKR, fiscal year 1 Jul – 30 Jun).
+  /// Yearly inflow cap per buyer (PKR received, fiscal year 1 Jul – 30 Jun).
   yearlyInflowLimitPkr Decimal @default(200000000) @db.Decimal(20, 2)
-  /// 236G advance income tax rate (percent of price × quantity on sales).
+  /// 236G advance income tax — ATL filer rate (percent of price × quantity).
   advanceTaxRatePct Decimal @default(0.1) @db.Decimal(8, 4)
+  /// 236G advance income tax — non-filer rate.
+  advanceTaxRatePctNonFiler Decimal @default(2.0) @db.Decimal(8, 4)
   updatedAt DateTime @updatedAt
   updatedBy String?
 }
@@ -1262,6 +1277,7 @@ enum LedgerEntryType {
 enum LedgerSourceType {
   GATEPASS
   VOUCHER
+  PAYMENT
   ADJUSTMENT
 }
 
@@ -1273,6 +1289,9 @@ model CounterpartyLedgerEntry {
   id             String       @id @default(cuid())
   counterpartyId String
   counterparty   Counterparty @relation(fields: [counterpartyId], references: [id], onDelete: Cascade)
+  /// BUY ledger (payables to them) vs SELL ledger (receivables from them) —
+  /// two separate accounts per counterparty that never mix.
+  side           CounterpartySide @default(SELL)
   entryDate      DateTime     @default(now())
   entryType      LedgerEntryType
   amountPkr      Decimal      @db.Decimal(20, 2)
@@ -1291,7 +1310,33 @@ model CounterpartyLedgerEntry {
   createdAt      DateTime     @default(now())
 
   @@index([counterpartyId, entryDate])
+  @@index([counterpartyId, side, entryDate])
   @@index([entryType])
+}
+
+/// Rejected requests (sell-truck clearances, vouchers, payments) — every
+/// rejection carries a required reason and shows on each portal's
+/// Rejections page.
+model RejectionRecord {
+  id        String   @id @default(cuid())
+  /// SELL_RELEASE_TRADER | SELL_RELEASE_CEO | VOUCHER | PAYMENT
+  kind      String
+  /// Human ref shown in lists (gatepass no, voucher no, payment ref).
+  refLabel  String
+  gatepassNo String?
+  voucherNo  String?
+  tradeRef   String?
+  counterpartyName String?
+  amountPkr  Decimal? @db.Decimal(20, 2)
+  /// Owning trader (for trader-portal filtering), when applicable.
+  traderName String?
+  rejectedBy   String
+  rejectedRole String
+  reason       String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([traderName])
 }
 
 enum VoucherStatus {

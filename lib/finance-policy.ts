@@ -5,10 +5,12 @@
  */
 
 export type FinancePolicyView = {
-  /** Yearly inflow cap per SELL-side counterparty (PKR, fiscal year 1 Jul – 30 Jun). */
+  /** Yearly inflow cap per buyer (PKR actually received, fiscal year 1 Jul – 30 Jun). */
   yearlyInflowLimitPkr: number;
-  /** 236G advance income tax rate — percent of (price × quantity) on sales. */
+  /** 236G advance income tax rate for ATL filers — percent of (price × quantity) on sales. */
   advanceTaxRatePct: number;
+  /** 236G advance income tax rate for non-filers. */
+  advanceTaxRatePctNonFiler: number;
   updatedAt: Date | null;
   updatedBy: string | null;
 };
@@ -16,9 +18,18 @@ export type FinancePolicyView = {
 export const DEFAULT_FINANCE_POLICY: FinancePolicyView = {
   yearlyInflowLimitPkr: 200_000_000,
   advanceTaxRatePct: 0.1,
+  advanceTaxRatePctNonFiler: 2.0,
   updatedAt: null,
   updatedBy: null,
 };
+
+/** 236G rate for a counterparty by ATL filer status. */
+export function advanceTaxRateFor(
+  policy: Pick<FinancePolicyView, "advanceTaxRatePct" | "advanceTaxRatePctNonFiler">,
+  filerStatus: "FILER" | "NON_FILER" | null | undefined,
+): number {
+  return filerStatus === "NON_FILER" ? policy.advanceTaxRatePctNonFiler : policy.advanceTaxRatePct;
+}
 
 /** 236G advance income tax on a sale amount (PKR), rounded to the paisa. */
 export function advanceTaxOn(amountPkr: number, ratePct: number): number {

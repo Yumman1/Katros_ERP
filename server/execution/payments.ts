@@ -173,6 +173,29 @@ export async function approvePayment(
         data: { state: "PAID" },
       });
     }
+
+    // Buy-side ledger: money paid out to a seller credits their payables
+    // account (the expected-invoice debit was posted at truck assignment).
+    if (pr.sourceType === "INBOUND" || pr.sourceType === "SPOT") {
+      const trade = await tx.trade.findUnique({
+        where: { tradeRef: pr.tradeRef },
+        select: { counterpartyId: true },
+      });
+      if (trade) {
+        const { postPaymentOutCredit } = await import("@/server/finance/ledger");
+        await postPaymentOutCredit(
+          {
+            requestRef: pr.requestRef,
+            counterpartyId: trade.counterpartyId,
+            amountPkr: num(pr.amount),
+            tradeRef: pr.tradeRef,
+            note: `Payment ${pr.requestRef} approved by ${approvedBy}`,
+          },
+          tx,
+        );
+      }
+    }
+
     const fresh = await tx.paymentRequest.findUnique({ where: { requestRef: paymentId } });
     return paymentRowToRuntime(fresh!);
   });

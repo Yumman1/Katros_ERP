@@ -61,12 +61,9 @@ export async function createVoucher(input: {
   }
   const cp = await prisma.counterparty.findUnique({
     where: { id: input.counterpartyId },
-    select: { id: true, side: true },
+    select: { id: true },
   });
   if (!cp) throw new Error("Counterparty not found");
-  if (cp.side !== "SELL") {
-    throw new Error("Vouchers can only be raised against sell-side (buyer) counterparties");
-  }
   const seq = await nextRef(COUNTER.VOUCHER);
   const row = await prisma.voucher.create({
     data: {
@@ -139,13 +136,15 @@ export async function rejectVoucher(
   rejectedByName: string,
   note?: string,
 ): Promise<VoucherView> {
+  const reason = note?.trim();
+  if (!reason) throw new Error("A rejection reason is required");
   const updated = await prisma.voucher.updateMany({
     where: { id: voucherId, status: "PENDING_FINANCE" },
     data: {
       status: "REJECTED",
       resolvedByName: rejectedByName,
       resolvedAt: new Date(),
-      resolutionNote: note?.trim() || null,
+      resolutionNote: reason,
     },
   });
   if (updated.count === 0) {
@@ -154,6 +153,17 @@ export async function rejectVoucher(
   const row = await prisma.voucher.findUnique({
     where: { id: voucherId },
     include: VOUCHER_INCLUDE,
+  });
+  const { recordRejection } = await import("@/server/rejections");
+  await recordRejection({
+    kind: "VOUCHER",
+    refLabel: row!.voucherNo,
+    voucherNo: row!.voucherNo,
+    counterpartyName: row!.counterparty.name,
+    amountPkr: num(row!.amountPkr),
+    rejectedBy: rejectedByName,
+    rejectedRole: "FINANCE",
+    reason,
   });
   return voucherRowToView(row!);
 }

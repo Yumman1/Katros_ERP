@@ -47,7 +47,7 @@ import {
   getSaleWorkflowRows,
   getSaleTruckPrintable,
   markSaleTruckReleased,
-  sendSaleTruckForApproval,
+  confirmSalePayment,
   requestClearWithoutPayment,
 } from "@/server/execution-store";
 import { getCounterpartyLedgers } from "@/server/finance/ledger";
@@ -927,12 +927,19 @@ export const executionRouter = router({
   /** Outbound trucks in the sale workflow with per-buyer ledger credit state. */
   saleWorkflowRows: roleProcedure([...execRoles]).query(() => getSaleWorkflowRows()),
 
-  /** Send a truck to the trade's trader — blocked until ledger credit covers it. */
-  sendSaleForApproval: roleProcedure([...execRoles])
+  /**
+   * Confirm payment for a truck — succeeds when the buyer's approved voucher
+   * credit covers the receivable; no trader/finance approval needed. Issues
+   * the Gate Out Slip + Delivery Order.
+   */
+  confirmSalePayment: roleProcedure([...execRoles])
     .input(z.object({ truckId: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
-        return await sendSaleTruckForApproval(input.truckId);
+        return await confirmSalePayment(
+          input.truckId,
+          ctx.session.user.name ?? ctx.session.user.email ?? "execution",
+        );
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -984,9 +991,9 @@ export const executionRouter = router({
     getCounterpartyLedgers(),
   ),
 
-  /** SELL-side (buyer) counterparties — voucher entry dropdown. */
+  /** Counterparties for the voucher entry dropdown (single unified register). */
   sellCounterparties: roleProcedure([...execRoles, Role.FINANCE]).query(async () =>
-    (await getMergedCounterparties("SELL")).map((cp) => ({
+    (await getMergedCounterparties()).map((cp) => ({
       id: cp.id,
       name: cp.name,
       code: cp.code,
