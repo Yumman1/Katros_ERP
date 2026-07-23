@@ -85,7 +85,7 @@ export default function ExecutionVouchersPage() {
           </>
         }
         title="Vouchers"
-        subtitle="Record money received from a buyer — finance approval credits it into the counterparty's ledger and unlocks their trucks."
+        subtitle="Record money received from a counterparty — finance approval credits it into their ledger and unlocks their trucks."
       />
 
       <div className="kastros-desk-scroll flex flex-col gap-4">
@@ -103,7 +103,7 @@ export default function ExecutionVouchersPage() {
                 onChange={(e) => setCounterpartyId(e.target.value)}
                 className="kastros-select kastros-select-sm w-full"
               >
-                <option value="">Select buyer…</option>
+                <option value="">Select counterparty…</option>
                 {(counterparties ?? []).map((cp) => (
                   <option key={cp.id} value={cp.id}>
                     {cp.code} — {cp.name}

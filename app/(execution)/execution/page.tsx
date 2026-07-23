@@ -1,6 +1,7 @@
 "use client";
 
 import { PendingWarehousePanel } from "@/components/execution/pending-warehouse-panel";
+import { OverdueAlertsCard } from "@/components/ledgers/overdue-alerts-card";
 import { PageHeader } from "@/components/ui/page-header";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { executionIncotermLabel } from "@/lib/trade-constants";
@@ -221,6 +222,8 @@ export default function ExecutionDeskPage() {
       </div>
 
       <div className="kastros-desk-scroll flex flex-col gap-4">
+      <OverdueAlertsCard title="Overdue ledger entries" />
+
       <section className="exec-panel">
         <h2 className="text-sm font-semibold text-foreground">Open contracts by incoterm</h2>
         <p className="mt-1 text-xs text-subtle">
