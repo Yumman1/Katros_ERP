@@ -467,7 +467,9 @@ function PrintLinks({ truckId }: { truckId: string }) {
 
 /**
  * Outbound sale payment step — receivable (incl. 236G) vs the buyer's approved
- * voucher credit, then trader/finance (or trader/CEO clearance) approvals.
+ * voucher credit. Credit covers it → one click confirms payment and issues the
+ * slips; otherwise "Request release on credit" routes through the trade's
+ * trader and the CEO (buyer ledger goes negative until finance settles it).
  * Queries saleWorkflowRows once — React Query dedupes it across cells.
  */
 function PaymentStep({ truck }: { truck: WorkflowTruck }) {
@@ -480,7 +482,7 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
     [saleRows, truck.id],
   );
 
-  const send = trpc.execution.sendSaleForApproval.useMutation({
+  const confirmPayment = trpc.execution.confirmSalePayment.useMutation({
     onSuccess: () => invalidateGateOpsCaches(utils),
   });
   const clear = trpc.execution.requestClearWithoutPayment.useMutation({
@@ -521,47 +523,32 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            disabled={!row.canSendForApproval || send.isPending}
+            disabled={!row.canSendForApproval || confirmPayment.isPending}
             title="Needs approved voucher credit ≥ receivable"
-            onClick={() => send.mutate({ truckId: truck.id })}
+            onClick={() => confirmPayment.mutate({ truckId: truck.id })}
             className="kastros-btn-primary px-3 py-1.5 text-[11px] disabled:opacity-50"
           >
-            {send.isPending ? "Sending…" : "Send for approval"}
+            {confirmPayment.isPending ? "Confirming…" : "Confirm payment & issue slips"}
           </button>
           <button
             type="button"
             disabled={clear.isPending}
             onClick={() => {
-              if (confirm("Release without full payment? Needs trader + CEO approval.")) {
+              if (
+                confirm(
+                  "Buyer has not paid — this needs the trader's and the CEO's approval, and the buyer's ledger will go negative. Continue?",
+                )
+              ) {
                 clear.mutate({ truckId: truck.id });
               }
             }}
             className="rounded-md border border-destructive/40 px-3 py-1.5 text-[11px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
           >
-            {clear.isPending ? "Requesting…" : "Clear w/o payment"}
+            {clear.isPending ? "Requesting…" : "Request release on credit"}
           </button>
         </div>
-        {send.error && <ErrorLine message={send.error.message} />}
+        {confirmPayment.error && <ErrorLine message={confirmPayment.error.message} />}
         {clear.error && <ErrorLine message={clear.error.message} />}
-      </StepPanel>
-    );
-  }
-
-  if (row.saleStage === "PENDING_TRADER") {
-    return (
-      <StepPanel step={2} title="Payment" state="active" headline="With trader">
-        <span className="text-[10px] text-subtle">
-          Awaiting trader approval — {row.tradeRef ?? "the trade"}&rsquo;s trader must approve the
-          sell invoice.
-        </span>
-      </StepPanel>
-    );
-  }
-
-  if (row.saleStage === "PENDING_FINANCE") {
-    return (
-      <StepPanel step={2} title="Payment" state="active" headline="With finance">
-        <span className="text-[10px] text-subtle">Trader approved — awaiting finance.</span>
       </StepPanel>
     );
   }
@@ -571,8 +558,8 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
       <StepPanel step={2} title="Payment" state="active" headline="Clearance">
         <span className="text-[10px] font-medium text-warning">
           {row.saleStage === "CLEAR_PENDING_TRADER"
-            ? `Clear-without-payment requested — awaiting ${row.tradeRef ?? "the trade"}'s trader.`
-            : "Trader agreed to release without payment — awaiting CEO clearance."}
+            ? `Release on credit requested — awaiting ${row.tradeRef ?? "the trade"}'s trader.`
+            : "Trader approved — awaiting CEO clearance."}
         </span>
       </StepPanel>
     );
@@ -584,7 +571,7 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
         step={2}
         title="Payment"
         state="warn"
-        headline={row.saleReleasedAt ? "Released unpaid" : "Cleared unpaid"}
+        headline="Released on credit — unpaid"
       >
         <span className="truncate font-mono text-xs font-semibold text-foreground">
           {row.gateOutSlipNo ?? "—"}
@@ -594,8 +581,27 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
         </span>
         <PrintLinks truckId={truck.id} />
         <span className="text-[10px] text-warning">
-          Receivable remains open in the buyer&rsquo;s ledger.
+          Receivable stays open (and aging) in the buyer&rsquo;s ledger until finance settles it.
         </span>
+        <ReleaseToggle row={row} truckId={truck.id} />
+      </StepPanel>
+    );
+  }
+
+  if (row.saleStage === "SETTLED") {
+    return (
+      <StepPanel step={2} title="Payment" state="done" headline="Settled">
+        <span className="text-[10px] text-success">
+          Payment settled against ledger credit
+          {row.saleSettledBy ? ` by ${row.saleSettledBy}` : ""}
+        </span>
+        <span className="truncate font-mono text-xs font-semibold text-foreground">
+          {row.gateOutSlipNo ?? "—"}
+          {row.deliveryOrderNo && (
+            <span className="text-muted-foreground"> · {row.deliveryOrderNo}</span>
+          )}
+        </span>
+        <PrintLinks truckId={truck.id} />
         <ReleaseToggle row={row} truckId={truck.id} />
       </StepPanel>
     );

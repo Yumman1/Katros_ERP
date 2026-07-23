@@ -45,9 +45,21 @@ import {
   assertSufficientOutboundStock,
   syncLinkedMovementsFromGatepass,
 } from "./movements";
-import { advanceTaxOn } from "@/lib/finance-policy";
+import { advanceTaxOn, advanceTaxRateFor } from "@/lib/finance-policy";
 import { getFinancePolicy } from "@/server/finance/policy";
-import { postSaleDebitForTruck, removeSaleDebitForTruck } from "@/server/finance/ledger";
+import { postTruckLedgerDebit, removeSaleDebitForTruck } from "@/server/finance/ledger";
+
+/** Credit days from a trade's payment terms (N-day credit), else null. */
+export function tradeCreditDays(trade: {
+  paymentType: string;
+  tradeParams: unknown;
+}): number | null {
+  if (trade.paymentType === "CREDIT_30") return 30;
+  if (trade.paymentType !== "CREDIT") return null;
+  const params = (trade.tradeParams ?? {}) as Record<string, unknown>;
+  const days = Number(params.creditDays);
+  return Number.isFinite(days) && days > 0 ? days : null;
+}
 
 export function truckTransporterName(truck: PendingTruck): string | null {
   return truck.transporterName?.trim() || truck.driverName?.trim() || null;
@@ -662,6 +674,35 @@ export async function assignTruckToTrade(
         },
         include: TRUCK_INCLUDE,
       });
+
+      // Buy-side ledger: the expected invoice amount is entered directly on
+      // the seller's payables account (payments out credit it later).
+      if (truck.gateInvoiceExpectedPkr != null) {
+        const tradeRow = await tx.trade.findUnique({
+          where: { tradeRef },
+          select: { counterpartyId: true, paymentType: true, tradeParams: true },
+        });
+        if (tradeRow) {
+          const creditDays = tradeCreditDays(tradeRow);
+          await postTruckLedgerDebit(
+            {
+              side: "BUY",
+              truckId,
+              gatepassNo: truck.gatepassNo,
+              tradeRef,
+              counterpartyId: tradeRow.counterpartyId,
+              amountPkr: truck.gateInvoiceExpectedPkr,
+              dueDate:
+                creditDays != null
+                  ? new Date(truck.arrivalDate.getTime() + creditDays * 86_400_000)
+                  : null,
+              note: `Inbound ${truck.gatepassNo} · ${truck.truckNo} — expected invoice`,
+            },
+            tx,
+          );
+        }
+      }
+
       return {
         truck: truckRowToRuntime(updatedTruck),
         receipt: inboundRowToRuntime(receiptRow),
@@ -708,12 +749,19 @@ export async function assignTruckToTrade(
       // approved voucher credit before it can be sent for approvals.
       const tradeRow = await tx.trade.findUnique({
         where: { tradeRef },
-        select: { counterpartyId: true, paymentType: true, tradeParams: true },
+        select: {
+          counterpartyId: true,
+          paymentType: true,
+          tradeParams: true,
+          counterparty: { select: { taxFilerStatus: true } },
+        },
       });
       const addedBasePkr = Math.round(allocateKg * rateKg * 100) / 100;
       const saleBasePkr =
         Math.round(((numOrNull(truckRow.saleBasePkr) ?? 0) + addedBasePkr) * 100) / 100;
-      const saleTaxPkr = advanceTaxOn(saleBasePkr, financePolicy.advanceTaxRatePct);
+      // 236G at the buyer's filer/non-filer policy rate.
+      const taxRatePct = advanceTaxRateFor(financePolicy, tradeRow?.counterparty.taxFilerStatus);
+      const saleTaxPkr = advanceTaxOn(saleBasePkr, taxRatePct);
       const saleExpectedPkr = Math.round((saleBasePkr + saleTaxPkr) * 100) / 100;
       // Keep an already-advanced stage (partial re-assignment); fresh trucks
       // start waiting on ledger balance.
@@ -735,20 +783,14 @@ export async function assignTruckToTrade(
       });
 
       if (tradeRow) {
-        const params = (tradeRow.tradeParams ?? {}) as Record<string, unknown>;
-        const creditDaysRaw = params.creditDays;
-        const creditDays =
-          tradeRow.paymentType === "CREDIT_30"
-            ? 30
-            : tradeRow.paymentType === "CREDIT"
-              ? Number(creditDaysRaw) || null
-              : null;
+        const creditDays = tradeCreditDays(tradeRow);
         const dueDate =
           creditDays != null
             ? new Date(truck.arrivalDate.getTime() + creditDays * 86_400_000)
             : null;
-        await postSaleDebitForTruck(
+        await postTruckLedgerDebit(
           {
+            side: "SELL",
             truckId,
             gatepassNo: truck.gatepassNo,
             tradeRef,

@@ -2,6 +2,7 @@ import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
 import { COUNTER, nextRef } from "@/server/db/counters";
 import { traderNamesMatch } from "@/lib/trader-identity";
+import { agingBucketFor } from "@/lib/finance-policy";
 import { availableCreditPkr } from "@/server/finance/ledger";
 import {
   TRUCK_INCLUDE,
@@ -165,6 +166,8 @@ export type SaleWorkflowRow = {
   /** Manual release toggle state (null = not yet handed to warehouse manager). */
   saleReleasedAt: Date | null;
   saleReleasedBy: string | null;
+  saleSettledAt: Date | null;
+  saleSettledBy: string | null;
 };
 
 /** Outbound trucks in the sale payment workflow with per-buyer credit state. */
@@ -216,19 +219,25 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
       saleCeoApprovedBy: r.saleCeoApprovedBy,
       saleReleasedAt: r.saleReleasedAt,
       saleReleasedBy: r.saleReleasedBy,
+      saleSettledAt: r.saleSettledAt,
+      saleSettledBy: r.saleSettledBy,
     };
   });
 }
 
 /**
- * Send an outbound truck to the trade's trader for sell-invoice approval.
- * Blocked until the buyer's approved (finance-cleared) voucher credit covers
- * this truck's receivable — enter another voucher otherwise.
+ * Confirm payment for an outbound truck — succeeds when the buyer's approved
+ * voucher credit covers the receivable. No human approvals needed: finance
+ * already vetted the money at voucher approval. Consumes the credit, marks
+ * PAYMENT_RECEIVED and issues the Gate Out Slip + Delivery Order.
  */
-export async function sendSaleTruckForApproval(truckId: string): Promise<PendingTruck> {
+export async function confirmSalePayment(
+  truckId: string,
+  confirmedByName: string,
+): Promise<PendingTruck> {
   const row = await saleTruckOrThrow(truckId);
   if (row.saleStage !== "AWAITING_BALANCE") {
-    throw new Error("This truck is not awaiting balance — it is already in approval");
+    throw new Error("This truck is not awaiting balance");
   }
   const expected = numOrNull(row.saleExpectedPkr);
   if (expected == null) throw new Error("Assign the truck to a sale trade first");
@@ -236,25 +245,62 @@ export async function sendSaleTruckForApproval(truckId: string): Promise<Pending
   const available = await availableCreditPkr(cp.id);
   if (available < expected) {
     throw new Error(
-      `Insufficient ledger balance for ${cp.name}: available ${Math.round(available).toLocaleString("en-PK")} PKR ` +
+      `Insufficient ledger credit for ${cp.name}: available ${Math.round(available).toLocaleString("en-PK")} PKR ` +
         `< receivable ${Math.round(expected).toLocaleString("en-PK")} PKR. Enter a payment voucher first, ` +
-        `or use “Clear without payment” (trader + CEO approval).`,
+        `or request release on credit (trader + CEO approval).`,
     );
   }
-  await transition(truckId, ["AWAITING_BALANCE"], "PENDING_TRADER");
+  await transition(truckId, ["AWAITING_BALANCE"], "PAYMENT_RECEIVED", {
+    saleFinanceApprovedBy: confirmedByName,
+    saleFinanceApprovedAt: new Date(),
+  });
+  await issueReleaseDocuments(truckId);
   return freshTruck(truckId);
 }
 
-/** Request release without full payment — goes to the trader, then the CEO. */
+/**
+ * Request release on credit (without full payment) — goes to the trade's
+ * trader, then the CEO; the buyer's ledger goes negative on release.
+ */
 export async function requestClearWithoutPayment(truckId: string): Promise<PendingTruck> {
   const row = await saleTruckOrThrow(truckId);
   if (row.saleStage !== "AWAITING_BALANCE") {
-    throw new Error("Only trucks awaiting balance can be sent for clearance without payment");
+    throw new Error("Only trucks awaiting balance can be sent for release on credit");
   }
   if (numOrNull(row.saleExpectedPkr) == null) {
     throw new Error("Assign the truck to a sale trade first");
   }
   await transition(truckId, ["AWAITING_BALANCE"], "CLEAR_PENDING_TRADER");
+  return freshTruck(truckId);
+}
+
+/**
+ * Settle a released-unpaid truck against the buyer's ledger credit (finance,
+ * from the Counterparty Ledgers page). Consumes credit, stops the debit from
+ * aging and clears the trader's payment reminder.
+ */
+export async function settleSaleTruck(
+  truckId: string,
+  settledByName: string,
+): Promise<PendingTruck> {
+  const row = await saleTruckOrThrow(truckId);
+  if (row.saleStage !== "CLEARED_UNPAID") {
+    throw new Error("Only released-unpaid trucks can be settled against old dues");
+  }
+  const expected = numOrNull(row.saleExpectedPkr);
+  if (expected == null) throw new Error("This truck has no receivable recorded");
+  const cp = await saleCounterparty(truckId, row.assignedTradeRef);
+  const available = await availableCreditPkr(cp.id);
+  if (available < expected) {
+    throw new Error(
+      `Insufficient ledger credit for ${cp.name}: available ${Math.round(available).toLocaleString("en-PK")} PKR ` +
+        `< outstanding ${Math.round(expected).toLocaleString("en-PK")} PKR.`,
+    );
+  }
+  await transition(truckId, ["CLEARED_UNPAID"], "SETTLED", {
+    saleSettledAt: new Date(),
+    saleSettledBy: settledByName,
+  });
   return freshTruck(truckId);
 }
 
@@ -272,17 +318,17 @@ export type TraderSaleApprovalRow = {
   saleBasePkr: number;
   saleTaxPkr: number;
   saleExpectedPkr: number;
-  /** Buyer's ledger balance (credit − debit) for context. */
+  /** Buyer's sell-ledger balance (credit − debit) for context. */
   buyerBalancePkr: number;
-  stage: Extract<SaleTruckStage, "PENDING_TRADER" | "CLEAR_PENDING_TRADER">;
+  stage: Extract<SaleTruckStage, "CLEAR_PENDING_TRADER">;
 };
 
-/** Sell-side approvals for this trader: payment approvals + clearance requests. */
+/** Release-on-credit requests awaiting this trader's approval. */
 export async function getTraderSaleApprovals(traderName: string): Promise<TraderSaleApprovalRow[]> {
   const rows = await prisma.pendingTruck.findMany({
     where: {
       movementType: "OUTBOUND",
-      saleStage: { in: ["PENDING_TRADER", "CLEAR_PENDING_TRADER"] },
+      saleStage: "CLEAR_PENDING_TRADER",
     },
     orderBy: { arrivalDate: "asc" },
   });
@@ -305,11 +351,11 @@ export async function getTraderSaleApprovals(traderName: string): Promise<Trader
     if (balances.has(cpId)) return balances.get(cpId)!;
     const [credit, debit] = await Promise.all([
       prisma.counterpartyLedgerEntry.aggregate({
-        where: { counterpartyId: cpId, entryType: "CREDIT" },
+        where: { counterpartyId: cpId, side: "SELL", entryType: "CREDIT" },
         _sum: { amountPkr: true },
       }),
       prisma.counterpartyLedgerEntry.aggregate({
-        where: { counterpartyId: cpId, entryType: "DEBIT" },
+        where: { counterpartyId: cpId, side: "SELL", entryType: "DEBIT" },
         _sum: { amountPkr: true },
       }),
     ]);
@@ -342,17 +388,18 @@ export async function getTraderSaleApprovals(traderName: string): Promise<Trader
 }
 
 /**
- * Trader decision on a sell-side truck of one of their own trades.
- * PENDING_TRADER: APPROVE → PENDING_FINANCE, REJECT → AWAITING_BALANCE.
- * CLEAR_PENDING_TRADER: APPROVE → CLEAR_PENDING_CEO, REJECT → AWAITING_BALANCE.
+ * Trader decision on a release-on-credit request for one of their trades.
+ * APPROVE → CLEAR_PENDING_CEO; REJECT (reason required) → AWAITING_BALANCE
+ * with a rejection record every dashboard can see.
  */
 export async function traderResolveSaleTruck(
   traderName: string,
   truckId: string,
   decision: "APPROVE" | "REJECT",
+  reason?: string,
 ): Promise<PendingTruck> {
   const row = await saleTruckOrThrow(truckId);
-  if (row.saleStage !== "PENDING_TRADER" && row.saleStage !== "CLEAR_PENDING_TRADER") {
+  if (row.saleStage !== "CLEAR_PENDING_TRADER") {
     throw new Error("This truck is not awaiting your approval");
   }
   const trade = row.assignedTradeRef
@@ -366,111 +413,115 @@ export async function traderResolveSaleTruck(
   }
 
   if (decision === "REJECT") {
-    await transition(truckId, ["PENDING_TRADER", "CLEAR_PENDING_TRADER"], "AWAITING_BALANCE");
+    const why = reason?.trim();
+    if (!why) throw new Error("A rejection reason is required");
+    await transition(truckId, ["CLEAR_PENDING_TRADER"], "AWAITING_BALANCE");
+    const { recordRejection } = await import("@/server/rejections");
+    await recordRejection({
+      kind: "SELL_RELEASE_TRADER",
+      refLabel: row.gatepassNo,
+      gatepassNo: row.gatepassNo,
+      tradeRef: row.assignedTradeRef,
+      counterpartyName: row.counterpartyName,
+      amountPkr: numOrNull(row.saleExpectedPkr),
+      traderName,
+      rejectedBy: traderName,
+      rejectedRole: "TRADER",
+      reason: why,
+    });
     return freshTruck(truckId);
   }
-  if (row.saleStage === "PENDING_TRADER") {
-    await transition(truckId, ["PENDING_TRADER"], "PENDING_FINANCE", {
-      saleTraderApprovedBy: traderName,
-      saleTraderApprovedAt: new Date(),
-    });
-  } else {
-    await transition(truckId, ["CLEAR_PENDING_TRADER"], "CLEAR_PENDING_CEO", {
-      saleTraderApprovedBy: traderName,
-      saleTraderApprovedAt: new Date(),
-    });
-  }
+  await transition(truckId, ["CLEAR_PENDING_TRADER"], "CLEAR_PENDING_CEO", {
+    saleTraderApprovedBy: traderName,
+    saleTraderApprovedAt: new Date(),
+  });
   return freshTruck(truckId);
 }
 
-// ─── Finance approvals ───────────────────────────────────────────────────────
+// ─── Trader payment reminders (released-on-credit trucks) ───────────────────
 
-export type FinanceSaleApprovalRow = Omit<TraderSaleApprovalRow, "stage"> & {
-  traderName: string;
-  saleTraderApprovedBy: string | null;
+export type TraderUnpaidSellTruckRow = {
+  truckId: string;
+  gatepassNo: string;
+  truckNo: string;
+  warehouseName: string;
+  tradeRef: string;
+  counterpartyName: string;
+  commodityName: string;
+  saleExpectedPkr: number;
+  releasedAt: Date | null;
+  /** Payment due date (arrival + credit days); null = no credit terms. */
+  dueDate: Date | null;
+  /** Days LEFT until due (negative once overdue). */
+  daysUntilDue: number | null;
+  /** Days past due (0 while still current). */
+  overdueDays: number;
+  agingBucket: string;
 };
 
-/** Sell invoices awaiting finance (trader already approved). */
-export async function getFinanceSaleApprovals(): Promise<FinanceSaleApprovalRow[]> {
+/**
+ * Standing reminders for the trader's Sell Invoices page: trucks released on
+ * credit (CLEARED_UNPAID) whose payment has not been settled yet, with the
+ * countdown to — or days past — their due date.
+ */
+export async function getTraderUnpaidSellTrucks(
+  traderName: string,
+): Promise<TraderUnpaidSellTruckRow[]> {
   const rows = await prisma.pendingTruck.findMany({
-    where: { movementType: "OUTBOUND", saleStage: "PENDING_FINANCE" },
+    where: { movementType: "OUTBOUND", saleStage: "CLEARED_UNPAID" },
     orderBy: { arrivalDate: "asc" },
   });
+  if (!rows.length) return [];
   const refs = [...new Set(rows.map((r) => r.assignedTradeRef).filter((x): x is string => !!x))];
-  const trades = refs.length
-    ? await prisma.trade.findMany({
-        where: { tradeRef: { in: refs } },
-        select: {
-          tradeRef: true,
-          traderName: true,
-          counterpartyId: true,
-          counterparty: { select: { name: true } },
-          commodity: { select: { name: true } },
-        },
-      })
-    : [];
+  const trades = await prisma.trade.findMany({
+    where: { tradeRef: { in: refs } },
+    select: {
+      tradeRef: true,
+      traderName: true,
+      counterparty: { select: { name: true } },
+      commodity: { select: { name: true } },
+    },
+  });
   const tradeByRef = new Map(trades.map((t) => [t.tradeRef, t]));
+  const entries = await prisma.counterpartyLedgerEntry.findMany({
+    where: { truckId: { in: rows.map((r) => r.id) } },
+    select: { truckId: true, dueDate: true },
+  });
+  const dueByTruck = new Map(entries.map((e) => [e.truckId, e.dueDate]));
 
-  const result: FinanceSaleApprovalRow[] = [];
+  const now = Date.now();
+  const result: TraderUnpaidSellTruckRow[] = [];
   for (const r of rows) {
     const trade = r.assignedTradeRef ? tradeByRef.get(r.assignedTradeRef) : undefined;
-    if (!trade) continue;
-    const [credit, debit] = await Promise.all([
-      prisma.counterpartyLedgerEntry.aggregate({
-        where: { counterpartyId: trade.counterpartyId, entryType: "CREDIT" },
-        _sum: { amountPkr: true },
-      }),
-      prisma.counterpartyLedgerEntry.aggregate({
-        where: { counterpartyId: trade.counterpartyId, entryType: "DEBIT" },
-        _sum: { amountPkr: true },
-      }),
-    ]);
+    if (!trade || !traderNamesMatch(trade.traderName, traderName)) continue;
+    const dueDate = dueByTruck.get(r.id) ?? null;
+    const daysUntilDue =
+      dueDate != null ? Math.ceil((dueDate.getTime() - now) / 86_400_000) : null;
     result.push({
       truckId: r.id,
       gatepassNo: r.gatepassNo,
       truckNo: r.truckNo,
-      arrivalDate: r.arrivalDate,
       warehouseName: r.warehouseName,
       tradeRef: trade.tradeRef,
       counterpartyName: trade.counterparty.name,
       commodityName: trade.commodity.name,
-      saleBasePkr: numOrNull(r.saleBasePkr) ?? 0,
-      saleTaxPkr: numOrNull(r.saleTaxPkr) ?? 0,
       saleExpectedPkr: numOrNull(r.saleExpectedPkr) ?? 0,
-      buyerBalancePkr:
-        (numOrNull(credit._sum.amountPkr) ?? 0) - (numOrNull(debit._sum.amountPkr) ?? 0),
-      traderName: trade.traderName,
-      saleTraderApprovedBy: r.saleTraderApprovedBy,
+      releasedAt: r.saleReleasedAt,
+      dueDate,
+      daysUntilDue,
+      overdueDays: daysUntilDue != null && daysUntilDue < 0 ? -daysUntilDue : 0,
+      agingBucket: agingBucketFor(dueDate),
     });
   }
   return result;
 }
 
-/** Finance decision: APPROVE → PAYMENT_RECEIVED (+ release), REJECT → AWAITING_BALANCE. */
-export async function financeResolveSaleTruck(
-  truckId: string,
-  financeName: string,
-  decision: "APPROVE" | "REJECT",
-): Promise<PendingTruck> {
-  const row = await saleTruckOrThrow(truckId);
-  if (row.saleStage !== "PENDING_FINANCE") {
-    throw new Error("This truck is not awaiting finance approval");
-  }
-  if (decision === "REJECT") {
-    await transition(truckId, ["PENDING_FINANCE"], "AWAITING_BALANCE");
-    return freshTruck(truckId);
-  }
-  await transition(truckId, ["PENDING_FINANCE"], "PAYMENT_RECEIVED", {
-    saleFinanceApprovedBy: financeName,
-    saleFinanceApprovedAt: new Date(),
-  });
-  await issueReleaseDocuments(truckId);
-  return freshTruck(truckId);
-}
-
 // ─── CEO clearance (release without payment) ─────────────────────────────────
 
-export type CeoClearApprovalRow = FinanceSaleApprovalRow;
+export type CeoClearApprovalRow = Omit<TraderSaleApprovalRow, "stage"> & {
+  traderName: string;
+  saleTraderApprovedBy: string | null;
+};
 
 export async function getCeoClearApprovals(): Promise<CeoClearApprovalRow[]> {
   const rows = await prisma.pendingTruck.findMany({
@@ -497,11 +548,11 @@ export async function getCeoClearApprovals(): Promise<CeoClearApprovalRow[]> {
     if (!trade) continue;
     const [credit, debit] = await Promise.all([
       prisma.counterpartyLedgerEntry.aggregate({
-        where: { counterpartyId: trade.counterpartyId, entryType: "CREDIT" },
+        where: { counterpartyId: trade.counterpartyId, side: "SELL", entryType: "CREDIT" },
         _sum: { amountPkr: true },
       }),
       prisma.counterpartyLedgerEntry.aggregate({
-        where: { counterpartyId: trade.counterpartyId, entryType: "DEBIT" },
+        where: { counterpartyId: trade.counterpartyId, side: "SELL", entryType: "DEBIT" },
         _sum: { amountPkr: true },
       }),
     ]);
@@ -526,18 +577,40 @@ export async function getCeoClearApprovals(): Promise<CeoClearApprovalRow[]> {
   return result;
 }
 
-/** CEO decision on a clear-without-payment request. */
+/** CEO decision on a release-on-credit request (reject requires a reason). */
 export async function ceoResolveClearWithoutPayment(
   truckId: string,
   ceoName: string,
   decision: "APPROVE" | "REJECT",
+  reason?: string,
 ): Promise<PendingTruck> {
   const row = await saleTruckOrThrow(truckId);
   if (row.saleStage !== "CLEAR_PENDING_CEO") {
     throw new Error("This truck is not awaiting CEO clearance");
   }
   if (decision === "REJECT") {
+    const why = reason?.trim();
+    if (!why) throw new Error("A rejection reason is required");
     await transition(truckId, ["CLEAR_PENDING_CEO"], "AWAITING_BALANCE");
+    const trade = row.assignedTradeRef
+      ? await prisma.trade.findUnique({
+          where: { tradeRef: row.assignedTradeRef },
+          select: { traderName: true },
+        })
+      : null;
+    const { recordRejection } = await import("@/server/rejections");
+    await recordRejection({
+      kind: "SELL_RELEASE_CEO",
+      refLabel: row.gatepassNo,
+      gatepassNo: row.gatepassNo,
+      tradeRef: row.assignedTradeRef,
+      counterpartyName: row.counterpartyName,
+      amountPkr: numOrNull(row.saleExpectedPkr),
+      traderName: trade?.traderName ?? null,
+      rejectedBy: ceoName,
+      rejectedRole: "CEO",
+      reason: why,
+    });
     return freshTruck(truckId);
   }
   await transition(truckId, ["CLEAR_PENDING_CEO"], "CLEARED_UNPAID", {

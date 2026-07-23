@@ -743,6 +743,12 @@ export async function updateLockedTradeDirect(
     editNote: patch.executionEditNote ?? null,
   });
   await syncAllLockedContracts();
+  // Price edits ripple into every linked truck: expected invoices (buy),
+  // receivables incl. 236G (sell) and their ledger debits recompute.
+  {
+    const { recomputeTradeLinkedAmounts } = await import("@/server/execution/recompute");
+    await recomputeTradeLinkedAmounts(tradeRef);
+  }
   await recordTradeEditApplied(tradeRef, stripExecutionForbiddenPatch(patch), {
     actorName: editedBy,
     actorSide: "EXECUTION",

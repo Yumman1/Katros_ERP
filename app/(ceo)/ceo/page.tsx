@@ -1,6 +1,7 @@
 "use client";
 
 import { PageHeader } from "@/components/ui/page-header";
+import { OverdueAlertsCard } from "@/components/ledgers/overdue-alerts-card";
 import { LocationCommodityTable } from "@/components/inventory/location-commodity-table";
 import { WarehouseStorageMetricsPreview } from "@/components/execution/warehouse-storage-metrics-preview";
 import { trpc } from "@/lib/trpc/client";
@@ -33,6 +34,8 @@ export default function CeoOverviewPage() {
           ) : null
         }
       />
+
+      <OverdueAlertsCard />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Warehouses" value={isLoading ? "…" : String(data?.warehouseCount ?? 0)} />

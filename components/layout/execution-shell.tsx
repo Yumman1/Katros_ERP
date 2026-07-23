@@ -15,6 +15,7 @@ import {
   Warehouse,
   Wallet,
   FileEdit,
+  XCircle,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -76,6 +77,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         { href: "/execution/movements", label: "Truck Movements", icon: <Truck className="h-4 w-4" /> },
         { href: "/execution/vouchers", label: "Vouchers", icon: <Receipt className="h-4 w-4" /> },
         { href: "/execution/ledgers", label: "Ledgers", icon: <BookOpen className="h-4 w-4" /> },
+        { href: "/execution/rejections", label: "Rejections", icon: <XCircle className="h-4 w-4" /> },
         { href: "/execution/warehouses", label: "Warehouses", icon: <MapPin className="h-4 w-4" /> },
         {
           href: "/execution/payments",

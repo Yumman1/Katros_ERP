@@ -4,10 +4,9 @@ import { headProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import {
   approvePayment,
   deletePaymentRequest,
-  financeResolveSaleTruck,
-  getFinanceSaleApprovals,
   listPaymentRequests,
   rejectPayment,
+  settleSaleTruck,
 } from "@/server/execution-store";
 import { getCounterpartyLedgers } from "@/server/finance/ledger";
 import { approveVoucher, listVouchers, rejectVoucher } from "@/server/finance/vouchers";
@@ -105,23 +104,19 @@ export const financeRouter = router({
       }
     }),
 
-  // ─── Sell-invoice approvals (trader already approved) ──────────────────────
+  // ─── Settle against old dues (released-on-credit trucks) ───────────────────
 
-  saleApprovals: roleProcedure(["FINANCE", "ADMIN"]).query(() => getFinanceSaleApprovals()),
-
-  saleApprovalsCount: roleProcedure(["FINANCE", "ADMIN"]).query(
-    async () => (await getFinanceSaleApprovals()).length,
-  ),
-
-  /** APPROVE → payment received + truck released (gate out slip + DO issued). */
-  resolveSaleApproval: roleProcedure(["FINANCE", "ADMIN"])
-    .input(z.object({ truckId: z.string(), decision: z.enum(["APPROVE", "REJECT"]) }))
+  /**
+   * Apply the buyer's available ledger credit against a specific
+   * released-unpaid truck — stops its aging and clears the trader reminder.
+   */
+  settleSaleTruck: roleProcedure(["FINANCE", "ADMIN"])
+    .input(z.object({ truckId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       try {
-        return await financeResolveSaleTruck(
+        return await settleSaleTruck(
           input.truckId,
           ctx.session.user.name ?? ctx.session.user.email ?? "finance",
-          input.decision,
         );
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });

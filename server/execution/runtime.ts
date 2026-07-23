@@ -97,6 +97,9 @@ export type PendingTruck = {
   /** Manual release toggle — set once printed slips reach the warehouse manager. */
   saleReleasedAt?: Date | null;
   saleReleasedBy?: string | null;
+  /** Settle-against-old-dues stamp (finance) for released-unpaid trucks. */
+  saleSettledAt?: Date | null;
+  saleSettledBy?: string | null;
   /** @deprecated legacy persisted trucks only */
   driverCnic?: string | null;
 };
@@ -108,7 +111,8 @@ export type SaleTruckStage =
   | "PAYMENT_RECEIVED"
   | "CLEAR_PENDING_TRADER"
   | "CLEAR_PENDING_CEO"
-  | "CLEARED_UNPAID";
+  | "CLEARED_UNPAID"
+  | "SETTLED";
 
 export type ContractStatus = "Open" | "Close";
 
@@ -333,6 +337,8 @@ export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
     deliveryOrderNo: row.deliveryOrderNo,
     saleReleasedAt: row.saleReleasedAt,
     saleReleasedBy: row.saleReleasedBy,
+    saleSettledAt: row.saleSettledAt,
+    saleSettledBy: row.saleSettledBy,
     driverCnic: null,
   };
 }

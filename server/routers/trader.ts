@@ -26,6 +26,7 @@ import {
   getLockedContracts,
   getTraderInvoiceApprovals,
   getTraderSaleApprovals,
+  getTraderUnpaidSellTrucks,
   lockTradeInStore,
   exportLockedContractsCsv,
   traderResolveGateInvoice,
@@ -403,8 +404,9 @@ export const traderRouter = router({
       z.object({
         name: z.string().min(1),
         type: z.nativeEnum(CounterpartyType).optional(),
-        /** BUY register (we buy from them) vs SELL register (we sell to them). */
+        /** @deprecated single register — accepted but ignored. */
         side: z.enum(["BUY", "SELL"]).optional(),
+        taxFilerStatus: z.enum(["FILER", "NON_FILER"]).optional(),
         country: z.string().min(1),
         kycStatus: z.enum(["VERIFIED", "PENDING", "EXPIRED", "NOT_ON_FILE"]).optional(),
         kycRef: z.string().optional(),
@@ -422,7 +424,7 @@ export const traderRouter = router({
         return await addCustomCounterparty({
           name: input.name,
           type: input.type,
-          side: input.side,
+          taxFilerStatus: input.taxFilerStatus,
           country: input.country,
           kycStatus: input.kycStatus,
           kycRef: input.kycRef ?? null,
@@ -471,20 +473,6 @@ export const traderRouter = router({
       const cp = await getCounterpartyById(input.counterpartyId);
       if (!cp) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid counterparty" });
-      }
-
-      // BUY and SELL run separate counterparty registers — a booking must use
-      // a counterparty from the matching side.
-      const expectedSide = input.direction === TradeDirection.SELL ? "SELL" : "BUY";
-      if (cp.side !== expectedSide) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `${cp.code} — ${cp.name} is registered on the ${cp.side === "SELL" ? "sell" : "buy"} side. ${
-            expectedSide === "SELL"
-              ? "Select or register a sell-side buyer for this sale."
-              : "Select or register a buy-side counterparty for this purchase."
-          }`,
-        });
       }
 
       // Booking-form contact person/number are optional and stored with the
@@ -818,11 +806,23 @@ export const traderRouter = router({
    * CLEAR_PENDING_TRADER: approve → CEO. Reject returns it to awaiting balance.
    */
   resolveSellInvoiceApproval: protectedProcedure
-    .input(z.object({ truckId: z.string(), decision: z.enum(["APPROVE", "REJECT"]) }))
+    .input(
+      z.object({
+        truckId: z.string(),
+        decision: z.enum(["APPROVE", "REJECT"]),
+        /** Required when rejecting — recorded on every portal's Rejections page. */
+        reason: z.string().optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const name = traderNameFromSession(ctx.session.user);
       try {
-        const truck = await traderResolveSaleTruck(name, input.truckId, input.decision);
+        const truck = await traderResolveSaleTruck(
+          name,
+          input.truckId,
+          input.decision,
+          input.reason,
+        );
         return { ok: true as const, truck };
       } catch (e) {
         if (e instanceof TraderInvoiceOwnershipError) {
@@ -831,6 +831,33 @@ export const traderRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not update truck",
+        });
+      }
+    }),
+
+  /**
+   * Standing payment reminders: trucks released on credit whose payment is
+   * still outstanding, with days left until — or past — their due date.
+   */
+  unpaidSellTrucks: protectedProcedure.query(({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    return getTraderUnpaidSellTrucks(name);
+  }),
+
+  /** Filer / non-filer toggle in the booking pricing section — saved on the counterparty. */
+  setCounterpartyFilerStatus: roleProcedure(["TRADER", "ADMIN"])
+    .input(
+      z.object({ counterpartyId: z.string(), taxFilerStatus: z.enum(["FILER", "NON_FILER"]) }),
+    )
+    .mutation(async ({ input }) => {
+      try {
+        return await updateCustomCounterparty(input.counterpartyId, {
+          taxFilerStatus: input.taxFilerStatus,
+        });
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not update filer status",
         });
       }
     }),

@@ -10,8 +10,7 @@
 
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- ── 1. Schema (mirrors prisma/migrations, through 20260722_sale_ledger_policies) ──
-
+-- ── 1. Schema (mirrors prisma/migrations, through 20260723_dual_ledgers_filer_tax) ──
 
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('ADMIN', 'CEO', 'TRADER', 'EXECUTION', 'RISK_MANAGER', 'FINANCE', 'READ_ONLY');
@@ -24,6 +23,9 @@ CREATE TYPE "CounterpartyType" AS ENUM ('TRADING_PARTNER', 'BUYER', 'SELLER', 'B
 
 -- CreateEnum
 CREATE TYPE "CounterpartySide" AS ENUM ('BUY', 'SELL');
+
+-- CreateEnum
+CREATE TYPE "TaxFilerStatus" AS ENUM ('FILER', 'NON_FILER');
 
 -- CreateEnum
 CREATE TYPE "KycStatus" AS ENUM ('VERIFIED', 'PENDING', 'EXPIRED', 'NOT_ON_FILE');
@@ -71,7 +73,7 @@ CREATE TYPE "PendingTruckStatus" AS ENUM ('PENDING', 'ASSIGNED', 'PARTIAL');
 CREATE TYPE "GateInvoiceStage" AS ENUM ('PENDING_TRADE_APPROVAL', 'HOLD_OLD_DUES', 'WRONG_INVOICING', 'PAYMENT_APPROVED');
 
 -- CreateEnum
-CREATE TYPE "SaleTruckStage" AS ENUM ('AWAITING_BALANCE', 'PENDING_TRADER', 'PENDING_FINANCE', 'PAYMENT_RECEIVED', 'CLEAR_PENDING_TRADER', 'CLEAR_PENDING_CEO', 'CLEARED_UNPAID');
+CREATE TYPE "SaleTruckStage" AS ENUM ('AWAITING_BALANCE', 'PENDING_TRADER', 'PENDING_FINANCE', 'PAYMENT_RECEIVED', 'CLEAR_PENDING_TRADER', 'CLEAR_PENDING_CEO', 'CLEARED_UNPAID', 'SETTLED');
 
 -- CreateEnum
 CREATE TYPE "InboundReceiptStatus" AS ENUM ('DRAFT', 'ALLOCATED', 'FINANCE_PENDING', 'PAID');
@@ -119,7 +121,7 @@ CREATE TYPE "TraceEventType" AS ENUM ('HARVEST', 'PROCESSING', 'STORAGE', 'TRANS
 CREATE TYPE "LedgerEntryType" AS ENUM ('DEBIT', 'CREDIT');
 
 -- CreateEnum
-CREATE TYPE "LedgerSourceType" AS ENUM ('GATEPASS', 'VOUCHER', 'ADJUSTMENT');
+CREATE TYPE "LedgerSourceType" AS ENUM ('GATEPASS', 'VOUCHER', 'PAYMENT', 'ADJUSTMENT');
 
 -- CreateEnum
 CREATE TYPE "VoucherStatus" AS ENUM ('PENDING_FINANCE', 'APPROVED', 'REJECTED');
@@ -176,6 +178,7 @@ CREATE TABLE "Counterparty" (
     "code" TEXT NOT NULL,
     "type" "CounterpartyType" NOT NULL,
     "side" "CounterpartySide" NOT NULL DEFAULT 'BUY',
+    "taxFilerStatus" "TaxFilerStatus" NOT NULL DEFAULT 'FILER',
     "country" TEXT NOT NULL,
     "creditLimit" DECIMAL(20,4),
     "kycStatus" "KycStatus" NOT NULL DEFAULT 'NOT_ON_FILE',
@@ -566,6 +569,10 @@ CREATE TABLE "PendingTruck" (
     "saleCeoApprovedAt" TIMESTAMP(3),
     "gateOutSlipNo" TEXT,
     "deliveryOrderNo" TEXT,
+    "saleReleasedAt" TIMESTAMP(3),
+    "saleReleasedBy" TEXT,
+    "saleSettledAt" TIMESTAMP(3),
+    "saleSettledBy" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -865,6 +872,7 @@ CREATE TABLE "FinancePolicy" (
     "id" TEXT NOT NULL DEFAULT 'main',
     "yearlyInflowLimitPkr" DECIMAL(20,2) NOT NULL DEFAULT 200000000,
     "advanceTaxRatePct" DECIMAL(8,4) NOT NULL DEFAULT 0.1,
+    "advanceTaxRatePctNonFiler" DECIMAL(8,4) NOT NULL DEFAULT 2.0,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "updatedBy" TEXT,
 
@@ -875,6 +883,7 @@ CREATE TABLE "FinancePolicy" (
 CREATE TABLE "CounterpartyLedgerEntry" (
     "id" TEXT NOT NULL,
     "counterpartyId" TEXT NOT NULL,
+    "side" "CounterpartySide" NOT NULL DEFAULT 'SELL',
     "entryDate" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "entryType" "LedgerEntryType" NOT NULL,
     "amountPkr" DECIMAL(20,2) NOT NULL,
@@ -888,6 +897,25 @@ CREATE TABLE "CounterpartyLedgerEntry" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "CounterpartyLedgerEntry_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "RejectionRecord" (
+    "id" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "refLabel" TEXT NOT NULL,
+    "gatepassNo" TEXT,
+    "voucherNo" TEXT,
+    "tradeRef" TEXT,
+    "counterpartyName" TEXT,
+    "amountPkr" DECIMAL(20,2),
+    "traderName" TEXT,
+    "rejectedBy" TEXT NOT NULL,
+    "rejectedRole" TEXT NOT NULL,
+    "reason" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "RejectionRecord_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -1102,7 +1130,16 @@ CREATE UNIQUE INDEX "CounterpartyLedgerEntry_voucherId_key" ON "CounterpartyLedg
 CREATE INDEX "CounterpartyLedgerEntry_counterpartyId_entryDate_idx" ON "CounterpartyLedgerEntry"("counterpartyId", "entryDate");
 
 -- CreateIndex
+CREATE INDEX "CounterpartyLedgerEntry_counterpartyId_side_entryDate_idx" ON "CounterpartyLedgerEntry"("counterpartyId", "side", "entryDate");
+
+-- CreateIndex
 CREATE INDEX "CounterpartyLedgerEntry_entryType_idx" ON "CounterpartyLedgerEntry"("entryType");
+
+-- CreateIndex
+CREATE INDEX "RejectionRecord_createdAt_idx" ON "RejectionRecord"("createdAt");
+
+-- CreateIndex
+CREATE INDEX "RejectionRecord_traderName_idx" ON "RejectionRecord"("traderName");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Voucher_voucherNo_key" ON "Voucher"("voucherNo");
@@ -1351,6 +1388,8 @@ ALTER TABLE public."Voucher" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."CounterpartyLedgerEntry" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."TradeDraft" ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE public."RejectionRecord" ENABLE ROW LEVEL SECURITY;
+
 -- ── 3. Prisma migration history (so `prisma migrate deploy` treats everything as applied) ──
 
 CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
@@ -1368,7 +1407,9 @@ VALUES (gen_random_uuid()::text, '', now(), '0_init', 1),
        (gen_random_uuid()::text, '', now(), '20260718_user_presence_ceo_top', 1),
        (gen_random_uuid()::text, '', now(), '20260719_gate_invoice_stage', 1),
        (gen_random_uuid()::text, '', now(), '20260720_gate_invoice_expected', 1),
-       (gen_random_uuid()::text, '', now(), '20260722_sale_ledger_policies', 1)
+       (gen_random_uuid()::text, '', now(), '20260722_sale_ledger_policies', 1),
+       (gen_random_uuid()::text, '', now(), '20260722_sale_manual_release', 1),
+       (gen_random_uuid()::text, '', now(), '20260723_dual_ledgers_filer_tax', 1)
 ON CONFLICT DO NOTHING;
 
 -- Policy singleton row.

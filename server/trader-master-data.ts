@@ -4,6 +4,7 @@ import {
   CounterpartyType,
   LocationType,
   Prisma,
+  TaxFilerStatus,
 } from "@prisma/client";
 import type { Commodity, Counterparty, Location } from "@prisma/client";
 import {
@@ -54,8 +55,10 @@ export type MockCounterpartyOption = {
   name: string;
   code: string;
   type: CounterpartyType;
-  /** BUY register (we purchase from them) vs SELL register (we sell to them). */
+  /** @deprecated single register — kept for data compatibility. */
   side: CounterpartySide;
+  /** 236G rate selector (filer vs non-filer) for sales to this counterparty. */
+  taxFilerStatus: TaxFilerStatus;
   country: string;
   kycStatus: KycStatus;
   kycRef: string | null;
@@ -119,6 +122,7 @@ export function counterpartyRowToOption(row: Counterparty): MockCounterpartyOpti
     code: row.code,
     type: row.type,
     side: row.side,
+    taxFilerStatus: row.taxFilerStatus,
     country: row.country,
     kycStatus: row.kycStatus,
     kycRef: row.kycRef,
@@ -160,20 +164,19 @@ function norm(s: string) {
 }
 
 /**
- * Unique counterparty business key. The BUY and SELL registers run separate
- * series so the same trading name can exist once per side with its own id:
- * BUY → CP-00101, SELL → CPS-00101.
+ * Unique counterparty business key, e.g. CP-00101. One register for all
+ * counterparties — the buy/sell separation lives at LEDGER-ACCOUNT level
+ * (CP-00101-B / CP-00101-S), not on the counterparty record, so inventory
+ * and trades reference a single identity.
  */
-export function formatCounterpartyCode(seq: number, side: CounterpartySide = "BUY"): string {
-  const prefix = side === "SELL" ? "CPS" : "CP";
-  return `${prefix}-${String(seq).padStart(5, "0")}`;
+export function formatCounterpartyCode(seq: number): string {
+  return `CP-${String(seq).padStart(5, "0")}`;
 }
 
-async function nextCounterpartyCode(side: CounterpartySide): Promise<string> {
-  const counter = side === "SELL" ? COUNTER.COUNTERPARTY_SELL : COUNTER.COUNTERPARTY;
+async function nextCounterpartyCode(): Promise<string> {
   for (let attempt = 0; attempt < 10_000; attempt += 1) {
-    const seq = await nextRef(counter);
-    const code = formatCounterpartyCode(seq + 100, side);
+    const seq = await nextRef(COUNTER.COUNTERPARTY);
+    const code = formatCounterpartyCode(seq + 100);
     const exists = await prisma.counterparty.findFirst({
       where: { code: { equals: code, mode: "insensitive" } },
       select: { id: true },
@@ -399,7 +402,9 @@ export async function addCustomCounterparty(input: {
   name: string;
   code?: string;
   type?: CounterpartyType;
+  /** @deprecated single register — ignored. */
   side?: CounterpartySide;
+  taxFilerStatus?: TaxFilerStatus;
   country: string;
   kycStatus?: KycStatus;
   kycRef?: string | null;
@@ -413,15 +418,13 @@ export async function addCustomCounterparty(input: {
 }): Promise<MockCounterpartyOption> {
   const name = input.name.trim();
   if (!name) throw new Error("Name is required");
-  const side = input.side ?? CounterpartySide.BUY;
+  // Single register — one record per party regardless of buy/sell usage.
   const dupeName = await prisma.counterparty.findFirst({
-    where: { side, name: { equals: name, mode: "insensitive" } },
+    where: { name: { equals: name, mode: "insensitive" } },
     select: { code: true },
   });
   if (dupeName) {
-    throw new Error(
-      `${name} is already registered on the ${side === "SELL" ? "sell" : "buy"} side as ${dupeName.code}`,
-    );
+    throw new Error(`${name} is already registered as ${dupeName.code}`);
   }
   let code: string;
   if (input.code?.trim()) {
@@ -432,16 +435,14 @@ export async function addCustomCounterparty(input: {
     });
     if (dupe) throw new Error(`Counterparty code ${code} already exists`);
   } else {
-    code = await nextCounterpartyCode(side);
+    code = await nextCounterpartyCode();
   }
   const row = await prisma.counterparty.create({
     data: {
       name,
       code,
-      type:
-        input.type ??
-        (side === "SELL" ? CounterpartyType.BUYER : CounterpartyType.TRADING_PARTNER),
-      side,
+      type: input.type ?? CounterpartyType.TRADING_PARTNER,
+      taxFilerStatus: input.taxFilerStatus ?? "FILER",
       country: input.country.trim(),
       kycStatus: input.kycStatus ?? "PENDING",
       kycRef: input.kycRef?.trim() || null,
@@ -475,6 +476,7 @@ export async function updateCustomCounterparty(
       | "contactPhone"
       | "address"
       | "bankDetails"
+      | "taxFilerStatus"
     >
   >,
 ): Promise<MockCounterpartyOption> {
@@ -495,6 +497,7 @@ export async function updateCustomCounterparty(
   if (patch.ntn !== undefined) data.ntn = patch.ntn?.trim() || null;
   if (patch.contactPerson !== undefined) data.contactPerson = patch.contactPerson?.trim() || null;
   if (patch.contactPhone !== undefined) data.contactPhone = patch.contactPhone?.trim() || null;
+  if (patch.taxFilerStatus != null) data.taxFilerStatus = patch.taxFilerStatus;
   if (patch.address !== undefined) data.address = patch.address?.trim() || null;
   if (patch.bankDetails !== undefined) data.bankDetails = patch.bankDetails?.trim() || null;
   const row = await prisma.counterparty.update({ where: { id }, data });
@@ -673,10 +676,9 @@ export async function getTraderReferenceData() {
   return {
     commodities,
     counterparties,
-    /** BUY register — counterparties we purchase from (direction = BUY). */
-    buyCounterparties: counterparties.filter((cp) => cp.side === "BUY"),
-    /** SELL register — buyers we sell to (direction = SELL); ledgers live here. */
-    sellCounterparties: counterparties.filter((cp) => cp.side === "SELL"),
+    /** Single register — both lists are the full set (kept for UI compat). */
+    buyCounterparties: counterparties,
+    sellCounterparties: counterparties,
     locations,
     incoterms: [...INCOTERMS],
     incotermsByDirection: {

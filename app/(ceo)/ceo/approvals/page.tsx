@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { format } from "date-fns";
 import { Check, Inbox, Truck, X } from "lucide-react";
 import { CeoApprovalsInbox } from "@/components/team/ceo-approvals-inbox";
@@ -23,6 +24,7 @@ function fmtPkr(value: number): string {
 
 function ClearWithoutPaymentSection() {
   const utils = trpc.useUtils();
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
   const { data: rows } = trpc.ceo.clearWithoutPaymentApprovals.useQuery(undefined, {
     refetchInterval: 60_000,
     staleTime: 60_000,
@@ -112,15 +114,36 @@ function ClearWithoutPaymentSection() {
                   <Check className="h-3.5 w-3.5" />
                   {busy && resolve.variables?.decision === "APPROVE" ? "Approving…" : "Approve release"}
                 </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => resolve.mutate({ truckId: r.truckId, decision: "REJECT" })}
-                  className="inline-flex items-center gap-1 rounded-md border border-kastros-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
-                >
-                  <X className="h-3.5 w-3.5" />
-                  {busy && resolve.variables?.decision === "REJECT" ? "Rejecting…" : "Reject"}
-                </button>
+              </div>
+              <div className="mt-2">
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-subtle">
+                  Reason — shown on all dashboards *
+                </label>
+                <div className="flex flex-wrap items-start gap-2">
+                  <textarea
+                    required
+                    value={rejectReasons[r.truckId] ?? ""}
+                    onChange={(e) => setRejectReasons((s) => ({ ...s, [r.truckId]: e.target.value }))}
+                    placeholder="Why is this release rejected?"
+                    rows={2}
+                    className="kastros-input w-72 text-xs"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || !(rejectReasons[r.truckId] ?? "").trim()}
+                    onClick={() =>
+                      resolve.mutate({
+                        truckId: r.truckId,
+                        decision: "REJECT",
+                        reason: rejectReasons[r.truckId].trim(),
+                      })
+                    }
+                    className="inline-flex items-center gap-1 rounded-md border border-kastros-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    {busy && resolve.variables?.decision === "REJECT" ? "Rejecting…" : "Reject"}
+                  </button>
+                </div>
               </div>
               {errorHere && <p className="mt-2 text-xs text-destructive">{resolve.error?.message}</p>}
             </div>

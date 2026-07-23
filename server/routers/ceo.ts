@@ -294,15 +294,22 @@ export const ceoRouter = router({
     async () => (await getCeoClearApprovals()).length,
   ),
 
-  /** APPROVE → truck cleared unpaid + released (gate out slip + DO issued). */
+  /** APPROVE → truck cleared unpaid + slips issued; REJECT requires a reason. */
   resolveClearWithoutPayment: ceoProcedure()
-    .input(z.object({ truckId: z.string(), decision: z.enum(["APPROVE", "REJECT"]) }))
+    .input(
+      z.object({
+        truckId: z.string(),
+        decision: z.enum(["APPROVE", "REJECT"]),
+        reason: z.string().optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       try {
         return await ceoResolveClearWithoutPayment(
           input.truckId,
           ctx.session.user.name ?? ctx.session.user.email ?? "CEO",
           input.decision,
+          input.reason,
         );
       } catch (e) {
         throw new TRPCError({

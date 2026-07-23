@@ -24,7 +24,7 @@ export default function ExecutionLedgersPage() {
           </>
         }
         title="Counterparty Ledgers"
-        subtitle="Buyer receivables, voucher credits, and aging — a read-only mirror of Finance → Counterparty Ledgers."
+        subtitle="Buy ledgers (payables to sellers) and sell ledgers (receivables from buyers) — mirrored from Finance; settling happens there."
       />
 
       <div className="kastros-desk-scroll flex flex-col gap-4">

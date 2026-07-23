@@ -173,6 +173,9 @@ function BookTradeForm() {
   const addCounterparty = trpc.trader.addCounterparty.useMutation({
     onSuccess: () => utils.trader.referenceData.invalidate(),
   });
+  const updateFilerStatus = trpc.trader.setCounterpartyFilerStatus.useMutation({
+    onSuccess: () => utils.trader.referenceData.invalidate(),
+  });
   const book = trpc.trader.bookTrade.useMutation({
     onSuccess: (res) => {
       if (res.trade) {
@@ -342,24 +345,16 @@ function BookTradeForm() {
   const priceCurrencyOptions = refData.data?.priceCurrencies ?? [...PRICE_CURRENCIES];
   const selectedCommodity = commodities.find((c) => c.id === commodityId);
 
-  // BUY register (CP-xxxxx) vs SELL register (CPS-xxxxx) — separate dropdowns per side.
-  const counterpartyOptions =
-    direction === TradeDirection.SELL
-      ? refData.data?.sellCounterparties ?? []
-      : refData.data?.buyCounterparties ?? [];
+  // Single counterparty register (CP-xxxxx) — the same list serves both directions.
+  const counterpartyOptions = refData.data?.counterparties ?? [];
   const selectedCounterparty = counterpartyOptions.find((cp) => cp.id === counterpartyId);
 
-  // Clear the counterparty when the direction flips to a register it doesn't belong to.
+  // Filer / non-filer toggle — optimistic override until referenceData refetches.
+  const [filerOverride, setFilerOverride] = useState<"FILER" | "NON_FILER" | null>(null);
   useEffect(() => {
-    if (!counterpartyId || !refData.data) return;
-    const list =
-      direction === TradeDirection.SELL
-        ? refData.data.sellCounterparties
-        : refData.data.buyCounterparties;
-    if (!list.some((cp) => cp.id === counterpartyId)) {
-      setValue("counterpartyId", "");
-    }
-  }, [direction, counterpartyId, refData.data, setValue]);
+    setFilerOverride(null);
+  }, [counterpartyId]);
+  const filerStatus = filerOverride ?? selectedCounterparty?.taxFilerStatus ?? "FILER";
 
   // Prefill contact person/number from the counterparty when the fields are empty.
   useEffect(() => {
@@ -581,8 +576,12 @@ function BookTradeForm() {
   const fmtBase = (v: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: baseCurrency }).format(v);
 
-  // 236G advance income tax on sell trades — rate is set on Finance → Policies.
-  const advanceTaxRatePct = policy.data?.advanceTaxRatePct ?? null;
+  // 236G advance income tax on sell trades — filer vs non-filer rates are set
+  // on Finance → Policies; the status itself is saved on the counterparty.
+  const advanceTaxRatePct =
+    filerStatus === "NON_FILER"
+      ? policy.data?.advanceTaxRatePctNonFiler ?? null
+      : policy.data?.advanceTaxRatePct ?? null;
   const advanceTaxAmount =
     direction === TradeDirection.SELL && notional > 0 && advanceTaxRatePct != null
       ? (notional * advanceTaxRatePct) / 100
@@ -811,16 +810,17 @@ function BookTradeForm() {
                   <option key={cp.id} value={cp.id}>
                     {cp.code} — {cp.name}
                     {isOverInflowLimit(cp.id) && inflowLimitMillions
-                      ? ` — ⚠ Caution: over PKR ${inflowLimitMillions}M this FY`
+                      ? ` — ⚠ Caution: received over PKR ${inflowLimitMillions}M this FY`
                       : ""}
                   </option>
                 ))}
               </select>
               {selectedCounterparty && sellInflow.data && isOverInflowLimit(selectedCounterparty.id) && (
                 <p className="mt-1 text-xs text-warning">
-                  Caution: {selectedCounterparty.name} has crossed the yearly inflow limit of PKR{" "}
-                  {new Intl.NumberFormat("en-PK").format(sellInflow.data.limitPkr)} (
-                  {sellInflow.data.fiscalYear}). Confirm with finance before selling more.
+                  Caution: payments received from {selectedCounterparty.name} this fiscal year (
+                  {sellInflow.data.fiscalYear}) exceed the yearly inflow limit of PKR{" "}
+                  {new Intl.NumberFormat("en-PK").format(sellInflow.data.limitPkr)}. Confirm with
+                  finance before selling more.
                 </p>
               )}
               <button
@@ -857,8 +857,7 @@ function BookTradeForm() {
                     className="rounded-md border border-kastros-border bg-kastros-bg px-2 py-1.5 text-sm text-foreground"
                   />
                   <p className="text-[11px] text-subtle">
-                    A unique counterparty code is assigned automatically when you save — buy side
-                    gets a CP-xxxxx code, sell side a CPS-xxxxx code.
+                    A unique counterparty code (CP-xxxxx) is assigned automatically when you save.
                   </p>
                   <button
                     type="button"
@@ -868,7 +867,6 @@ function BookTradeForm() {
                         name: newCp.name.trim(),
                         country: "PK",
                         ntn: newCp.ntn.trim() || undefined,
-                        side: direction === TradeDirection.SELL ? "SELL" : "BUY",
                         contactPerson: newCp.contactPerson.trim() || undefined,
                         contactPhone: newCp.contactPhone.trim() || undefined,
                       });
@@ -1161,6 +1159,54 @@ function BookTradeForm() {
               />
             </Field>
           </div>
+          {direction === TradeDirection.SELL && selectedCounterparty && (
+            <div className="mt-3">
+              <label className="text-xs font-medium text-muted-foreground">
+                236G tax status — {selectedCounterparty.name}
+              </label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(
+                  [
+                    {
+                      value: "FILER",
+                      label: `ATL filer (${policy.data?.advanceTaxRatePct ?? "—"}%)`,
+                    },
+                    {
+                      value: "NON_FILER",
+                      label: `Non-filer (${policy.data?.advanceTaxRatePctNonFiler ?? "—"}%)`,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <label
+                    key={opt.value}
+                    className="flex cursor-pointer items-center gap-2 rounded-full border border-kastros-border px-3 py-1.5 text-xs hover:bg-foreground/[0.02] has-[:checked]:border-success has-[:checked]:bg-success/5"
+                  >
+                    <input
+                      type="radio"
+                      name="counterpartyFilerStatus"
+                      value={opt.value}
+                      checked={filerStatus === opt.value}
+                      onChange={() => {
+                        setFilerOverride(opt.value);
+                        updateFilerStatus.mutate({
+                          counterpartyId: selectedCounterparty.id,
+                          taxFilerStatus: opt.value,
+                        });
+                      }}
+                      className="accent-brand"
+                    />
+                    <span className="text-muted-foreground">{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="mt-1 text-[11px] text-subtle">
+                Saved on the counterparty — the 236G rate below follows this status.
+              </p>
+              {updateFilerStatus.error && (
+                <p className="mt-1 text-xs text-kastros-red">{updateFilerStatus.error.message}</p>
+              )}
+            </div>
+          )}
           {requiresQuotedPrice && px > 0 && (
           <div className="mt-3 space-y-1 rounded-md border border-kastros-border/60 bg-kastros-bg/40 px-3 py-2 text-xs text-muted-foreground">
             <div>
@@ -1209,7 +1255,8 @@ function BookTradeForm() {
             {direction === TradeDirection.SELL && notional > 0 && advanceTaxRatePct != null && (
               <>
                 <div title="Set on Finance → Policies">
-                  Advance income tax (236G, {advanceTaxRatePct}%):{" "}
+                  Advance income tax (236G, {advanceTaxRatePct}% —{" "}
+                  {filerStatus === "NON_FILER" ? "non-filer" : "filer"}):{" "}
                   <span className="data-grid text-warning">{fmtBase(advanceTaxAmount)}</span>
                 </div>
                 <div title="Set on Finance → Policies">

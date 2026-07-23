@@ -27,7 +27,7 @@ const nav: NavEntry[] = [
       { href: "/finance/payments", label: "Payment approvals" },
       { href: "/finance/ledgers", label: "Ledgers" },
       { href: "/finance/vouchers", label: "Vouchers" },
-      { href: "/finance/sale-approvals", label: "Sell approvals" },
+      { href: "/finance/rejections", label: "Rejections" },
       { href: "/finance/change-requests", label: "Change requests" },
       { href: "/finance/policies", label: "Policies" },
       { href: "/cashflow", label: "Cash Flow" },
@@ -83,14 +83,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     refetchInterval: 60_000,
     retry: false,
   });
-  const saleApprovals = trpc.finance.saleApprovalsCount.useQuery(undefined, {
-    refetchInterval: 60_000,
-    retry: false,
-  });
 
   const badges: Record<string, number | undefined> = {
     "/finance/vouchers": pendingVouchers.data,
-    "/finance/sale-approvals": saleApprovals.data,
   };
 
   return (
