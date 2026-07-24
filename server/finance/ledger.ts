@@ -18,12 +18,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
  */
 
 /** Sale-truck stages whose receivable has consumed (is covered by) sell-ledger credit. */
-export const CREDIT_CONSUMING_STAGES = [
-  "PENDING_TRADER",
-  "PENDING_FINANCE",
-  "PAYMENT_RECEIVED",
-  "SETTLED",
-] as const;
+export const CREDIT_CONSUMING_STAGES = ["PAYMENT_RECEIVED", "SETTLED"] as const;
 
 /** Sale-truck stages considered paid/settled — their debit no longer ages. */
 const SETTLED_STAGES = ["PAYMENT_RECEIVED", "SETTLED"] as const;
@@ -108,6 +103,8 @@ export async function postCreditForVoucher(
     voucherNo: string;
     counterpartyId: string;
     amountPkr: number;
+    /** Sell trade the payment is against; null = direct advance. */
+    tradeRef?: string | null;
     note?: string | null;
   },
   db: Db = prisma,
@@ -126,6 +123,7 @@ export async function postCreditForVoucher(
       sourceType: "VOUCHER",
       sourceRef: input.voucherNo,
       voucherId: input.voucherId,
+      tradeRef: input.tradeRef ?? null,
       note: input.note ?? null,
     },
   });
@@ -166,10 +164,181 @@ export async function postPaymentOutCredit(
 
 // ─── Balances & gating ───────────────────────────────────────────────────────
 
+/** Trade funding class from its payment terms. */
+export function tradeTermsKind(paymentType: string): "CREDIT" | "ADVANCE" {
+  return paymentType === "CREDIT" || paymentType === "CREDIT_30" ? "CREDIT" : "ADVANCE";
+}
+
+type SellFundingState = {
+  /** Voucher credits linked to a specific sell trade. */
+  creditsByTrade: Map<string, number>;
+  /** Voucher credits with no trade link — direct advances (any-trade pool). */
+  directCredits: number;
+  /** Consuming-stage truck receivables per trade. */
+  consumedByTrade: Map<string, number>;
+  /** Payment-terms kind per trade with consumption or credits. */
+  termsByTrade: Map<string, "CREDIT" | "ADVANCE">;
+};
+
+/**
+ * One-shot funding picture of a buyer's sell ledger, attributing voucher
+ * credits to their trades. Trade-linked credits fund only their trade;
+ * direct advances cover any trade's overflow. Credit-terms trades don't
+ * consume cash — their trucks ride on the trade's credit line instead.
+ */
+export async function getSellFundingState(
+  counterpartyId: string,
+  db: Db = prisma,
+): Promise<SellFundingState> {
+  const [credits, debits] = await Promise.all([
+    db.counterpartyLedgerEntry.findMany({
+      where: { counterpartyId, side: "SELL", entryType: "CREDIT" },
+      select: { amountPkr: true, tradeRef: true },
+    }),
+    db.counterpartyLedgerEntry.findMany({
+      where: { counterpartyId, side: "SELL", entryType: "DEBIT", truckId: { not: null } },
+      select: { truckId: true, tradeRef: true, amountPkr: true },
+    }),
+  ]);
+
+  const creditsByTrade = new Map<string, number>();
+  let directCredits = 0;
+  for (const c of credits) {
+    if (c.tradeRef) {
+      creditsByTrade.set(c.tradeRef, (creditsByTrade.get(c.tradeRef) ?? 0) + num(c.amountPkr));
+    } else {
+      directCredits += num(c.amountPkr);
+    }
+  }
+
+  const truckIds = debits.map((d) => d.truckId).filter((id): id is string => Boolean(id));
+  const consuming = truckIds.length
+    ? new Set(
+        (
+          await db.pendingTruck.findMany({
+            where: { id: { in: truckIds }, saleStage: { in: [...CREDIT_CONSUMING_STAGES] } },
+            select: { id: true },
+          })
+        ).map((t) => t.id),
+      )
+    : new Set<string>();
+
+  const consumedByTrade = new Map<string, number>();
+  for (const d of debits) {
+    if (!d.truckId || !consuming.has(d.truckId) || !d.tradeRef) continue;
+    consumedByTrade.set(d.tradeRef, (consumedByTrade.get(d.tradeRef) ?? 0) + num(d.amountPkr));
+  }
+
+  const refs = [...new Set([...creditsByTrade.keys(), ...consumedByTrade.keys()])];
+  const termsByTrade = new Map<string, "CREDIT" | "ADVANCE">();
+  if (refs.length) {
+    const trades = await db.trade.findMany({
+      where: { tradeRef: { in: refs } },
+      select: { tradeRef: true, paymentType: true },
+    });
+    for (const t of trades) termsByTrade.set(t.tradeRef, tradeTermsKind(t.paymentType));
+  }
+
+  return { creditsByTrade, directCredits, consumedByTrade, termsByTrade };
+}
+
+/**
+ * Cash available to fund a truck of the given ADVANCE-terms trade: that
+ * trade's linked voucher credits minus what its trucks already consumed,
+ * plus whatever remains of the direct-advance pool after every other
+ * advance trade's overflow is covered.
+ */
+export function availableForAdvanceTrade(state: SellFundingState, tradeRef: string): number {
+  const tradeCredit = state.creditsByTrade.get(tradeRef) ?? 0;
+  const tradeConsumed = state.consumedByTrade.get(tradeRef) ?? 0;
+  const own = tradeCredit - tradeConsumed;
+
+  // Direct pool minus every OTHER advance trade's overflow beyond its own
+  // credits (credit-terms trades never draw cash).
+  let directLeft = state.directCredits;
+  for (const [ref, consumed] of state.consumedByTrade) {
+    if (ref === tradeRef) continue;
+    if (state.termsByTrade.get(ref) === "CREDIT") continue;
+    const covered = state.creditsByTrade.get(ref) ?? 0;
+    directLeft -= Math.max(0, consumed - covered);
+  }
+  directLeft = Math.max(0, directLeft);
+
+  // Own trade-linked surplus adds to the pool; own overflow drains it.
+  return own >= 0 ? own + directLeft : Math.max(0, directLeft + own);
+}
+
+export type TruckFundingCheck = {
+  ok: boolean;
+  kind: "CREDIT" | "ADVANCE";
+  availablePkr: number;
+  /** For credit trades: the trade's total receivable ceiling. */
+  creditCeilingPkr?: number;
+  reason?: string;
+};
+
+/**
+ * Can this truck's receivable be confirmed/settled from the buyer's funding?
+ * CREDIT-terms trade: yes while cumulative consuming receivables stay within
+ * the trade's total receivable (ledger goes negative within credit terms).
+ * ADVANCE-terms trade: yes only when trade-linked + direct voucher credits
+ * cover it — otherwise it needs the trader + CEO release path.
+ */
+export async function canFundTruck(
+  input: { counterpartyId: string; tradeRef: string; amountPkr: number },
+  db: Db = prisma,
+): Promise<TruckFundingCheck> {
+  const trade = await db.trade.findUnique({
+    where: { tradeRef: input.tradeRef },
+    select: {
+      paymentType: true,
+      quantity: true,
+      price: true,
+      pricePerCanonicalQty: true,
+      counterparty: { select: { taxFilerStatus: true } },
+    },
+  });
+  if (!trade) return { ok: false, kind: "ADVANCE", availablePkr: 0, reason: "Trade not found" };
+  const kind = tradeTermsKind(trade.paymentType);
+  const state = await getSellFundingState(input.counterpartyId, db);
+
+  if (kind === "CREDIT") {
+    const { getFinancePolicy } = await import("./policy");
+    const { advanceTaxRateFor } = await import("@/lib/finance-policy");
+    const policy = await getFinancePolicy();
+    const rate = advanceTaxRateFor(policy, trade.counterparty?.taxFilerStatus);
+    const notional =
+      num(trade.quantity) *
+      (trade.pricePerCanonicalQty != null ? num(trade.pricePerCanonicalQty) : num(trade.price));
+    const ceiling = Math.round(notional * (1 + rate / 100) * 100) / 100;
+    const consumed = state.consumedByTrade.get(input.tradeRef) ?? 0;
+    const ok = consumed + input.amountPkr <= ceiling + 1; // 1 PKR rounding headroom
+    return {
+      ok,
+      kind,
+      availablePkr: Math.max(0, ceiling - consumed),
+      creditCeilingPkr: ceiling,
+      reason: ok
+        ? undefined
+        : `Credit trade ceiling reached: ${Math.round(consumed).toLocaleString("en-PK")} of ${Math.round(ceiling).toLocaleString("en-PK")} PKR already released against this trade`,
+    };
+  }
+
+  const available = availableForAdvanceTrade(state, input.tradeRef);
+  const ok = available + 0.005 >= input.amountPkr;
+  return {
+    ok,
+    kind,
+    availablePkr: available,
+    reason: ok
+      ? undefined
+      : `Insufficient vouchers for this trade: available ${Math.round(available).toLocaleString("en-PK")} PKR < receivable ${Math.round(input.amountPkr).toLocaleString("en-PK")} PKR`,
+  };
+}
+
 /**
  * Sell-ledger credit not yet consumed by paid/settled (or in-flight legacy)
- * trucks. This is the pool a truck's receivable is checked against before
- * "Confirm payment" succeeds, and before an unpaid truck can be settled.
+ * trucks — the aggregate figure shown on ledger pages.
  */
 export async function availableCreditPkr(counterpartyId: string, db: Db = prisma): Promise<number> {
   const [creditAgg, debitEntries] = await Promise.all([
@@ -264,6 +433,34 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
   ]);
 
   const truckStage = new Map(trucks.map((t) => [t.id, t.saleStage]));
+
+  // BUY payables stop aging once finance has paid — i.e. every inbound
+  // receipt of the entry's gatepass is PAID.
+  const buyGatepassRefs = [
+    ...new Set(
+      entries
+        .filter((e) => e.side === "BUY" && e.entryType === "DEBIT" && e.sourceRef)
+        .map((e) => e.sourceRef!),
+    ),
+  ];
+  const paidGatepasses = new Set<string>();
+  if (buyGatepassRefs.length) {
+    const receipts = await prisma.inboundReceipt.findMany({
+      where: { gatepassNo: { in: buyGatepassRefs } },
+      select: { gatepassNo: true, status: true },
+    });
+    const byGp = new Map<string, string[]>();
+    for (const r of receipts) {
+      if (!r.gatepassNo) continue;
+      const list = byGp.get(r.gatepassNo) ?? [];
+      list.push(r.status);
+      byGp.set(r.gatepassNo, list);
+    }
+    for (const [gp, statuses] of byGp) {
+      if (statuses.length > 0 && statuses.every((s) => s === "PAID")) paidGatepasses.add(gp);
+    }
+  }
+
   const byAccount = new Map<string, LedgerEntryView[]>();
   for (const e of entries) {
     const view: LedgerEntryView = {
@@ -305,9 +502,11 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
           totalDebit += e.amountPkr;
           const stage = e.saleStage;
           if (side === "SELL" && stage && earmarkStages.has(stage)) earmarked += e.amountPkr;
-          // Paid / settled sell receivables stop aging; everything else ages
-          // by its due date.
-          const stopped = side === "SELL" && stage != null && settled.has(stage);
+          // Paid / settled sell receivables and paid buy payables stop
+          // aging; everything else ages by its due date.
+          const stopped =
+            (side === "SELL" && stage != null && settled.has(stage)) ||
+            (side === "BUY" && e.sourceRef != null && paidGatepasses.has(e.sourceRef));
           if (!stopped && e.agingBucket) aging[e.agingBucket] += e.amountPkr;
         } else {
           totalCredit += e.amountPkr;
@@ -371,10 +570,35 @@ export async function getOverdueLedgerAlerts(): Promise<OverdueLedgerAlert[]> {
       )
     : new Map<string, string | null>();
 
+  // Paid buy payables stop alerting: every receipt of the gatepass is PAID.
+  const buyRefs = [
+    ...new Set(entries.filter((e) => e.side === "BUY" && e.sourceRef).map((e) => e.sourceRef!)),
+  ];
+  const paidGatepasses = new Set<string>();
+  if (buyRefs.length) {
+    const receipts = await prisma.inboundReceipt.findMany({
+      where: { gatepassNo: { in: buyRefs } },
+      select: { gatepassNo: true, status: true },
+    });
+    const byGp = new Map<string, string[]>();
+    for (const r of receipts) {
+      if (!r.gatepassNo) continue;
+      const list = byGp.get(r.gatepassNo) ?? [];
+      list.push(r.status);
+      byGp.set(r.gatepassNo, list);
+    }
+    for (const [gp, statuses] of byGp) {
+      if (statuses.length > 0 && statuses.every((s) => s === "PAID")) paidGatepasses.add(gp);
+    }
+  }
+
   const settled = new Set<string>(SETTLED_STAGES);
   return entries
     .filter((e) => {
-      if (e.side !== "SELL" || !e.truckId) return true;
+      if (e.side === "BUY") {
+        return !(e.sourceRef && paidGatepasses.has(e.sourceRef));
+      }
+      if (!e.truckId) return true;
       const stage = stages.get(e.truckId);
       return !(stage && settled.has(stage));
     })

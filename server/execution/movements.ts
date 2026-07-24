@@ -164,6 +164,25 @@ export async function submitInboundForFinance(receiptId: string) {
     const r = await tx.inboundReceipt.findUnique({ where: { id: receiptId } });
     if (!r) throw new Error("Receipt not found");
     if (r.status === "PAID") throw new Error("Already paid");
+    // The trade's trader must approve the gate invoice BEFORE finance is
+    // asked to pay — held or wrong invoices can never reach the pay queue.
+    if (r.gatepassNo) {
+      const truck = await tx.pendingTruck.findUnique({
+        where: { gatepassNo: r.gatepassNo },
+        select: { gateInvoiceStage: true },
+      });
+      if (truck && truck.gateInvoiceStage !== "PAYMENT_APPROVED") {
+        throw new Error(
+          "The trade's trader has not approved this gate invoice yet — finance payment comes after trader approval",
+        );
+      }
+    }
+    // One pending request per receipt.
+    const dupe = await tx.paymentRequest.findFirst({
+      where: { sourceType: "INBOUND", sourceId: r.id, status: "PENDING" },
+      select: { id: true },
+    });
+    if (dupe) throw new Error("A payment request for this receipt is already awaiting finance");
     const contract = await tx.executionContract.findUnique({
       where: { tradeRef: r.tradeRef },
       select: { currency: true },
@@ -252,64 +271,6 @@ export async function getOutboundDispatches(tradeRef?: string): Promise<Outbound
     orderBy: { createdAt: "desc" },
   });
   return rows.map(outboundRowToRuntime);
-}
-
-export async function requestOutboundRelease(dispatchId: string) {
-  return prisma.$transaction(async (tx) => {
-    const d = await tx.outboundDispatch.findUnique({ where: { id: dispatchId } });
-    if (!d) throw new Error("Dispatch not found");
-    if (d.status === "RELEASED") throw new Error("Already released");
-    const contract = await tx.executionContract.findUnique({
-      where: { tradeRef: d.tradeRef },
-      select: { currency: true },
-    });
-    const seq = await nextRef(COUNTER.PAYMENT, tx);
-    const pr = await tx.paymentRequest.create({
-      data: {
-        requestRef: `pay-${seq}`,
-        sourceType: "OUTBOUND",
-        sourceId: d.id,
-        tradeRef: d.tradeRef,
-        counterpartyName: d.buyerName,
-        amount: d.amountDue,
-        currency: contract?.currency ?? "PKR",
-        status: "PENDING",
-      },
-    });
-    const updated = await tx.outboundDispatch.updateMany({
-      where: { id: dispatchId, status: { not: "RELEASED" } },
-      data: { paymentRequestId: pr.id, status: "FINANCE_PENDING" },
-    });
-    if (updated.count === 0) throw new Error("Already released");
-    const fresh = await tx.outboundDispatch.findUnique({
-      where: { id: dispatchId },
-      include: OUTBOUND_INCLUDE,
-    });
-    return { dispatch: outboundRowToRuntime(fresh!), paymentRequest: paymentRowToRuntime(pr) };
-  });
-}
-
-export async function releaseOutbound(dispatchId: string, doRef: string): Promise<OutboundDispatch> {
-  const d = await prisma.outboundDispatch.findUnique({
-    where: { id: dispatchId },
-    include: { paymentRequest: { select: { status: true } } },
-  });
-  if (!d) throw new Error("Dispatch not found");
-  if (!d.paymentRequest || d.paymentRequest.status !== "APPROVED") {
-    throw new Error("Finance must approve payment before release");
-  }
-  // Guarded transition — release applies once.
-  const updated = await prisma.outboundDispatch.updateMany({
-    where: { id: dispatchId, status: { not: "RELEASED" } },
-    data: { doRef, status: "RELEASED" },
-  });
-  if (updated.count === 0) throw new Error("Already released");
-  await refreshContract(d.tradeRef);
-  const fresh = await prisma.outboundDispatch.findUnique({
-    where: { id: dispatchId },
-    include: OUTBOUND_INCLUDE,
-  });
-  return outboundRowToRuntime(fresh!);
 }
 
 /** Keep a PENDING payment request's amount in sync with its source receipt. */
@@ -582,10 +543,27 @@ export async function updateOutboundDispatch(
 export async function deleteInboundReceipt(id: string): Promise<{ ok: true }> {
   const receipt = await prisma.inboundReceipt.findUnique({ where: { id } });
   if (!receipt) throw new Error("Inbound receipt not found");
-  await prisma.inboundReceipt.delete({ where: { id } });
-  if (receipt.paymentRequestId) {
-    await prisma.paymentRequest.deleteMany({ where: { id: receipt.paymentRequestId } });
+  if (receipt.status === "PAID") {
+    throw new Error("This receipt is already paid — it can no longer be deleted");
   }
+  await prisma.$transaction(async (tx) => {
+    await tx.inboundReceipt.delete({ where: { id } });
+    if (receipt.paymentRequestId) {
+      await tx.paymentRequest.deleteMany({
+        where: { id: receipt.paymentRequestId, status: { not: "APPROVED" } },
+      });
+    }
+    // If the truck has no receipts left, its buy-ledger payable goes too.
+    if (receipt.gatepassNo) {
+      const truck = await tx.pendingTruck.findUnique({
+        where: { gatepassNo: receipt.gatepassNo },
+        select: { id: true, inboundReceipts: { select: { id: true } } },
+      });
+      if (truck && truck.inboundReceipts.length === 0) {
+        await tx.counterpartyLedgerEntry.deleteMany({ where: { truckId: truck.id } });
+      }
+    }
+  });
   await refreshContract(receipt.tradeRef);
   return { ok: true };
 }
@@ -593,11 +571,72 @@ export async function deleteInboundReceipt(id: string): Promise<{ ok: true }> {
 export async function deleteOutboundDispatch(id: string): Promise<{ ok: true }> {
   const dispatch = await prisma.outboundDispatch.findUnique({ where: { id } });
   if (!dispatch) throw new Error("Outbound dispatch not found");
-  await prisma.outboundDispatch.delete({ where: { id } });
-  if (dispatch.paymentRequestId) {
-    await prisma.paymentRequest.deleteMany({ where: { id: dispatch.paymentRequestId } });
+  if (dispatch.status === "RELEASED") {
+    throw new Error("This dispatch is already released — it can no longer be deleted");
   }
+
+  const truck = dispatch.gatepassNo
+    ? await prisma.pendingTruck.findUnique({ where: { gatepassNo: dispatch.gatepassNo } })
+    : null;
+  if (
+    truck &&
+    ((truck.saleStage != null && truck.saleStage !== "AWAITING_BALANCE") ||
+      truck.saleReleasedAt != null)
+  ) {
+    throw new Error(
+      "This truck's payment workflow is already past awaiting-balance — resolve or reject it before deleting the dispatch",
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.outboundDispatch.delete({ where: { id } });
+    if (dispatch.paymentRequestId) {
+      await tx.paymentRequest.deleteMany({
+        where: { id: dispatch.paymentRequestId, status: { not: "APPROVED" } },
+      });
+    }
+    // Unwind the truck's sale workflow so nothing references a deleted
+    // dispatch: recompute amounts from the surviving dispatches, or reset
+    // the payment workflow (and its ledger debit) when none remain.
+    if (truck) {
+      const remaining = await tx.outboundDispatch.findMany({
+        where: { gatepassNo: dispatch.gatepassNo!, id: { not: id } },
+        select: { dispatchWeightKg: true },
+      });
+      if (remaining.length === 0) {
+        await tx.pendingTruck.update({
+          where: { id: truck.id },
+          data: {
+            saleBasePkr: null,
+            saleTaxPkr: null,
+            saleExpectedPkr: null,
+            saleStage: null,
+            assignedTradeRef: null,
+            assignedAt: null,
+            status: "PENDING",
+            remainingKg: truck.weightKg,
+          },
+        });
+        await tx.counterpartyLedgerEntry.deleteMany({ where: { truckId: truck.id } });
+      } else {
+        const dispatchedKg = remaining.reduce((s, d) => s + num(d.dispatchWeightKg), 0);
+        await tx.pendingTruck.update({
+          where: { id: truck.id },
+          data: {
+            remainingKg: Math.max(0, num(truck.weightKg) - dispatchedKg),
+            status: "PARTIAL",
+          },
+        });
+      }
+    }
+  });
+
   await refreshContract(dispatch.tradeRef);
+  // Remaining dispatches: re-derive amounts + ledger debit at current rates.
+  if (truck && dispatch.tradeRef) {
+    const { recomputeTradeLinkedAmounts } = await import("./recompute");
+    await recomputeTradeLinkedAmounts(dispatch.tradeRef);
+  }
   return { ok: true };
 }
 

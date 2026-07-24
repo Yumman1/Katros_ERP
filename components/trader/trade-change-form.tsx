@@ -10,6 +10,7 @@ import { NumericInput } from "@/components/ui/numeric-input";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { numericStringFromValue, parseNumericString } from "@/lib/numeric-input";
 import {
+  defaultKgPerUnit,
   PRICE_CURRENCIES,
   PRICE_CURRENCY_LABELS,
   priceUnitLabel,
@@ -66,7 +67,8 @@ export function TradeChangeForm({
   const [priceCurrency, setPriceCurrency] = useState<(typeof PRICE_CURRENCIES)[number]>("PKR");
   const [priceWeightUnit, setPriceWeightUnit] = useState("MT");
   const [priceBasis, setPriceBasis] = useState("Fixed");
-  const [commissionPerUnit, setCommissionPerUnit] = useState("");
+  /** Flat total broker commission in the quoted currency (stored as commissionAmount). */
+  const [commissionAmount, setCommissionAmount] = useState("");
   const [deliveryStart, setDeliveryStart] = useState("");
   const [deliveryEnd, setDeliveryEnd] = useState("");
   const [incoterms, setIncoterms] = useState("");
@@ -104,12 +106,8 @@ export function TradeChangeForm({
     setPriceCurrency((trade.priceCurrency ?? "PKR") as (typeof PRICE_CURRENCIES)[number]);
     setPriceWeightUnit(trade.priceWeightUnit ?? trade.quantityUnit ?? "MT");
     setPriceBasis(trade.priceBasis ?? "Fixed");
-    setCommissionPerUnit(
-      trade.commissionPerUnit != null
-        ? numericStringFromValue(trade.commissionPerUnit)
-        : trade.commissionAmount != null
-          ? numericStringFromValue(trade.commissionAmount)
-          : "",
+    setCommissionAmount(
+      trade.commissionAmount != null ? numericStringFromValue(trade.commissionAmount) : "",
     );
     setDeliveryStart(trade.deliveryStart.toISOString().slice(0, 10));
     setDeliveryEnd(trade.deliveryEnd.toISOString().slice(0, 10));
@@ -183,12 +181,21 @@ export function TradeChangeForm({
     }
 
     const commission =
-      commissionPerUnit.trim() !== "" ? parseNumericString(commissionPerUnit) : null;
+      commissionAmount.trim() !== "" ? parseNumericString(commissionAmount) : null;
 
     return {
       quantityEntered: qty,
       quantityEnteredUnit: quantityUnit,
-      ...(px != null && px > 0 ? { price: px, priceCurrency, priceWeightUnit } : {}),
+      ...(px != null && px > 0
+        ? {
+            price: px,
+            priceCurrency,
+            priceWeightUnit,
+            // Keep the kg factor in lockstep with the quoted weight unit so the
+            // server maps the price to the canonical quantity unit correctly.
+            priceKgPerUnit: defaultKgPerUnit(priceWeightUnit),
+          }
+        : {}),
       priceBasis,
       commissionAmount:
         commission != null && commission > 0 ? commission : null,
@@ -286,7 +293,10 @@ export function TradeChangeForm({
         </p>
       </div>
 
-      <Section title="Quantity & pricing" description={`Price and commission per ${quotedUnit}`}>
+      <Section
+        title="Quantity & pricing"
+        description={`Price per ${quotedUnit} · broker commission as a flat total`}
+      >
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={`Quantity (${quantityUnit})`}>
             <NumericInput
@@ -354,11 +364,11 @@ export function TradeChangeForm({
               className={`${inputClass} data-grid`}
             />
           </Field>
-          <Field label={`Broker commission (${quotedUnit})`}>
+          <Field label={`Broker commission (flat total, ${quotedCurrencyLabel(priceCurrency)})`}>
             <NumericInput
-              value={parseNumericString(commissionPerUnit)}
+              value={parseNumericString(commissionAmount)}
               onChange={(n) =>
-                setCommissionPerUnit(n != null ? numericStringFromValue(n) : "")
+                setCommissionAmount(n != null ? numericStringFromValue(n) : "")
               }
               className={`${inputClass} data-grid`}
             />

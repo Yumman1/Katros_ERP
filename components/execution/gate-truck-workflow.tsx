@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 /** Minimal truck shape the workflow cell needs (subset of the runtime PendingTruck). */
 export type WorkflowTruck = {
   id: string;
+  /** Gate-entry reference — matches inbound receipts to this truck. */
+  gatepassNo: string;
   movementType: "INBOUND" | "OUTBOUND";
   status: string;
   counterpartyName: string;
@@ -153,9 +155,10 @@ function ErrorLine({ message }: { message: string }) {
 }
 
 /**
- * Two-step guided workflow strip for a gatepass truck: 1) assign to a trade,
- * 2) inbound — enter the physical gate invoice; outbound — collect the buyer's
- * payment (or CEO clearance). The card leaves the incomplete list once both
+ * Guided workflow strip for a gatepass truck. Inbound: 1) assign to a trade,
+ * 2) enter the physical gate invoice, 3) payment pipeline (trader approval →
+ * finance pays the receipt). Outbound: 1) assign, 2) collect the buyer's
+ * payment (or CEO clearance). The card leaves the incomplete list once all
  * steps are done.
  */
 export function GateTruckWorkflow({
@@ -167,9 +170,10 @@ export function GateTruckWorkflow({
 }) {
   const inbound = truck.movementType === "INBOUND";
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
+    <div className={cn("grid gap-2 sm:grid-cols-2", inbound && "lg:grid-cols-3")}>
       <TradeStep truck={truck} contracts={contracts} />
       {inbound && <InvoiceStep truck={truck} />}
+      {inbound && <InboundPaymentStep truck={truck} />}
       {!inbound && <PaymentStep truck={truck} />}
     </div>
   );
@@ -395,6 +399,84 @@ function InvoiceStep({ truck }: { truck: WorkflowTruck }) {
   );
 }
 
+// ─── Step 3 · Inbound payment pipeline ───────────────────────────────────────
+
+/**
+ * Inbound trucks stay in the workflow until their receipts are PAID: invoice
+ * entered → trader approves (auto-raises the finance payment request) →
+ * finance pays. Receipt status comes from inboundReceipts (React Query dedupes
+ * the query across cells) matched by gatepass no.
+ */
+function InboundPaymentStep({ truck }: { truck: WorkflowTruck }) {
+  const { data: receipts } = trpc.execution.inboundReceipts.useQuery({}, { staleTime: 15_000 });
+
+  const truckReceipts = useMemo(
+    () => (receipts ?? []).filter((r) => r.gatepassNo === truck.gatepassNo),
+    [receipts, truck.gatepassNo],
+  );
+  const allPaid = truckReceipts.length > 0 && truckReceipts.every((r) => r.status === "PAID");
+
+  if (allPaid) {
+    return (
+      <StepPanel step={3} title="Payment" state="done" headline="Paid">
+        <span className="text-[10px] text-success">Paid — in gate register.</span>
+      </StepPanel>
+    );
+  }
+
+  // Invoice not entered yet — nothing to pay.
+  if (!truck.gateInvoiceNo) {
+    return (
+      <StepPanel step={3} title="Payment" state="waiting" headline="After invoice entry">
+        <span className="text-[10px] text-subtle">
+          Trader approval and the finance payment follow once the gate invoice is entered.
+        </span>
+      </StepPanel>
+    );
+  }
+
+  switch (truck.gateInvoiceStage) {
+    case "PENDING_TRADE_APPROVAL":
+      return (
+        <StepPanel step={3} title="Payment" state="active" headline="With trader">
+          <span className="text-[10px] text-subtle">
+            Awaiting the trade&rsquo;s trader — approval auto-raises the finance payment request.
+          </span>
+        </StepPanel>
+      );
+    case "WRONG_INVOICING":
+      return (
+        <StepPanel step={3} title="Payment" state="active" headline="Fix invoice">
+          <span className="text-[10px] text-subtle">
+            Invoice amount doesn&rsquo;t match the expected value — correct it in step 2.
+          </span>
+        </StepPanel>
+      );
+    case "HOLD_OLD_DUES":
+      return (
+        <StepPanel step={3} title="Payment" state="active" headline="Held">
+          <span className="text-[10px] text-subtle">On hold due to old dues.</span>
+        </StepPanel>
+      );
+    case "PAYMENT_APPROVED":
+      return (
+        <StepPanel step={3} title="Payment" state="active" headline="With finance">
+          <span className="text-[10px] text-subtle">
+            With finance — payment request raised automatically.
+          </span>
+        </StepPanel>
+      );
+    default:
+      return (
+        <StepPanel step={3} title="Payment" state="waiting" headline="Pending">
+          <span className="text-[10px] text-subtle">
+            Waiting for the invoice to enter the approval pipeline.
+          </span>
+        </StepPanel>
+      );
+  }
+}
+
 // ─── Step 2 · Sale payment (outbound) ────────────────────────────────────────
 
 const fmtPkr = (n: number) =>
@@ -532,15 +614,14 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
   }
 
   if (row.saleStage === "AWAITING_BALANCE") {
-    const expected = row.saleExpectedPkr ?? 0;
     const available = row.availableCreditPkr ?? 0;
-    const shortfall = expected - available;
+    const isCredit = row.fundingKind === "CREDIT";
     return (
       <StepPanel step={2} title="Payment" state="active" headline="Awaiting balance">
         <div className="space-y-0.5">
           <AmountLine label="Base" value={fmtPkr(row.saleBasePkr ?? 0)} />
           <AmountLine label="236G" value={fmtPkr(row.saleTaxPkr ?? 0)} />
-          <AmountLine label="Receivable" value={fmtPkr(expected)} bold />
+          <AmountLine label="Receivable" value={fmtPkr(row.saleExpectedPkr ?? 0)} bold />
         </div>
         <span
           className={cn(
@@ -548,14 +629,27 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
             row.canSendForApproval ? "text-success" : "text-destructive",
           )}
         >
-          Buyer credit available: {fmtPkr(available)}
-          {!row.canSendForApproval && shortfall > 0 && <> — short {fmtPkr(shortfall)}</>}
+          {isCredit ? (
+            <>
+              Credit trade — line {fmtPkr(available)} of {fmtPkr(row.creditCeilingPkr ?? 0)}{" "}
+              remaining
+            </>
+          ) : (
+            <>Vouchers available for this trade: {fmtPkr(available)}</>
+          )}
         </span>
+        {!row.canSendForApproval && row.fundingReason && (
+          <span className="text-[10px] font-medium text-destructive">{row.fundingReason}</span>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={!row.canSendForApproval || confirmPayment.isPending}
-            title="Needs approved voucher credit ≥ receivable"
+            title={
+              isCredit
+                ? "Within the trade's credit line — ledger runs negative until vouchers arrive"
+                : "Needs approved voucher credit ≥ receivable"
+            }
             onClick={() => confirmPayment.mutate({ truckId: truck.id })}
             className="kastros-btn-primary px-3 py-1.5 text-[11px] disabled:opacity-50"
           >

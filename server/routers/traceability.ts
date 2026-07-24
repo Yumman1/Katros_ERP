@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
-import { protectedProcedure, router } from "@/server/trpc/trpc";
+import { dashboardProcedure, router } from "@/server/trpc/trpc";
 import { isMockMode } from "@/server/mock-mode";
 import { mockTraceById, mockTraceSearch } from "@/server/dummy-data";
 
@@ -13,7 +13,7 @@ type TraceWithRelations = Prisma.TraceabilityRecordGetPayload<{
 }>;
 
 export const traceabilityRouter = router({
-  search: protectedProcedure
+  search: dashboardProcedure()
     .input(
       z.object({
         q: z.string().optional(),
@@ -37,7 +37,7 @@ export const traceabilityRouter = router({
       });
     }),
 
-  byId: protectedProcedure.input(z.object({ id: z.string() })).query(({ ctx, input }) => {
+  byId: dashboardProcedure().input(z.object({ id: z.string() })).query(({ ctx, input }) => {
     if (isMockMode()) return mockTraceById(input.id) as unknown as TraceWithRelations | null;
     return ctx.prisma.traceabilityRecord.findUnique({
       where: { id: input.id },

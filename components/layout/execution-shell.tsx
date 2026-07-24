@@ -13,7 +13,6 @@ import {
   TrendingUp,
   Truck,
   Warehouse,
-  Wallet,
   FileEdit,
   XCircle,
 } from "lucide-react";
@@ -30,13 +29,15 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { role, isHead } = useTeam();
   const isExecutionHead = role != null && canActOnDepartment(role, isHead, "EXECUTION");
+  // retry: false — non-execution visitors would otherwise 403-loop on these.
   const { data: summary } = trpc.execution.deskSummary.useQuery(undefined, {
     staleTime: 60_000,
     refetchInterval: 60_000,
+    retry: false,
   });
   const { data: pendingApprovals } = trpc.team.pendingApprovals.useQuery(
     { department: "EXECUTION" },
-    { enabled: isExecutionHead, staleTime: 60_000, refetchInterval: 60_000 },
+    { enabled: isExecutionHead, staleTime: 60_000, refetchInterval: 60_000, retry: false },
   );
 
   const nav = [
@@ -79,17 +80,6 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         { href: "/execution/ledgers", label: "Ledgers", icon: <BookOpen className="h-4 w-4" /> },
         { href: "/execution/rejections", label: "Rejections", icon: <XCircle className="h-4 w-4" /> },
         { href: "/execution/warehouses", label: "Warehouses", icon: <MapPin className="h-4 w-4" /> },
-        {
-          href: "/execution/payments",
-          label: "Finance Queue",
-          icon: <Wallet className="h-4 w-4" />,
-          badge:
-            summary?.pendingFinance && summary.pendingFinance > 0 ? (
-              <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--destructive)_15%,transparent)] px-1.5 text-[10px] font-bold text-destructive">
-                {summary.pendingFinance}
-              </span>
-            ) : undefined,
-        },
         ...(isExecutionHead
           ? [
               {

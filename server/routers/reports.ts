@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Prisma, Reconciliation } from "@prisma/client";
-import { protectedProcedure, router } from "@/server/trpc/trpc";
+import { dashboardProcedure, router } from "@/server/trpc/trpc";
 import { TradeStatus, ReconStatus } from "@prisma/client";
 import { startOfYear } from "date-fns";
 import { isMockMode } from "@/server/mock-mode";
@@ -11,7 +11,7 @@ type TradeBlotterRow = Prisma.TradeGetPayload<{
 }>;
 
 export const reportsRouter = router({
-  kpis: protectedProcedure.query(async ({ ctx }) => {
+  kpis: dashboardProcedure().query(async ({ ctx }) => {
     if (isMockMode()) return mockKpis();
     const y0 = startOfYear(new Date());
     const tradesYtd = await ctx.prisma.trade.count({
@@ -32,7 +32,7 @@ export const reportsRouter = router({
     };
   }),
 
-  tradeBlotter: protectedProcedure.query(({ ctx }) => {
+  tradeBlotter: dashboardProcedure().query(({ ctx }) => {
     if (isMockMode()) return mockTradeBlotter() as unknown as TradeBlotterRow[];
     return ctx.prisma.trade.findMany({
       include: { commodity: true, counterparty: true },
@@ -42,7 +42,7 @@ export const reportsRouter = router({
   }),
 
   /** Stub for scheduled email delivery — implement with your job runner + mail provider. */
-  scheduleReport: protectedProcedure
+  scheduleReport: dashboardProcedure()
     .input(
       z.object({
         reportId: z.string(),
@@ -51,7 +51,7 @@ export const reportsRouter = router({
     )
     .mutation(() => ({ ok: true, queued: false, message: "Email scheduling not configured" })),
 
-  openBreaks: protectedProcedure.query(({ ctx }) => {
+  openBreaks: dashboardProcedure().query(({ ctx }) => {
     if (isMockMode()) return mockOpenBreaks() as unknown as Reconciliation[];
     return ctx.prisma.reconciliation.findMany({
       where: { status: ReconStatus.BREAK },

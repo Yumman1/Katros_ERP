@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { protectedProcedure, router } from "@/server/trpc/trpc";
+import { dashboardProcedure, router } from "@/server/trpc/trpc";
 import { isMockMode } from "@/server/mock-mode";
 import { mockShipmentSummary, mockShipments, type ShipmentStatus } from "@/server/dummy-data";
 
@@ -16,7 +16,7 @@ const statusSchema = z.enum([
 ]);
 
 export const shipmentsRouter = router({
-  summary: protectedProcedure.query(async ({ ctx }) => {
+  summary: dashboardProcedure().query(async ({ ctx }) => {
     if (isMockMode()) return mockShipmentSummary();
     const shipments = await ctx.prisma.shipment.findMany({ take: 500 });
     return {
@@ -28,7 +28,7 @@ export const shipmentsRouter = router({
     };
   }),
 
-  list: protectedProcedure
+  list: dashboardProcedure()
     .input(
       z
         .object({
@@ -57,7 +57,7 @@ export const shipmentsRouter = router({
       });
     }),
 
-  byId: protectedProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
+  byId: dashboardProcedure().input(z.object({ id: z.string() })).query(({ input }) => {
     if (isMockMode()) {
       return mockShipments().find((s) => s.id === input.id) ?? null;
     }

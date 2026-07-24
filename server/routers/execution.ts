@@ -7,11 +7,7 @@ import {
   advanceSpotState,
   allocateContractWarehouse,
   allocateContractWarehousesSplit,
-  approvePayment,
   assignTruckToTrade,
-  assignTruckFifoAuto,
-  createInboundReceipt,
-  createOutboundDispatch,
   createPendingTruck,
   deleteInboundReceipt,
   deleteOutboundDispatch,
@@ -23,7 +19,6 @@ import {
   getDeskSummary,
   getInboundReceipts,
   getLockedContracts,
-  getPaymentRequests,
   getPendingTradesForExecution,
   getGateInvoiceSummary,
   getPendingTrucks,
@@ -33,14 +28,8 @@ import {
   setManualGateInvoice,
   withWarehouseProgress,
   listSpotPipeline,
-  releaseOutbound,
-  rejectPayment,
-  requestOutboundRelease,
   submitInboundForFinance,
   submitSpotForFinance,
-  suggestInboundFifo,
-  suggestSaleFifo,
-  closeLockedContract,
   updatePendingTruck,
   updateInboundReceipt,
   updateOutboundDispatch,
@@ -369,20 +358,6 @@ export const executionRouter = router({
       }
     }),
 
-  closeLockedContract: roleProcedure([...execRoles])
-    .input(z.object({ tradeRef: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      try {
-        const closedBy = ctx.session.user.name ?? ctx.session.user.email ?? "execution";
-        return await closeLockedContract(input.tradeRef.trim(), closedBy);
-      } catch (e) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: e instanceof Error ? e.message : "Could not close contract",
-        });
-      }
-    }),
-
   pendingWarehouseAllocation: roleProcedure([...execRoles]).query(() => {
     return getOpenTradesNeedingWarehouseAllocation();
   }),
@@ -545,51 +520,6 @@ export const executionRouter = router({
       };
     }),
 
-  suggestInboundFifo: roleProcedure([...execRoles])
-    .input(z.object({ qtyMt: z.number().positive(), sellerCode: z.string().optional() }))
-    .query(({ input }) => suggestInboundFifo(input.qtyMt, input.sellerCode)),
-
-  suggestSaleFifo: roleProcedure([...execRoles])
-    .input(z.object({ qtyMt: z.number().positive() }))
-    .query(({ input }) => suggestSaleFifo(input.qtyMt)),
-
-  createInboundReceipt: roleProcedure([...execRoles])
-    .input(
-      z.object({
-        kcsNo: z.string().min(1),
-        receiveDate: z.coerce.date(),
-        truckNo: z.string().min(1),
-        biltyNo: z.string().min(1),
-        trnNo: z.string().min(1),
-        warehouseName: z.string().min(1),
-        sellerName: z.string().min(1),
-        tradeRef: z.string().min(1),
-        billNo: z.string().optional(),
-        bags: z.number().optional(),
-        weightSpotKg: z.number().positive(),
-        weightWarehouseKg: z.number().positive(),
-        qualityReadings: qualitySchema,
-        fifoOverrideReason: z.string().optional(),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      try {
-        return await createInboundReceipt({
-          ...input,
-          billNo: input.billNo ?? null,
-          bags: input.bags ?? null,
-          allocatedQtyMt: 0,
-          fifoOverrideReason: input.fifoOverrideReason ?? null,
-          allowOutsideWindow: ctx.session.user.isHead,
-        });
-      } catch (e) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: e instanceof Error ? e.message : "Failed",
-        });
-      }
-    }),
-
   submitInboundForFinance: roleProcedure([...execRoles])
     .input(z.object({ receiptId: z.string() }))
     .mutation(async ({ input }) => {
@@ -604,63 +534,12 @@ export const executionRouter = router({
     .input(z.object({ tradeRef: z.string().optional() }).optional())
     .query(({ input }) => getInboundReceipts(input?.tradeRef)),
 
-  createOutboundDispatch: roleProcedure([...execRoles])
-    .input(
-      z.object({
-        dispatchDate: z.coerce.date(),
-        liftedBy: z.string().min(1),
-        buyerName: z.string().min(1),
-        tradeRef: z.string().min(1),
-        warehouseName: z.string().min(1),
-        truckNo: z.string().min(1),
-        dispatchWeightKg: z.number().positive(),
-        invoiceWeightKg: z.number().positive(),
-        fungusPct: z.number().min(0).default(0),
-        fifoOverrideReason: z.string().optional(),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      try {
-        return await createOutboundDispatch(
-          {
-            ...input,
-            doRef: null,
-            fifoOverrideReason: input.fifoOverrideReason ?? null,
-          },
-          { allowOutsideWindow: ctx.session.user.isHead },
-        );
-      } catch (e) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
-      }
-    }),
-
-  requestOutboundRelease: roleProcedure([...execRoles])
-    .input(z.object({ dispatchId: z.string() }))
-    .mutation(async ({ input }) => {
-      try {
-        return await requestOutboundRelease(input.dispatchId);
-      } catch (e) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
-      }
-    }),
-
-  releaseOutbound: roleProcedure([...execRoles])
-    .input(z.object({ dispatchId: z.string(), doRef: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      try {
-        return await releaseOutbound(input.dispatchId, input.doRef);
-      } catch (e) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
-      }
-    }),
+  // Legacy outbound release path removed — sale trucks release only via the
+  // payment workflow (confirmSalePayment / CEO clearance + markSaleReleased).
 
   outboundDispatches: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string().optional() }).optional())
     .query(({ input }) => getOutboundDispatches(input?.tradeRef)),
-
-  spotEvent: roleProcedure([...execRoles])
-    .input(z.object({ tradeRef: z.string() }))
-    .query(({ input }) => getSpotEvent(input.tradeRef)),
 
   spotPipeline: roleProcedure([...execRoles])
     .input(z.object({ profile: z.enum(["PURCHASE_SPOT"]).optional() }).optional())
@@ -706,31 +585,8 @@ export const executionRouter = router({
       }
     }),
 
-  paymentRequests: roleProcedure([...execRoles, Role.FINANCE])
-    .input(z.object({ status: z.string().optional() }).optional())
-    .query(({ input }) => getPaymentRequests(input ?? undefined)),
-
-  approvePayment: roleProcedure([...execRoles, Role.FINANCE])
-    .input(z.object({ paymentId: z.string(), comment: z.string().optional() }))
-    .mutation(async ({ input, ctx }) => {
-      try {
-        const approvedBy = ctx.session.user.name ?? "Execution";
-        return await approvePayment(input.paymentId, approvedBy, input.comment);
-      } catch (e) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
-      }
-    }),
-
-  rejectPayment: roleProcedure([...execRoles, Role.FINANCE])
-    .input(z.object({ paymentId: z.string(), comment: z.string().optional() }))
-    .mutation(async ({ input }) => {
-      try {
-        return await rejectPayment(input.paymentId, input.comment);
-      } catch (e) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
-      }
-    }),
-
+  // Payment approval lives with FINANCE only — execution raises requests but
+  // can never approve or reject its own (separation of duties).
 
   // ─── Pending Truck procedures ─────────────────────────────────────────────
 
@@ -812,16 +668,6 @@ export const executionRouter = router({
           input.overrideWeightKg,
           true,
         );
-      } catch (e) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
-      }
-    }),
-
-  assignTruckFifoAuto: roleProcedure([...execRoles])
-    .input(z.object({ truckId: z.string() }))
-    .mutation(async ({ input }) => {
-      try {
-        return await assignTruckFifoAuto(input.truckId);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
@@ -1000,11 +846,38 @@ export const executionRouter = router({
     })),
   ),
 
+  /**
+   * Open SELL trades of a counterparty — the voucher form's "against trade"
+   * dropdown (or direct advance).
+   */
+  sellTradesForCounterparty: roleProcedure([...execRoles, Role.FINANCE])
+    .input(z.object({ counterpartyId: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const trades = await prisma.trade.findMany({
+        where: {
+          counterpartyId: input.counterpartyId,
+          direction: "SELL",
+          tradeStatus: { in: ["LOCKED", "CONFIRMED", "PENDING"] },
+        },
+        orderBy: { tradeDate: "desc" },
+        select: { tradeRef: true, paymentType: true, quantity: true, quantityUnit: true },
+        take: 50,
+      });
+      return trades.map((t) => ({
+        tradeRef: t.tradeRef,
+        paymentType: t.paymentType,
+        quantity: num(t.quantity),
+        quantityUnit: t.quantityUnit,
+      }));
+    }),
+
   /** Enter a payment voucher — credits the ledger once finance approves it. */
   createVoucher: roleProcedure([...execRoles])
     .input(
       z.object({
         counterpartyId: z.string().min(1),
+        /** Sell trade the payment is against; omit for a direct advance. */
+        tradeRef: z.string().optional(),
         amountPkr: z.number().positive(),
         method: z.string().optional(),
         reference: z.string().optional(),

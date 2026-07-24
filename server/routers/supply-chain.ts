@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { protectedProcedure, router } from "@/server/trpc/trpc";
+import { dashboardProcedure, router } from "@/server/trpc/trpc";
 import { isMockMode } from "@/server/mock-mode";
 import {
   mockCounterpartiesScm,
@@ -8,7 +8,7 @@ import {
 } from "@/server/dummy-data";
 
 export const supplyChainRouter = router({
-  overview: protectedProcedure.query(async ({ ctx }) => {
+  overview: dashboardProcedure().query(async ({ ctx }) => {
     if (isMockMode()) return mockSupplyChainOverview();
     const inv = await ctx.prisma.inventory.findMany({ include: { commodity: true } });
     const totalOnHand = inv.reduce((a, x) => a + Number(x.quantity), 0);
@@ -29,7 +29,7 @@ export const supplyChainRouter = router({
     };
   }),
 
-  locations: protectedProcedure.query(async ({ ctx }) => {
+  locations: dashboardProcedure().query(async ({ ctx }) => {
     if (isMockMode()) return mockLocationsDetail();
     const locations = await ctx.prisma.location.findMany({ orderBy: { name: "asc" } });
     const inv = await ctx.prisma.inventory.findMany({
@@ -62,7 +62,7 @@ export const supplyChainRouter = router({
     });
   }),
 
-  counterparties: protectedProcedure
+  counterparties: dashboardProcedure()
     .input(z.object({ type: z.enum(["BUYER", "SELLER", "ALL"]).optional() }).optional())
     .query(async ({ ctx, input }) => {
       if (isMockMode()) {
@@ -92,7 +92,7 @@ export const supplyChainRouter = router({
       }));
     }),
 
-  positionVsInventory: protectedProcedure.query(async ({ ctx }) => {
+  positionVsInventory: dashboardProcedure().query(async ({ ctx }) => {
     if (isMockMode()) {
       const { computePositionLedger } = await import("@/server/position-ledger");
       const rows = await computePositionLedger();

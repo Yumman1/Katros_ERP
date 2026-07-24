@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { protectedProcedure, router, roleProcedure } from "@/server/trpc/trpc";
+import { dashboardProcedure, router, roleProcedure } from "@/server/trpc/trpc";
 import { Role, TradeStatus } from "@prisma/client";
 import { startOfDay, subDays } from "date-fns";
 import { calculateMTM } from "@/lib/calculations/mtm";
@@ -17,7 +17,7 @@ async function priceOn(db: Context["prisma"], commodityId: string, asOf: Date) {
 }
 
 export const mtmRouter = router({
-  getBook: protectedProcedure
+  getBook: dashboardProcedure()
     .input(
       z.object({
         date: z.coerce.date().optional(),
@@ -76,7 +76,7 @@ export const mtmRouter = router({
     return { ok: true, message: "EOD snap stub — persist flag in Phase 1.5" };
   }),
 
-  historyTotals: protectedProcedure
+  historyTotals: dashboardProcedure()
     .input(z.object({ days: z.number().min(7).max(90).default(30) }))
     .query(async ({ ctx, input }) => {
       if (isMockMode()) return mockMtmHistory(input.days);

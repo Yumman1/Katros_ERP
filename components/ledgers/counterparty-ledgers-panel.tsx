@@ -180,6 +180,13 @@ function SideSection({
         )}
       </div>
 
+      {side === "SELL" && (
+        <p className="text-xs text-muted-foreground">
+          Credit-terms trades release within their trade ceiling (balance may run negative within credit
+          days); advance trades need vouchers against the trade or direct advances.
+        </p>
+      )}
+
       {accounts.length === 0 ? (
         <div className="exec-empty">
           {side === "SELL" ? "No sell-side ledger accounts yet." : "No buy-side ledger accounts yet."}
@@ -321,7 +328,21 @@ function AccountCard({
                         </span>
                         <span className="ml-1.5 font-mono text-xs">{e.sourceRef ?? e.voucherNo ?? "—"}</span>
                       </td>
-                      <td className="whitespace-nowrap font-mono text-xs">{e.tradeRef ?? "—"}</td>
+                      <td className="whitespace-nowrap font-mono text-xs">
+                        {e.entryType === "CREDIT" ? (
+                          e.tradeRef ? (
+                            <span className="rounded-full border border-accent-secondary/30 bg-accent-secondary/10 px-2 py-0.5 text-[10px] font-bold text-accent-secondary">
+                              Against {e.tradeRef}
+                            </span>
+                          ) : (
+                            <span className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 text-[10px] font-semibold text-subtle">
+                              Direct advance
+                            </span>
+                          )
+                        ) : (
+                          e.tradeRef ?? "—"
+                        )}
+                      </td>
                       <td className="whitespace-nowrap">{e.dueDate ? fmtDate(e.dueDate) : "—"}</td>
                       <td className="whitespace-nowrap">
                         {e.agingBucket && e.agingBucket in AGING_BUCKET_LABELS

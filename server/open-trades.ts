@@ -189,9 +189,19 @@ export async function getOpenTradeByRef(
   };
 }
 
-export async function submitTradeToExecution(tradeRef: string): Promise<MockTraderTrade> {
+export async function submitTradeToExecution(
+  tradeRef: string,
+  /** Acting trader — must own the trade (CEO/ADMIN callers pass null). */
+  traderName?: string | null,
+): Promise<MockTraderTrade> {
   const t = await mockTradeByRefGlobal(tradeRef.trim());
   if (!t) throw new Error("Trade not found");
+  if (
+    traderName != null &&
+    !traderNamesMatch(t.traderName, canonicalTraderName(traderName))
+  ) {
+    throw new Error("You can only submit your own trades to execution");
+  }
   if (t.tradeStatus !== TradeStatus.PENDING) {
     throw new Error("Only draft trades can be submitted to execution");
   }
@@ -263,7 +273,17 @@ async function applyPatchToTrade(
     trade.price = patch.price;
     const priceCurrency = patch.priceCurrency ?? trade.priceCurrency ?? "USD";
     const priceWeightUnit = patch.priceWeightUnit ?? trade.priceWeightUnit ?? trade.quantityUnit;
-    const priceKgPerUnit = patch.priceKgPerUnit ?? trade.priceKgPerUnit ?? defaultKgPerUnit(priceWeightUnit);
+    // When the quoted weight unit CHANGES, the stored kg factor belongs to the
+    // OLD unit — re-derive it from the new unit (a maund edit on an MT-quoted
+    // trade must map with 40 kg, not 1000 kg, or every downstream rate,
+    // expected invoice, receivable and ledger debit is corrupted).
+    const unitChanged =
+      patch.priceWeightUnit != null && patch.priceWeightUnit !== trade.priceWeightUnit;
+    const priceKgPerUnit =
+      patch.priceKgPerUnit ??
+      (unitChanged ? defaultKgPerUnit(priceWeightUnit) : undefined) ??
+      trade.priceKgPerUnit ??
+      defaultKgPerUnit(priceWeightUnit);
     const canonicalKg = defaultKgPerUnit(trade.quantityUnit ?? "MT");
     trade.priceCurrency = priceCurrency;
     trade.priceWeightUnit = priceWeightUnit;
@@ -446,7 +466,7 @@ export async function applyTraderTradeEditFromPayload(
   return result;
 }
 
-function assertPriceReadyForLock(trade: MockTraderTrade): void {
+export function assertPriceReadyForLock(trade: MockTraderTrade): void {
   if (trade.pendingTraderPrice) {
     throw new Error(
       "Trader must enter the contract price from My Trades before this trade can be locked",
@@ -509,6 +529,12 @@ export async function completeTraderTradePrice(
 
   trade.pendingTraderPrice = false;
   await upsertBookedTrade(trade);
+  // Defensive: if this trade is somehow already locked with linked trucks,
+  // the new price must ripple into their expected amounts + ledger debits.
+  {
+    const { recomputeTradeLinkedAmounts } = await import("@/server/execution/recompute");
+    await recomputeTradeLinkedAmounts(trade.tradeRef);
+  }
   return trade;
 }
 
@@ -554,10 +580,11 @@ export async function lockOpenTradeAfterTraderReview(
   if (!trade.pendingTraderReview) {
     throw new Error("No execution edits to acknowledge — execution can lock this trade directly");
   }
-  trade.pendingTraderReview = false;
-  await upsertBookedTrade(trade);
+  // Asserts FIRST — a failed lock must not silently count as trader approval.
   assertPriceReadyForLock(trade);
   assertWarehouseReadyForLock(trade);
+  trade.pendingTraderReview = false;
+  await upsertBookedTrade(trade);
   return lockTradeInStore(traderName, tradeRef, input);
 }
 

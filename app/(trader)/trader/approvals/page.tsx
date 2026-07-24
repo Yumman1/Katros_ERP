@@ -40,10 +40,11 @@ export default function TraderApprovalsPage() {
   const myRequests = trpc.team.myChangeRequests.useQuery();
 
   const approve = trpc.trader.approveExecutionEdits.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       void utils.trader.executionEditApprovals.invalidate();
       void utils.trader.executionEditApprovalsCount.invalidate();
       void utils.trader.myTrades.invalidate();
+      void utils.trader.tradeByRef.invalidate({ tradeRef: variables.tradeRef });
     },
   });
 

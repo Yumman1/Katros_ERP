@@ -178,6 +178,8 @@ function BookTradeForm() {
   });
   const book = trpc.trader.bookTrade.useMutation({
     onSuccess: (res) => {
+      // Flag first: any in-flight or future autosave must not resurrect the draft.
+      bookedRef.current = true;
       if (res.trade) {
         utils.trader.tradeByRef.setData({ tradeRef: res.tradeRef }, res.trade);
       }
@@ -191,6 +193,13 @@ function BookTradeForm() {
   });
   const saveDraft = trpc.trader.saveBookingDraft.useMutation({
     onSuccess: (res) => {
+      if (bookedRef.current) {
+        // The trade was booked while this autosave was in flight — the saved
+        // draft is a ghost; delete it immediately instead of keeping it.
+        deleteDraft.mutate({ id: res.id });
+        draftIdRef.current = null;
+        return;
+      }
       draftIdRef.current = res.id;
       setLastDraftSavedAt(new Date());
       void utils.trader.bookingDrafts.invalidate();
@@ -232,6 +241,8 @@ function BookTradeForm() {
 
   // Autosaved booking draft — id is kept in a ref so debounced saves never go stale.
   const draftIdRef = useRef<string | null>(null);
+  // Once the trade is booked, no more autosaves — and in-flight ones are discarded.
+  const bookedRef = useRef(false);
   const [lastDraftSavedAt, setLastDraftSavedAt] = useState<Date | null>(null);
   const lastSavedPayloadRef = useRef<string | null>(null);
   const draftRestoredRef = useRef(false);
@@ -301,6 +312,7 @@ function BookTradeForm() {
       tradeParams?: TradeParamValues;
       selectedWarehouses?: string[];
       cornSpecs?: QualityTolerances;
+      sessionParamDefs?: TradeParamDefinition[];
     };
     const savedForm: Partial<Form> = { ...(payload.form ?? {}) };
     // JSON round-trips turn NaN (cleared number inputs) into null — drop those.
@@ -311,6 +323,7 @@ function BookTradeForm() {
     if (payload.tradeParams) setTradeParams(payload.tradeParams);
     if (Array.isArray(payload.selectedWarehouses)) setSelectedWarehouses(payload.selectedWarehouses);
     if (payload.cornSpecs) setCornSpecs(payload.cornSpecs);
+    if (Array.isArray(payload.sessionParamDefs)) setSessionParamDefs(payload.sessionParamDefs);
     // Commodity-driven effects overwrite units/specs once the commodity loads —
     // stash the saved values so the fixup effect below can re-apply them.
     restoreFixupRef.current = { form: savedForm, cornSpecs: payload.cornSpecs ?? null };
@@ -594,11 +607,12 @@ function BookTradeForm() {
     tradeParams,
     selectedWarehouses,
     cornSpecs,
+    sessionParamDefs,
   });
   const bookPending = book.isPending;
   const bookSucceeded = book.isSuccess;
   useEffect(() => {
-    if (bookPending || bookSucceeded) return;
+    if (bookPending || bookSucceeded || bookedRef.current) return;
     // When resuming, wait for the draft to load before autosaving over it.
     if (draftParam && !draftRestoredRef.current) return;
     const hasQty = typeof qtyRaw === "number" && Number.isFinite(qtyRaw) && qtyRaw > 0;
@@ -606,6 +620,7 @@ function BookTradeForm() {
     if (!commodityId && !counterpartyId && !hasQty && !hasPrice) return;
     if (draftPayloadSerialized === lastSavedPayloadRef.current) return;
     const timer = setTimeout(() => {
+      if (bookedRef.current) return;
       lastSavedPayloadRef.current = draftPayloadSerialized;
       saveDraft.mutate({
         id: draftIdRef.current,
@@ -693,8 +708,6 @@ function BookTradeForm() {
       },
     );
 
-  const onSubmit = makeSubmit(false);
-
   return (
     <div className="kastros-desk-page mx-auto w-full max-w-4xl">
       <div className="kastros-desk-scroll space-y-5 pb-6">
@@ -711,7 +724,11 @@ function BookTradeForm() {
         </p>
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-5 rounded-lg border border-kastros-border bg-kastros-card p-5">
+      {/* Enter must not book anything — booking happens only via the explicit buttons below. */}
+      <form
+        onSubmit={(e) => e.preventDefault()}
+        className="space-y-5 rounded-lg border border-kastros-border bg-kastros-card p-5"
+      >
         {/* ── 1. Deal ── */}
         <Section title="Deal" description="Commodity, counterparty, and market">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -1187,6 +1204,17 @@ function BookTradeForm() {
                       value={opt.value}
                       checked={filerStatus === opt.value}
                       onChange={() => {
+                        if (filerStatus === opt.value) return;
+                        const ok = confirm(
+                          `Change ${selectedCounterparty.name}'s 236G status to ${
+                            opt.value === "NON_FILER" ? "non-filer" : "ATL filer"
+                          } for ALL future trades and recompute 236G amounts?`,
+                        );
+                        if (!ok) {
+                          // Re-render with the unchanged status so the radio snaps back.
+                          setFilerOverride(filerStatus);
+                          return;
+                        }
                         setFilerOverride(opt.value);
                         updateFilerStatus.mutate({
                           counterpartyId: selectedCounterparty.id,
@@ -1260,11 +1288,17 @@ function BookTradeForm() {
                   <span className="data-grid text-warning">{fmtBase(advanceTaxAmount)}</span>
                 </div>
                 <div title="Set on Finance → Policies">
-                  Total receivable (incl. commission + 236G):{" "}
+                  Total receivable (incl. 236G):{" "}
                   <span className="data-grid font-semibold text-foreground">
-                    {fmtBase(notional + commissionInBase + advanceTaxAmount)}
+                    {fmtBase(notional + advanceTaxAmount)}
                   </span>
                 </div>
+                {commissionInBase > 0 && (
+                  <div>
+                    Commission payable (to broker):{" "}
+                    <span className="data-grid text-warning">{fmtBase(commissionInBase)}</span>
+                  </div>
+                )}
               </>
             )}
           </div>

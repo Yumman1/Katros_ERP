@@ -31,9 +31,10 @@ function ClearWithoutPaymentSection() {
   });
 
   const resolve = trpc.ceo.resolveClearWithoutPayment.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       void utils.ceo.clearWithoutPaymentApprovals.invalidate();
       void utils.ceo.clearWithoutPaymentCount.invalidate();
+      if (variables.decision === "REJECT") void utils.policy.rejections.invalidate();
     },
   });
 

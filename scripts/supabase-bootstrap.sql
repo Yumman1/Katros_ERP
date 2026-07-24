@@ -10,7 +10,7 @@
 
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- ── 1. Schema (mirrors prisma/migrations, through 20260723_dual_ledgers_filer_tax) ──
+-- ── 1. Schema (mirrors prisma/migrations, through 20260724_voucher_trade_link) ──
 
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('ADMIN', 'CEO', 'TRADER', 'EXECUTION', 'RISK_MANAGER', 'FINANCE', 'READ_ONLY');
@@ -923,6 +923,7 @@ CREATE TABLE "Voucher" (
     "id" TEXT NOT NULL,
     "voucherNo" TEXT NOT NULL,
     "counterpartyId" TEXT NOT NULL,
+    "tradeRef" TEXT,
     "amountPkr" DECIMAL(20,2) NOT NULL,
     "method" TEXT,
     "reference" TEXT,
@@ -1149,6 +1150,9 @@ CREATE INDEX "Voucher_status_idx" ON "Voucher"("status");
 
 -- CreateIndex
 CREATE INDEX "Voucher_counterpartyId_idx" ON "Voucher"("counterpartyId");
+
+-- CreateIndex
+CREATE INDEX "Voucher_tradeRef_idx" ON "Voucher"("tradeRef");
 
 -- CreateIndex
 CREATE INDEX "TradeDraft_traderName_updatedAt_idx" ON "TradeDraft"("traderName", "updatedAt");
@@ -1409,7 +1413,8 @@ VALUES (gen_random_uuid()::text, '', now(), '0_init', 1),
        (gen_random_uuid()::text, '', now(), '20260720_gate_invoice_expected', 1),
        (gen_random_uuid()::text, '', now(), '20260722_sale_ledger_policies', 1),
        (gen_random_uuid()::text, '', now(), '20260722_sale_manual_release', 1),
-       (gen_random_uuid()::text, '', now(), '20260723_dual_ledgers_filer_tax', 1)
+       (gen_random_uuid()::text, '', now(), '20260723_dual_ledgers_filer_tax', 1),
+       (gen_random_uuid()::text, '', now(), '20260724_voucher_trade_link', 1)
 ON CONFLICT DO NOTHING;
 
 -- Policy singleton row.

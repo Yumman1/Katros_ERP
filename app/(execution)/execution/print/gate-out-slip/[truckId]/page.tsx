@@ -132,7 +132,7 @@ export default function GateOutSlipPrintPage() {
                   : "—"
               }
             />
-            <Field label="Weight" value={fmtKg(data.weightKg)} />
+            <Field label="Gate weight" value={fmtKg(data.weightKg)} />
             <Field label="Trade ref" value={data.tradeRef ?? "—"} />
             <Field
               label="Approvals"

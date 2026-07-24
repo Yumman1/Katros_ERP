@@ -2,7 +2,12 @@
 
 import { TRADE_SCOPE_LABELS, executionIncotermLabel, paymentTypeLabel } from "@/lib/trade-constants";
 import { parseTraderWarehouseSelections } from "@/lib/warehouse-allocation";
-import { priceUnitLabel, quotedCurrencyLabel, currencyToBaseFactor } from "@/lib/price-units";
+import {
+  currencyToBaseFactor,
+  defaultKgPerUnit,
+  priceUnitLabel,
+  quotedCurrencyLabel,
+} from "@/lib/price-units";
 import { resolveAllTradeParameters, UNIVERSAL_TRADE_FIELDS } from "@/lib/trade-parameters";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import { executionWorkspacePath } from "@/lib/execution-routes";
@@ -24,20 +29,24 @@ export default function TradeDetailPage() {
     { tradeRef },
     { retry: 2, retryDelay: 400 },
   );
-  const lock = trpc.trader.lockTrade.useMutation({
-    onSuccess: () => invalidateTradeFlowCaches(utils, tradeRef),
-  });
   const submitToExecution = trpc.trader.submitTradeToExecution.useMutation({
     onSuccess: () => invalidateTradeFlowCaches(utils, tradeRef),
   });
-  const [ratePerMaund, setRatePerMaund] = useState<number>(0);
-  const [commission, setCommission] = useState<number>(0);
+  const completePrice = trpc.trader.completeTradePrice.useMutation({
+    onSuccess: () => invalidateTradeFlowCaches(utils, tradeRef),
+  });
+  const approveEdits = trpc.trader.approveExecutionEdits.useMutation({
+    onSuccess: () => {
+      invalidateTradeFlowCaches(utils, tradeRef);
+      void utils.trader.executionEditApprovals.invalidate();
+      void utils.trader.executionEditApprovalsCount.invalidate();
+    },
+  });
+  const policy = trpc.policy.get.useQuery();
+  const refData = trpc.trader.referenceData.useQuery();
+  const [priceInput, setPriceInput] = useState<number>(0);
+  const [commissionInput, setCommissionInput] = useState<number>(0);
   const [editing, setEditing] = useState(false);
-
-  useEffect(() => {
-    if (trade?.ratePerMaund) setRatePerMaund(trade.ratePerMaund);
-    if (trade?.commissionPerMaund != null) setCommission(trade.commissionPerMaund);
-  }, [trade?.ratePerMaund, trade?.commissionPerMaund]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !trade) return;
@@ -107,6 +116,20 @@ export default function TradeDetailPage() {
   const netAfterCommission = Math.max(0, notional - commissionInBase);
   /** Gross payable for finance — contract value plus broker commission. */
   const totalWithCommission = notional + commissionInBase;
+  // 236G advance income tax on SELL trades — filer/non-filer rates from
+  // Finance → Policies; the counterparty's filer status lives in master data.
+  const counterpartyRow = refData.data?.counterparties.find(
+    (cp) => cp.id === trade.counterparty.id || cp.code === trade.counterparty.code,
+  );
+  const filerStatus = counterpartyRow?.taxFilerStatus ?? "FILER";
+  const advanceTaxRatePct =
+    filerStatus === "NON_FILER"
+      ? policy.data?.advanceTaxRatePctNonFiler ?? policy.data?.advanceTaxRatePct ?? null
+      : policy.data?.advanceTaxRatePct ?? null;
+  const advanceTaxAmount =
+    trade.direction === "SELL" && notional > 0 && advanceTaxRatePct != null
+      ? (notional * advanceTaxRatePct) / 100
+      : 0;
   const canEdit = traderCanEditTrade(trade);
   const paramStr = (v: unknown) => (v == null || v === "" ? null : String(v));
   const contactPerson = paramStr(trade.tradeParams?.contactPerson);
@@ -148,7 +171,7 @@ export default function TradeDetailPage() {
                   ? "bg-purple-500/20 text-purple-300"
                   : trade.tradeStatus === "EXECUTED" || trade.tradeStatus === "SETTLED"
                     ? "bg-zinc-500/20 text-muted-foreground"
-                    : "bg-backgroundlue-500/20 text-blue-400"
+                    : "bg-blue-500/20 text-blue-400"
             }`}
           >
             {trade.tradeStatus === "PENDING"
@@ -250,6 +273,22 @@ export default function TradeDetailPage() {
               ]
             : []),
           { label: "Notional", value: formatCurrency(notional, trade.currency) },
+          ...(trade.direction === "SELL" && advanceTaxAmount > 0 && advanceTaxRatePct != null
+            ? [
+                {
+                  label: `236G advance tax (${advanceTaxRatePct}% — ${
+                    filerStatus === "NON_FILER" ? "non-filer" : "filer"
+                  })`,
+                  value: formatCurrency(advanceTaxAmount, trade.currency),
+                  tone: "text-warning",
+                },
+                {
+                  label: "Total receivable (incl. 236G)",
+                  value: formatCurrency(notional + advanceTaxAmount, trade.currency),
+                  tone: "font-semibold",
+                },
+              ]
+            : []),
           {
             label: "MTM P&L",
             value: formatCurrency(trade.mtmPnl, trade.currency),
@@ -375,18 +414,61 @@ export default function TradeDetailPage() {
 
       {trade.tradeStatus === "PENDING" && trade.submittedToExecution && trade.pendingTraderPrice && (
         <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
-          <div className="font-medium">Price required — submit via the Edit form</div>
+          <div className="font-medium">Price required</div>
           <p className="mt-1 text-xs text-warning/90">
-            This trade was booked as {trade.priceBasis} without a fixed price. Use the Edit button in the page
-            header to enter the price and quantity, then submit for CEO approval. Execution cannot lock until the
-            CEO approves your price.
+            This trade was booked as {trade.priceBasis} without a fixed price. Enter the price below to save it
+            directly — no approval is needed. Execution cannot lock the contract until the price is set.
           </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <label className="text-xs text-warning/90">
+              Price ({quotedUnit})
+              <input
+                type="number"
+                min={0}
+                step="any"
+                value={priceInput || ""}
+                onChange={(e) => setPriceInput(Number(e.target.value))}
+                className="mt-1 w-full rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-foreground data-grid"
+              />
+            </label>
+            <label className="text-xs text-warning/90">
+              Broker commission ({quotedUnit}) — optional
+              <input
+                type="number"
+                min={0}
+                step="any"
+                value={commissionInput || ""}
+                onChange={(e) => setCommissionInput(Number(e.target.value))}
+                className="mt-1 w-full rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-foreground data-grid"
+              />
+            </label>
+          </div>
+          <button
+            type="button"
+            disabled={completePrice.isPending || !(priceInput > 0)}
+            onClick={() =>
+              completePrice.mutate({
+                tradeRef,
+                price: priceInput,
+                commissionPerUnit: commissionInput > 0 ? commissionInput : undefined,
+                priceKgPerUnit: defaultKgPerUnit(
+                  trade.priceWeightUnit ?? trade.quantityUnit ?? "MT",
+                ),
+              })
+            }
+            className="mt-3 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-kastros-bg disabled:opacity-50"
+          >
+            {completePrice.isPending ? "Saving…" : "Save price"}
+          </button>
+          {completePrice.error && (
+            <p className="mt-2 text-xs text-kastros-red">{completePrice.error.message}</p>
+          )}
         </div>
       )}
 
       {trade.tradeStatus === "PENDING" && trade.submittedToExecution && trade.pendingTraderReview && (
         <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
-          <div className="font-medium">Execution updated this trade</div>
+          <div className="font-medium">Execution changed this trade</div>
           <p className="mt-1 text-xs text-warning/90">
             {trade.executionLastEditedBy
               ? `Edited by ${trade.executionLastEditedBy}`
@@ -399,8 +481,20 @@ export default function TradeDetailPage() {
             <p className="mt-2 text-xs text-muted-foreground">{trade.executionEditNote}</p>
           )}
           <p className="mt-2 text-xs text-subtle">
-            Review the details below, then lock the trade to confirm and send it to Reviewed Trades.
+            Review the details above, then approve the changes.
           </p>
+          <button
+            type="button"
+            disabled={approveEdits.isPending}
+            onClick={() => approveEdits.mutate({ tradeRef })}
+            className="mt-3 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-kastros-bg disabled:opacity-50"
+          >
+            {approveEdits.isPending ? "Approving…" : "Approve changes"}
+          </button>
+          <p className="mt-2 text-xs text-subtle">After you approve, execution locks the contract.</p>
+          {approveEdits.error && (
+            <p className="mt-2 text-xs text-kastros-red">{approveEdits.error.message}</p>
+          )}
         </div>
       )}
 
@@ -434,46 +528,6 @@ export default function TradeDetailPage() {
           {submitToExecution.error && (
             <p className="mt-2 text-xs text-kastros-red">{submitToExecution.error.message}</p>
           )}
-        </div>
-      )}
-
-      {trade.tradeStatus === "PENDING" && trade.submittedToExecution && trade.pendingTraderReview && (
-        <div className="rounded-lg border border-kastros-border bg-kastros-card p-4">
-          <h2 className="text-sm font-medium text-muted-foreground">Lock after review</h2>
-          <p className="mt-1 text-xs text-subtle">
-            Confirm you have reviewed execution&apos;s changes. Locking moves this contract to Reviewed Trades.
-          </p>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            <input
-              type="number"
-              placeholder="Override rate per maund (optional)"
-              value={ratePerMaund || ""}
-              onChange={(e) => setRatePerMaund(Number(e.target.value))}
-              className="rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-foreground"
-            />
-            <input
-              type="number"
-              placeholder="Override commission / maund (optional)"
-              value={commission || ""}
-              onChange={(e) => setCommission(Number(e.target.value))}
-              className="rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-foreground"
-            />
-          </div>
-          <button
-            type="button"
-            disabled={lock.isPending}
-            onClick={() =>
-              lock.mutate({
-                tradeRef,
-                ratePerMaund: ratePerMaund || undefined,
-                commissionPerMaund: commission || undefined,
-              })
-            }
-            className="mt-3 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-kastros-bg disabled:opacity-50"
-          >
-            {lock.isPending ? "Locking…" : "Lock trade"}
-          </button>
-          {lock.error && <p className="mt-2 text-xs text-kastros-red">{lock.error.message}</p>}
         </div>
       )}
 

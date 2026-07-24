@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { protectedProcedure, router } from "@/server/trpc/trpc";
+import { dashboardProcedure, router } from "@/server/trpc/trpc";
 import { startOfDay, endOfDay } from "date-fns";
 import { isMockMode } from "@/server/mock-mode";
 import { mockPnlAttribution } from "@/server/dummy-data";
 
 export const pnlRouter = router({
-  attribution: protectedProcedure
+  attribution: dashboardProcedure()
     .input(
       z.object({
         from: z.coerce.date(),

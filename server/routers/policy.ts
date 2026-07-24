@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, roleProcedure, router } from "@/server/trpc/trpc";
+import { headProcedure, protectedProcedure, router } from "@/server/trpc/trpc";
 import {
   getFinancePolicy,
   getYearlySellInflowByCounterparty,
@@ -11,6 +11,7 @@ import { listRejections } from "@/server/rejections";
 import { fiscalYearLabel } from "@/lib/finance-policy";
 import { canonicalTraderName } from "@/lib/trader-identity";
 import { traderDisplayName } from "@/lib/trader-display-name";
+import { prisma } from "@/server/db";
 
 /**
  * Company-wide finance policies — the 236G advance tax rate and the yearly
@@ -20,7 +21,8 @@ import { traderDisplayName } from "@/lib/trader-display-name";
 export const policyRouter = router({
   get: protectedProcedure.query(() => getFinancePolicy()),
 
-  update: roleProcedure(["FINANCE", "ADMIN"])
+  /** Head of finance only — company tax rates are not a member-level knob. */
+  update: headProcedure("FINANCE")
     .input(
       z.object({
         yearlyInflowLimitPkr: z.number().positive().optional(),
@@ -30,10 +32,28 @@ export const policyRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       try {
-        return await updateFinancePolicy(
+        const policy = await updateFinancePolicy(
           input,
           ctx.session.user.name ?? ctx.session.user.email ?? "finance",
         );
+        // "Applies everywhere immediately": re-derive 236G on every truck
+        // still awaiting balance (frozen stages keep their approved amounts).
+        if (input.advanceTaxRatePct != null || input.advanceTaxRatePctNonFiler != null) {
+          const awaiting = await prisma.pendingTruck.findMany({
+            where: { movementType: "OUTBOUND", saleStage: "AWAITING_BALANCE" },
+            select: { assignedTradeRef: true },
+          });
+          const refs = [
+            ...new Set(
+              awaiting.map((t) => t.assignedTradeRef).filter((x): x is string => Boolean(x)),
+            ),
+          ];
+          const { recomputeTradeLinkedAmounts } = await import("@/server/execution/recompute");
+          for (const ref of refs) {
+            await recomputeTradeLinkedAmounts(ref);
+          }
+        }
+        return policy;
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",

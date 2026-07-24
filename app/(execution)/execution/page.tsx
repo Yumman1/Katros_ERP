@@ -148,7 +148,7 @@ export default function ExecutionDeskPage() {
       label: "Finance Pending",
       value: summary?.pendingFinance ?? 0,
       sub: commodityFilter === "ALL" ? "Awaiting approval" : "Global queue",
-      href: "/execution/payments",
+      href: "/execution/purchase-delivered",
       variant: (summary?.pendingFinance ?? 0) > 0 ? "danger" : "muted",
       icon: (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>

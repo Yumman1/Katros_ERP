@@ -15,6 +15,19 @@ function fmtPkr(value: number): string {
   return `${pkrFormat.format(value)} PKR`;
 }
 
+/** "Against {tradeRef}" for trade-funded vouchers, subtle "Direct advance" otherwise. */
+function TradeRefChip({ tradeRef }: { tradeRef: string | null }) {
+  return tradeRef ? (
+    <span className="rounded-full border border-accent-secondary/30 bg-accent-secondary/10 px-2 py-0.5 font-mono text-[10px] font-bold text-accent-secondary">
+      Against {tradeRef}
+    </span>
+  ) : (
+    <span className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 text-[10px] font-semibold text-subtle">
+      Direct advance
+    </span>
+  );
+}
+
 const STATUS_CHIP: Record<string, { className: string; label: string }> = {
   APPROVED: { className: "bg-success/15 text-success", label: "Approved" },
   REJECTED: { className: "bg-destructive/15 text-destructive", label: "Rejected" },
@@ -23,7 +36,10 @@ const STATUS_CHIP: Record<string, { className: string; label: string }> = {
 
 export default function FinanceVouchersPage() {
   const utils = trpc.useUtils();
-  const { data: vouchers, isLoading } = trpc.finance.vouchers.useQuery({}, { refetchInterval: 60_000 });
+  const { data: vouchers, isLoading, error: vouchersError } = trpc.finance.vouchers.useQuery(
+    {},
+    { refetchInterval: 60_000, retry: false },
+  );
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
 
@@ -31,10 +47,23 @@ export default function FinanceVouchersPage() {
     void utils.finance.vouchers.invalidate();
     void utils.finance.pendingVouchersCount.invalidate();
     void utils.finance.counterpartyLedgers.invalidate();
+    void utils.execution.vouchers.invalidate();
+    void utils.execution.saleWorkflowRows.invalidate();
+    void utils.execution.counterpartyLedgers.invalidate();
   };
 
-  const approve = trpc.finance.approveVoucher.useMutation({ onSuccess: invalidate });
-  const reject = trpc.finance.rejectVoucher.useMutation({ onSuccess: invalidate });
+  const approve = trpc.finance.approveVoucher.useMutation({
+    onSuccess: () => {
+      invalidate();
+      void utils.policy.sellInflowStatus.invalidate();
+    },
+  });
+  const reject = trpc.finance.rejectVoucher.useMutation({
+    onSuccess: () => {
+      invalidate();
+      void utils.policy.rejections.invalidate();
+    },
+  });
 
   const pending = useMemo(
     () => (vouchers ?? []).filter((v) => v.status === "PENDING_FINANCE"),
@@ -69,6 +98,8 @@ export default function FinanceVouchersPage() {
           </div>
           {isLoading ? (
             <div className="py-8 text-center text-sm text-subtle">Loading vouchers…</div>
+          ) : vouchersError ? (
+            <div className="exec-empty">You don&apos;t have access to this page.</div>
           ) : pending.length === 0 ? (
             <div className="exec-empty">No vouchers awaiting approval.</div>
           ) : (
@@ -90,6 +121,7 @@ export default function FinanceVouchersPage() {
                           <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-bold uppercase text-warning">
                             Pending finance
                           </span>
+                          <TradeRefChip tradeRef={v.tradeRef} />
                         </div>
                         <div className="mt-1 text-sm text-foreground">
                           {v.counterpartyName}{" "}
@@ -160,7 +192,11 @@ export default function FinanceVouchersPage() {
         <section>
           <h2 className="mb-2 text-sm font-semibold text-foreground">History</h2>
           <div className="kastros-table-wrap">
-            {resolved.length === 0 ? (
+            {vouchersError ? (
+              <div className="px-4 py-6 text-center text-xs text-subtle">
+                You don&apos;t have access to this page.
+              </div>
+            ) : resolved.length === 0 ? (
               <div className="px-4 py-6 text-center text-xs text-subtle">No resolved vouchers yet.</div>
             ) : (
               <>
@@ -169,6 +205,7 @@ export default function FinanceVouchersPage() {
                     <tr>
                       <th>No</th>
                       <th>Counterparty</th>
+                      <th>Trade</th>
                       <th className="text-right">Amount</th>
                       <th>Status</th>
                       <th>Resolved by</th>
@@ -185,6 +222,9 @@ export default function FinanceVouchersPage() {
                           <td className="whitespace-nowrap">
                             {v.counterpartyName}{" "}
                             <span className="font-mono text-xs text-muted-foreground">({v.counterpartyCode})</span>
+                          </td>
+                          <td className="whitespace-nowrap">
+                            <TradeRefChip tradeRef={v.tradeRef} />
                           </td>
                           <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(v.amountPkr)}</td>
                           <td className="whitespace-nowrap">

@@ -105,9 +105,18 @@ export async function submitSpotForFinance(tradeRef: string) {
     if (!ev) throw new Error("Spot event not found");
     const contract = await tx.executionContract.findUnique({ where: { tradeRef } });
     if (!contract) throw new Error("Contract not found");
-    const amount =
-      (ev.invoiceAmount != null ? num(ev.invoiceAmount) : null) ??
-      num(contract.contractualQtyMt) * num(contract.ratePerMaund) * KG_PER_MAUND;
+    // Finance is only ever asked to pay a REAL invoice — no fallback math.
+    if (ev.invoiceAmount == null || num(ev.invoiceAmount) <= 0) {
+      throw new Error(
+        "Enter the broker invoice amount on the spot pipeline before submitting to finance",
+      );
+    }
+    const dupe = await tx.paymentRequest.findFirst({
+      where: { sourceType: "SPOT", sourceId: ev.id, status: "PENDING" },
+      select: { id: true },
+    });
+    if (dupe) throw new Error("A payment request for this spot trade is already awaiting finance");
+    const amount = num(ev.invoiceAmount);
     const seq = await nextRef(COUNTER.PAYMENT, tx);
     const pr = await tx.paymentRequest.create({
       data: {
@@ -201,13 +210,19 @@ export async function approvePayment(
   });
 }
 
-export async function rejectPayment(paymentId: string, comment?: string): Promise<PaymentRequest> {
-  return prisma.$transaction(async (tx) => {
+export async function rejectPayment(
+  paymentId: string,
+  comment?: string,
+  rejectedBy?: { name: string; role: string },
+): Promise<PaymentRequest> {
+  const reason = comment?.trim();
+  if (!reason) throw new Error("A rejection reason is required");
+  const result = await prisma.$transaction(async (tx) => {
     const pr = await tx.paymentRequest.findUnique({ where: { requestRef: paymentId } });
     if (!pr) throw new Error("Payment request not found");
     await tx.paymentRequest.update({
       where: { requestRef: paymentId },
-      data: { status: "REJECTED", financeComment: comment ?? null },
+      data: { status: "REJECTED", financeComment: reason },
     });
     if (pr.sourceType === "INBOUND") {
       await tx.inboundReceipt.updateMany({
@@ -228,11 +243,59 @@ export async function rejectPayment(paymentId: string, comment?: string): Promis
     const fresh = await tx.paymentRequest.findUnique({ where: { requestRef: paymentId } });
     return paymentRowToRuntime(fresh!);
   });
+
+  // Rejections page record — every portal sees who bounced it and why.
+  {
+    const { recordRejection } = await import("@/server/rejections");
+    const trade = await prisma.trade.findUnique({
+      where: { tradeRef: result.tradeRef },
+      select: { traderName: true },
+    });
+    await recordRejection({
+      kind: "PAYMENT",
+      refLabel: result.id,
+      tradeRef: result.tradeRef,
+      counterpartyName: result.counterpartyName,
+      amountPkr: result.amount,
+      traderName: trade?.traderName ?? null,
+      rejectedBy: rejectedBy?.name ?? "finance",
+      rejectedRole: rejectedBy?.role ?? "FINANCE",
+      reason,
+    });
+  }
+  return result;
 }
 
+/**
+ * Delete an erroneous payment request AND unwind its source back to a
+ * re-submittable state so the receipt/spot never strands in "awaiting
+ * finance" with no pending request.
+ */
 export async function deletePaymentRequest(id: string): Promise<{ ok: true }> {
-  const deleted = await prisma.paymentRequest.deleteMany({ where: { requestRef: id } });
-  if (deleted.count === 0) throw new Error("Payment request not found");
+  const pr = await prisma.paymentRequest.findUnique({ where: { requestRef: id } });
+  if (!pr) throw new Error("Payment request not found");
+  if (pr.status === "APPROVED") {
+    throw new Error("Approved payments cannot be deleted — money has already moved");
+  }
+  await prisma.$transaction(async (tx) => {
+    if (pr.sourceType === "INBOUND") {
+      await tx.inboundReceipt.updateMany({
+        where: { id: pr.sourceId, status: "FINANCE_PENDING" },
+        data: { status: "ALLOCATED", paymentRequestId: null },
+      });
+    } else if (pr.sourceType === "OUTBOUND") {
+      await tx.outboundDispatch.updateMany({
+        where: { id: pr.sourceId, status: "FINANCE_PENDING" },
+        data: { status: "WEIGHED", paymentRequestId: null },
+      });
+    } else if (pr.sourceType === "SPOT") {
+      await tx.spotPurchaseEvent.updateMany({
+        where: { id: pr.sourceId, state: "FINANCE_PENDING" },
+        data: { state: "INVOICED", paymentRequestId: null },
+      });
+    }
+    await tx.paymentRequest.delete({ where: { requestRef: id } });
+  });
   return { ok: true };
 }
 

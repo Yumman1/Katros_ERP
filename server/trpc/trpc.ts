@@ -73,6 +73,16 @@ export function headProcedure(department?: Department) {
   });
 }
 
+/**
+ * Firm-wide analytics dashboards (P&L, cashflow, positions, inventory,
+ * reconciliation, …) — finance, risk and read-only analysts plus executives.
+ * Traders and execution staff have their own portals and must not read
+ * firm-wide financials.
+ */
+export function dashboardProcedure() {
+  return roleProcedure(["FINANCE", "RISK_MANAGER", "READ_ONLY", "ADMIN"]);
+}
+
 export function ceoProcedure() {
   return protectedProcedure.use(({ ctx, next }) => {
     if (!isExecutive(ctx.session.user.role)) {

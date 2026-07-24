@@ -8,6 +8,15 @@ import { trpc } from "@/lib/trpc/client";
 
 const pkrFormat = new Intl.NumberFormat("en-PK");
 
+/** Friendly wording for the head-of-finance-only guard on policy.update. */
+function policyErrorMessage(error: { message: string; data?: { code?: string } | null } | null): string | null {
+  if (!error) return null;
+  if (error.data?.code === "FORBIDDEN") {
+    return "Only the head of finance can change policies — ask your department head to make this change.";
+  }
+  return error.message;
+}
+
 export default function FinancePoliciesPage() {
   const utils = trpc.useUtils();
   const { data: policy, isLoading } = trpc.policy.get.useQuery();
@@ -101,8 +110,11 @@ export default function FinancePoliciesPage() {
                   </button>
                 </div>
                 {(limitError || saveLimit.error) && (
-                  <p className="mt-2 text-xs text-destructive">{limitError ?? saveLimit.error?.message}</p>
+                  <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+                    {limitError ?? policyErrorMessage(saveLimit.error)}
+                  </p>
                 )}
+                <p className="mt-2 text-[11px] text-subtle">Only the head of finance can change policies.</p>
               </section>
 
               <section className="exec-panel">
@@ -166,8 +178,11 @@ export default function FinancePoliciesPage() {
                   </button>
                 </div>
                 {(taxError || saveTax.error) && (
-                  <p className="mt-2 text-xs text-destructive">{taxError ?? saveTax.error?.message}</p>
+                  <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+                    {taxError ?? policyErrorMessage(saveTax.error)}
+                  </p>
                 )}
+                <p className="mt-2 text-[11px] text-subtle">Only the head of finance can change policies.</p>
               </section>
             </div>
 

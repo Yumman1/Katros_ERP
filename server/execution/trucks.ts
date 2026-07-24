@@ -96,17 +96,26 @@ export async function getLiveCounterpartiesForGatepass(
   warehouseName?: string,
 ): Promise<GatepassCounterpartyOption[]> {
   await syncAllLockedContracts();
-  let contracts = (await getLockedContracts({ openOnly: true, warehouseAllocated: true })).filter(
-    (c) => {
-      if (movementType === "INBOUND") {
-        return c.direction === TradeDirection.BUY && c.executionProfile === "PURCHASE_DELIVERED";
-      }
-      return c.direction === TradeDirection.SELL && c.executionProfile === "SALE_EX_WAREHOUSE";
-    },
+  // Spot purchases don't use warehouse allocation, so fetch without the
+  // allocation filter and apply it only where the profile requires it.
+  let contracts = (await getLockedContracts({ openOnly: true })).filter((c) => {
+    if (movementType === "INBOUND") {
+      return (
+        c.direction === TradeDirection.BUY &&
+        (c.executionProfile === "PURCHASE_DELIVERED" || c.executionProfile === "PURCHASE_SPOT")
+      );
+    }
+    return c.direction === TradeDirection.SELL && c.executionProfile === "SALE_EX_WAREHOUSE";
+  });
+  contracts = contracts.filter(
+    (c) => c.executionProfile === "PURCHASE_SPOT" || contractHasWarehouseAllocation(c),
   );
 
   if (warehouseName?.trim()) {
-    contracts = contracts.filter((c) => contractMatchesWarehouse(c, warehouseName));
+    contracts = contracts.filter(
+      (c) =>
+        c.executionProfile === "PURCHASE_SPOT" || contractMatchesWarehouse(c, warehouseName),
+    );
   }
 
   const map = new Map<string, GatepassCounterpartyOption>();
@@ -289,10 +298,66 @@ export async function updatePendingTruck(
   return truckRowToRuntime(fresh!);
 }
 
+/**
+ * Delete a gate entry WITH all its connections: linked receipts/dispatches
+ * are removed, affected contracts re-balanced, and ledger debits cleared —
+ * never a bare row delete. Blocked once money or goods have actually moved
+ * (payment received/settled, released, or a paid receipt).
+ */
 export async function deletePendingTruck(id: string): Promise<{ ok: true }> {
-  await removeSaleDebitForTruck(id);
-  const deleted = await prisma.pendingTruck.deleteMany({ where: { id } });
-  if (deleted.count === 0) throw new Error("Gate entry not found");
+  const row = await prisma.pendingTruck.findUnique({
+    where: { id },
+    select: {
+      gatepassNo: true,
+      saleStage: true,
+      saleReleasedAt: true,
+      inboundReceipts: { select: { id: true, tradeRef: true, status: true } },
+      outboundDispatches: { select: { id: true, tradeRef: true, status: true } },
+    },
+  });
+  if (!row) throw new Error("Gate entry not found");
+  if (row.saleReleasedAt || row.saleStage === "PAYMENT_RECEIVED" || row.saleStage === "SETTLED") {
+    throw new Error(
+      "This truck's payment is already confirmed/released — it can no longer be deleted. Reverse the payment first.",
+    );
+  }
+  if (row.outboundDispatches.some((d) => d.status === "RELEASED")) {
+    throw new Error("This truck's dispatch is already released — it can no longer be deleted.");
+  }
+  if (row.inboundReceipts.some((r) => r.status === "PAID")) {
+    throw new Error("This truck's receipt is already paid — it can no longer be deleted.");
+  }
+
+  const affectedRefs = [
+    ...new Set(
+      [...row.inboundReceipts, ...row.outboundDispatches].map((m) => m.tradeRef),
+    ),
+  ];
+
+  await prisma.$transaction(async (tx) => {
+    // Detach pending payment requests raised from these movements.
+    const receiptIds = row.inboundReceipts.map((r) => r.id);
+    if (receiptIds.length) {
+      await tx.paymentRequest.deleteMany({
+        where: { sourceType: "INBOUND", sourceId: { in: receiptIds }, status: "PENDING" },
+      });
+      await tx.inboundReceipt.deleteMany({ where: { id: { in: receiptIds } } });
+    }
+    const dispatchIds = row.outboundDispatches.map((d) => d.id);
+    if (dispatchIds.length) {
+      await tx.paymentRequest.deleteMany({
+        where: { sourceType: "OUTBOUND", sourceId: { in: dispatchIds }, status: "PENDING" },
+      });
+      await tx.outboundDispatch.deleteMany({ where: { id: { in: dispatchIds } } });
+    }
+    await removeSaleDebitForTruck(id, tx);
+    await tx.pendingTruck.delete({ where: { id } });
+  });
+
+  // Re-balance every contract the deleted movements were fulfilling.
+  for (const ref of affectedRefs) {
+    await refreshContract(ref);
+  }
   return { ok: true };
 }
 
@@ -450,6 +515,12 @@ export async function getPendingTrucks(filter?: {
     where.OR = [
       { status: { not: "ASSIGNED" } },
       { movementType: "INBOUND", gateInvoiceNo: null },
+      // Inbound trucks stay in the workflow until the full money pipeline is
+      // done: trader approved the invoice AND finance paid the receipt.
+      {
+        movementType: "INBOUND",
+        inboundReceipts: { some: { status: { not: "PAID" } } },
+      },
       // Outbound trucks stay in the workflow until execution flips the manual
       // release toggle (printed slips handed to the warehouse manager).
       {
@@ -531,6 +602,33 @@ export async function assignTruckToTrade(
     if (!counterpartyMatchesTruck(truck, contract)) {
       throw new Error(
         `Counterparty mismatch: truck is for "${truck.counterpartyName}" but contract is "${contract.counterpartyName}"`,
+      );
+    }
+    // A split truck may only serve multiple trades of the SAME counterparty —
+    // its ledger receivable/payable is a single per-truck entry.
+    if (truck.assignedTradeRef && truck.assignedTradeRef !== tradeRef) {
+      const [prevTrade, nextTrade] = await Promise.all([
+        tx.trade.findUnique({
+          where: { tradeRef: truck.assignedTradeRef },
+          select: { counterpartyId: true },
+        }),
+        tx.trade.findUnique({ where: { tradeRef }, select: { counterpartyId: true } }),
+      ]);
+      if (prevTrade && nextTrade && prevTrade.counterpartyId !== nextTrade.counterpartyId) {
+        throw new Error(
+          `This truck is already partially assigned to a different counterparty's trade (${truck.assignedTradeRef}) — a split truck can only serve trades of the same counterparty`,
+        );
+      }
+    }
+    // Once the payment workflow has moved past awaiting-balance, the truck's
+    // amounts are locked in — no further assignment.
+    if (
+      truck.movementType === "OUTBOUND" &&
+      truck.saleStage != null &&
+      truck.saleStage !== "AWAITING_BALANCE"
+    ) {
+      throw new Error(
+        "This truck's payment workflow is already in progress — it cannot take more assignments",
       );
     }
     if (!commodityMatchesTruck(truck, contract)) {
@@ -1256,6 +1354,24 @@ export async function traderResolveGateInvoice(
   });
   if (updated.count === 0) {
     throw new Error("Invoice stage changed in the meantime — refresh and try again");
+  }
+
+  // Connected flow: trader approval automatically raises the finance payment
+  // request for every allocated receipt of this truck — finance approval then
+  // pays it, posts the buy-ledger credit and puts it in the gate register.
+  if (decision === "APPROVE") {
+    const receipts = await prisma.inboundReceipt.findMany({
+      where: { gatepassNo: row.gatepassNo, status: "ALLOCATED" },
+      select: { id: true },
+    });
+    const { submitInboundForFinance } = await import("./movements");
+    for (const receipt of receipts) {
+      try {
+        await submitInboundForFinance(receipt.id);
+      } catch {
+        // Duplicate-pending or already-paid guards are fine to skip here.
+      }
+    }
   }
 
   const fresh = await prisma.pendingTruck.findUnique({

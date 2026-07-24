@@ -62,7 +62,15 @@ import {
   type KycStatus,
   type PaymentType,
 } from "@/server/dummy-data";
-import { lockOpenTradeAfterTraderReview, completeTraderTradePrice, submitTradeToExecution, traderApproveExecutionEdits, updateTraderDraftTrade } from "@/server/open-trades";
+import {
+  assertPriceReadyForLock,
+  assertWarehouseReadyForLock,
+  lockOpenTradeAfterTraderReview,
+  completeTraderTradePrice,
+  submitTradeToExecution,
+  traderApproveExecutionEdits,
+  updateTraderDraftTrade,
+} from "@/server/open-trades";
 import { getTradeActivityLog, getTradeTimeline } from "@/server/trade-activity";
 import {
   deleteTradeDraft,
@@ -599,8 +607,13 @@ export const traderRouter = router({
     .mutation(async ({ ctx, input }) => {
       const traderName = traderNameFromSession(ctx.session.user);
       try {
+        // Ownership first: a trader can only ever lock their OWN trades —
+        // no fallback to the global register.
         const existing = await mockTraderTradeByRef(traderName, input.tradeRef);
-        if (existing?.submittedToExecution && existing.pendingTraderReview) {
+        if (!existing) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Trade not found" });
+        }
+        if (existing.submittedToExecution && existing.pendingTraderReview) {
           const trade = await lockOpenTradeAfterTraderReview(traderName, input.tradeRef, {
             lockedBy: ctx.session.user.name ?? traderName,
             ratePerMaund: input.ratePerMaund,
@@ -609,6 +622,9 @@ export const traderRouter = router({
           });
           return { ok: true as const, trade };
         }
+        // Direct lock still passes every gate a normal lock passes.
+        assertPriceReadyForLock(existing);
+        assertWarehouseReadyForLock(existing);
         const trade = await lockTradeInStore(traderName, input.tradeRef, {
           lockedBy: ctx.session.user.name ?? traderName,
           ratePerMaund: input.ratePerMaund,
@@ -617,6 +633,7 @@ export const traderRouter = router({
         });
         return { ok: true as const, trade };
       } catch (e) {
+        if (e instanceof TRPCError) throw e;
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not lock trade",
@@ -626,9 +643,10 @@ export const traderRouter = router({
 
   submitTradeToExecution: roleProcedure(["TRADER", "ADMIN"])
     .input(z.object({ tradeRef: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
-        const trade = await submitTradeToExecution(input.tradeRef.trim());
+        const traderName = traderNameFromSession(ctx.session.user);
+        const trade = await submitTradeToExecution(input.tradeRef.trim(), traderName);
         return { ok: true as const, trade };
       } catch (e) {
         throw new TRPCError({
@@ -672,15 +690,6 @@ export const traderRouter = router({
       }
     }),
 
-  // Trade deletion requires CEO approval via change request — no direct head delete.
-  deleteTrade: headProcedure("TRADING")
-    .input(z.object({ tradeRef: z.string() }))
-    .mutation(() => {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: "Trade deletion requires CEO approval. Use the change form on the trade detail page.",
-      });
-    }),
 
   exportLockedTrades: roleProcedure(["TRADER", "ADMIN", "EXECUTION"])
     .input(
