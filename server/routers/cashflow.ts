@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { protectedProcedure, router } from "@/server/trpc/trpc";
+import { dashboardProcedure, router } from "@/server/trpc/trpc";
 import { InvoiceStatus } from "@prisma/client";
 import { startOfMonth, endOfMonth } from "date-fns";
 import { isMockMode } from "@/server/mock-mode";
 import { mockCashflowList, mockUpcomingInvoices } from "@/server/dummy-data";
 
 export const cashflowRouter = router({
-  list: protectedProcedure
+  list: dashboardProcedure()
     .input(
       z.object({
         month: z.coerce.date().optional(),
@@ -61,7 +61,7 @@ export const cashflowRouter = router({
       };
     }),
 
-  upcoming: protectedProcedure.query(async ({ ctx }) => {
+  upcoming: dashboardProcedure().query(async ({ ctx }) => {
     if (isMockMode()) return mockUpcomingInvoices();
     const now = new Date();
     return ctx.prisma.invoice.findMany({

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { protectedProcedure, router } from "@/server/trpc/trpc";
+import { dashboardProcedure, router } from "@/server/trpc/trpc";
 import type { Reconciliation } from "@prisma/client";
 import { ReconType, ReconStatus } from "@prisma/client";
 import { autoReconcileTradeInvoice } from "@/lib/calculations/reconciliation";
@@ -11,7 +11,7 @@ import {
 } from "@/server/dummy-data";
 
 export const reconciliationRouter = router({
-  list: protectedProcedure
+  list: dashboardProcedure()
     .input(
       z.object({
         type: z.nativeEnum(ReconType).optional(),
@@ -32,7 +32,7 @@ export const reconciliationRouter = router({
       });
     }),
 
-  summary: protectedProcedure.query(async ({ ctx }) => {
+  summary: dashboardProcedure().query(async ({ ctx }) => {
     if (isMockMode()) return mockReconciliationSummary();
     const rows = await ctx.prisma.reconciliation.groupBy({
       by: ["status"],
@@ -51,7 +51,7 @@ export const reconciliationRouter = router({
     };
   }),
 
-  runAutoTradeInvoice: protectedProcedure.mutation(async ({ ctx }) => {
+  runAutoTradeInvoice: dashboardProcedure().mutation(async ({ ctx }) => {
     if (isMockMode()) return mockAutoReconcile();
     const invoices = await ctx.prisma.invoice.findMany({
       include: { trade: true },

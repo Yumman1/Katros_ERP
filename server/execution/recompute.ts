@@ -72,9 +72,11 @@ export async function recomputeTradeLinkedAmounts(tradeRef: string): Promise<voi
       });
       await updateTruckLedgerDebitAmount(truck.id, expectedPkr);
     } else {
-      // Paid / settled receivables are final.
-      if (truck.saleStage === "PAYMENT_RECEIVED" || truck.saleStage === "SETTLED") continue;
-      if (truck.saleStage == null) continue;
+      // Amounts freeze the moment a truck enters an approval pipeline or is
+      // paid/settled/released — a price edit must never change what the
+      // trader/CEO approved or what a released buyer owes. Only trucks still
+      // awaiting balance re-derive.
+      if (truck.saleStage !== "AWAITING_BALANCE") continue;
       const dispatchedKg = Math.max(0, num(truck.weightKg) - num(truck.remainingKg));
       if (!(dispatchedKg > 0)) continue;
       const saleBasePkr = Math.round(dispatchedKg * rateKg * 100) / 100;

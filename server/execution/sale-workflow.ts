@@ -3,7 +3,7 @@ import { num, numOrNull } from "@/server/db/convert";
 import { COUNTER, nextRef } from "@/server/db/counters";
 import { traderNamesMatch } from "@/lib/trader-identity";
 import { agingBucketFor } from "@/lib/finance-policy";
-import { availableCreditPkr } from "@/server/finance/ledger";
+import { availableCreditPkr, canFundTruck } from "@/server/finance/ledger";
 import {
   TRUCK_INCLUDE,
   truckRowToRuntime,
@@ -18,14 +18,16 @@ import { TraderInvoiceOwnershipError, truckTransporterName, truckTransporterPhon
  * Assignment computes the receivable (weight × rate + 236G) and posts the
  * buyer-ledger DEBIT (see assignTruckToTrade). From there:
  *
- *   AWAITING_BALANCE ──send (needs ledger credit ≥ receivable)──▶ PENDING_TRADER
- *   PENDING_TRADER ──trader approves──▶ PENDING_FINANCE ──finance──▶ PAYMENT_RECEIVED
- *   AWAITING_BALANCE ──clear w/o payment──▶ CLEAR_PENDING_TRADER ──trader──▶
- *     CLEAR_PENDING_CEO ──CEO──▶ CLEARED_UNPAID
+ *   AWAITING_BALANCE ──confirm (trade funding covers it: credit-terms line or
+ *     vouchers)──▶ PAYMENT_RECEIVED
+ *   AWAITING_BALANCE ──release on credit──▶ CLEAR_PENDING_TRADER ──trader──▶
+ *     CLEAR_PENDING_CEO ──CEO──▶ CLEARED_UNPAID ──finance settles──▶ SETTLED
  *
  * PAYMENT_RECEIVED / CLEARED_UNPAID issue the Gate Out Slip + Delivery Order
  * numbers; execution prints them and flips the manual release toggle
  * (markSaleTruckReleased) — only then does the register show RELEASED.
+ * (PENDING_TRADER / PENDING_FINANCE are retired enum values — nothing
+ * transitions into them.)
  */
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
@@ -154,10 +156,15 @@ export type SaleWorkflowRow = {
   saleTaxPkr: number | null;
   saleExpectedPkr: number | null;
   saleStage: SaleTruckStage | null;
-  /** Buyer's unconsumed approved credit (PKR); null until a trade is assigned. */
+  /** Funding available to THIS truck's trade (PKR); null until a trade is assigned. */
   availableCreditPkr: number | null;
-  /** True when the buyer's credit covers this truck's receivable. */
+  /** True when the trade's funding (credit ceiling or vouchers) covers this truck. */
   canSendForApproval: boolean;
+  /** CREDIT = releases within the trade's credit line; ADVANCE = needs vouchers. */
+  fundingKind: "CREDIT" | "ADVANCE" | null;
+  /** For credit trades: the trade's total receivable ceiling (PKR). */
+  creditCeilingPkr: number | null;
+  fundingReason: string | null;
   gateOutSlipNo: string | null;
   deliveryOrderNo: string | null;
   saleTraderApprovedBy: string | null;
@@ -183,16 +190,27 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
     select: { truckId: true, counterpartyId: true },
   });
   const cpByTruck = new Map(entries.map((e) => [e.truckId, e.counterpartyId]));
-  const cpIds = [...new Set(entries.map((e) => e.counterpartyId))];
-  const creditByCp = new Map<string, number>();
-  for (const cpId of cpIds) {
-    creditByCp.set(cpId, await availableCreditPkr(cpId));
+
+  // Per-truck funding check (trade credit line or vouchers) for the trucks
+  // that are still awaiting balance.
+  const fundingByTruck = new Map<
+    string,
+    Awaited<ReturnType<typeof canFundTruck>>
+  >();
+  for (const r of rows) {
+    if (r.saleStage !== "AWAITING_BALANCE") continue;
+    const cpId = cpByTruck.get(r.id);
+    const expected = numOrNull(r.saleExpectedPkr);
+    if (!cpId || !r.assignedTradeRef || expected == null) continue;
+    fundingByTruck.set(
+      r.id,
+      await canFundTruck({ counterpartyId: cpId, tradeRef: r.assignedTradeRef, amountPkr: expected }),
+    );
   }
 
   return rows.map((r) => {
-    const cpId = cpByTruck.get(r.id) ?? null;
-    const available = cpId != null ? (creditByCp.get(cpId) ?? 0) : null;
     const expected = numOrNull(r.saleExpectedPkr);
+    const funding = fundingByTruck.get(r.id) ?? null;
     return {
       truckId: r.id,
       gatepassNo: r.gatepassNo,
@@ -206,12 +224,11 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
       saleTaxPkr: numOrNull(r.saleTaxPkr),
       saleExpectedPkr: expected,
       saleStage: r.saleStage,
-      availableCreditPkr: available,
-      canSendForApproval:
-        r.saleStage === "AWAITING_BALANCE" &&
-        expected != null &&
-        available != null &&
-        available >= expected,
+      availableCreditPkr: funding?.availablePkr ?? null,
+      canSendForApproval: r.saleStage === "AWAITING_BALANCE" && funding?.ok === true,
+      fundingKind: funding?.kind ?? null,
+      creditCeilingPkr: funding?.creditCeilingPkr ?? null,
+      fundingReason: funding?.reason ?? null,
       gateOutSlipNo: r.gateOutSlipNo,
       deliveryOrderNo: r.deliveryOrderNo,
       saleTraderApprovedBy: r.saleTraderApprovedBy,
@@ -240,19 +257,37 @@ export async function confirmSalePayment(
     throw new Error("This truck is not awaiting balance");
   }
   const expected = numOrNull(row.saleExpectedPkr);
-  if (expected == null) throw new Error("Assign the truck to a sale trade first");
-  const cp = await saleCounterparty(truckId, row.assignedTradeRef);
-  const available = await availableCreditPkr(cp.id);
-  if (available < expected) {
-    throw new Error(
-      `Insufficient ledger credit for ${cp.name}: available ${Math.round(available).toLocaleString("en-PK")} PKR ` +
-        `< receivable ${Math.round(expected).toLocaleString("en-PK")} PKR. Enter a payment voucher first, ` +
-        `or request release on credit (trader + CEO approval).`,
-    );
+  if (expected == null || !row.assignedTradeRef) {
+    throw new Error("Assign the truck to a sale trade first");
   }
-  await transition(truckId, ["AWAITING_BALANCE"], "PAYMENT_RECEIVED", {
-    saleFinanceApprovedBy: confirmedByName,
-    saleFinanceApprovedAt: new Date(),
+  const cp = await saleCounterparty(truckId, row.assignedTradeRef);
+
+  // Funding check + stage transition run inside ONE transaction holding a
+  // row lock on the counterparty, so two concurrent confirms (or a confirm
+  // racing a settle) can never double-spend the same voucher credit.
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "Counterparty" WHERE "id" = ${cp.id} FOR UPDATE`;
+    const funding = await canFundTruck(
+      { counterpartyId: cp.id, tradeRef: row.assignedTradeRef!, amountPkr: expected },
+      tx,
+    );
+    if (!funding.ok) {
+      throw new Error(
+        `${funding.reason ?? "Insufficient funding"} — enter a payment voucher first, ` +
+          `or request release on credit (trader + CEO approval).`,
+      );
+    }
+    const updated = await tx.pendingTruck.updateMany({
+      where: { id: truckId, movementType: "OUTBOUND", saleStage: "AWAITING_BALANCE" },
+      data: {
+        saleStage: "PAYMENT_RECEIVED",
+        saleFinanceApprovedBy: confirmedByName,
+        saleFinanceApprovedAt: new Date(),
+      },
+    });
+    if (updated.count === 0) {
+      throw new Error("Truck stage changed in the meantime — refresh and try again");
+    }
   });
   await issueReleaseDocuments(truckId);
   return freshTruck(truckId);
@@ -287,19 +322,52 @@ export async function settleSaleTruck(
   if (row.saleStage !== "CLEARED_UNPAID") {
     throw new Error("Only released-unpaid trucks can be settled against old dues");
   }
-  const expected = numOrNull(row.saleExpectedPkr);
-  if (expected == null) throw new Error("This truck has no receivable recorded");
-  const cp = await saleCounterparty(truckId, row.assignedTradeRef);
-  const available = await availableCreditPkr(cp.id);
-  if (available < expected) {
+  // Execution's release toggle comes first — settling earlier would strand
+  // the truck in the workflow with no way to release it.
+  if (!row.saleReleasedAt) {
     throw new Error(
-      `Insufficient ledger credit for ${cp.name}: available ${Math.round(available).toLocaleString("en-PK")} PKR ` +
-        `< outstanding ${Math.round(expected).toLocaleString("en-PK")} PKR.`,
+      "Execution has not marked this truck released yet — settle only after the truck has left the gate",
     );
   }
-  await transition(truckId, ["CLEARED_UNPAID"], "SETTLED", {
-    saleSettledAt: new Date(),
-    saleSettledBy: settledByName,
+  const expected = numOrNull(row.saleExpectedPkr);
+  if (expected == null) throw new Error("This truck has no receivable recorded");
+  if (!row.assignedTradeRef) throw new Error("This truck has no linked sale trade");
+  const cp = await saleCounterparty(truckId, row.assignedTradeRef);
+
+  // Same counterparty row lock as confirmSalePayment — settles and confirms
+  // draw from the same voucher pool and must serialize.
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "Counterparty" WHERE "id" = ${cp.id} FOR UPDATE`;
+    const funding = await canFundTruck(
+      { counterpartyId: cp.id, tradeRef: row.assignedTradeRef!, amountPkr: expected },
+      tx,
+    );
+    // Settling always needs actual money — even for credit-terms trades the
+    // dues are cleared by vouchers, so check the cash pool, not the ceiling.
+    if (funding.kind === "CREDIT") {
+      const { getSellFundingState, availableForAdvanceTrade } = await import(
+        "@/server/finance/ledger"
+      );
+      const state = await getSellFundingState(cp.id, tx);
+      // Force cash semantics for the settle check.
+      state.termsByTrade.set(row.assignedTradeRef!, "ADVANCE");
+      const cash = availableForAdvanceTrade(state, row.assignedTradeRef!);
+      if (cash + 0.005 < expected) {
+        throw new Error(
+          `Insufficient vouchers for ${cp.name}: available ${Math.round(cash).toLocaleString("en-PK")} PKR ` +
+            `< outstanding ${Math.round(expected).toLocaleString("en-PK")} PKR.`,
+        );
+      }
+    } else if (!funding.ok) {
+      throw new Error(funding.reason ?? "Insufficient vouchers to settle this truck");
+    }
+    const updated = await tx.pendingTruck.updateMany({
+      where: { id: truckId, movementType: "OUTBOUND", saleStage: "CLEARED_UNPAID" },
+      data: { saleStage: "SETTLED", saleSettledAt: new Date(), saleSettledBy: settledByName },
+    });
+    if (updated.count === 0) {
+      throw new Error("Truck stage changed in the meantime — refresh and try again");
+    }
   });
   return freshTruck(truckId);
 }

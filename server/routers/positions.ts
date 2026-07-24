@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { protectedProcedure, router } from "@/server/trpc/trpc";
+import { dashboardProcedure, router } from "@/server/trpc/trpc";
 import type { Context } from "@/server/trpc/context";
 import { startOfDay, subDays } from "date-fns";
 import { calculateMTM } from "@/lib/calculations/mtm";
@@ -23,7 +23,7 @@ async function latestCloseForCommodity(db: Context["prisma"], commodityId: strin
 }
 
 export const positionsRouter = router({
-  getSummaryCards: protectedProcedure.input(dateIn).query(async ({ ctx, input }) => {
+  getSummaryCards: dashboardProcedure().input(dateIn).query(async ({ ctx, input }) => {
     if (isMockMode()) return mockPositionsSummaryCards();
     const asOf = startOfDay(input?.date ?? new Date());
     const prev = subDays(asOf, 1);
@@ -53,7 +53,7 @@ export const positionsRouter = router({
     return cards;
   }),
 
-  getExposureSummary: protectedProcedure.input(dateIn).query(async ({ ctx, input }) => {
+  getExposureSummary: dashboardProcedure().input(dateIn).query(async ({ ctx, input }) => {
     if (isMockMode()) return mockExposureSummary();
     const asOf = startOfDay(input?.date ?? new Date());
     const legs = await ctx.prisma.positionLeg.findMany({
@@ -87,7 +87,7 @@ export const positionsRouter = router({
     };
   }),
 
-  getBook: protectedProcedure
+  getBook: dashboardProcedure()
     .input(
       z
         .object({
@@ -151,7 +151,7 @@ export const positionsRouter = router({
       return rows;
     }),
 
-  getTradesForCommodity: protectedProcedure
+  getTradesForCommodity: dashboardProcedure()
     .input(z.object({ commodityId: z.string(), date: z.coerce.date().optional() }))
     .query(async ({ ctx, input }) => {
       if (isMockMode()) {

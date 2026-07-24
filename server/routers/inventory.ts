@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { InventoryStatus } from "@prisma/client";
-import { protectedProcedure, router } from "@/server/trpc/trpc";
+import { dashboardProcedure, router } from "@/server/trpc/trpc";
 import { isMockMode } from "@/server/mock-mode";
 import {
   mockInventoryAging,
@@ -19,7 +19,7 @@ type MovementWithRelations = Prisma.InventoryMovementGetPayload<{
 }>;
 
 export const inventoryRouter = router({
-  summary: protectedProcedure.query(async ({ ctx }) => {
+  summary: dashboardProcedure().query(async ({ ctx }) => {
     if (isMockMode()) return mockInventorySummary();
     const inv = await ctx.prisma.inventory.findMany({
       include: { commodity: true, location: true },
@@ -46,7 +46,7 @@ export const inventoryRouter = router({
     return Array.from(byCommodity.values());
   }),
 
-  list: protectedProcedure
+  list: dashboardProcedure()
     .input(
       z
         .object({
@@ -72,7 +72,7 @@ export const inventoryRouter = router({
       });
     }),
 
-  aging: protectedProcedure.query(({ ctx }) => {
+  aging: dashboardProcedure().query(({ ctx }) => {
     if (isMockMode()) return mockInventoryAging();
     const inv = ctx.prisma.inventory.findMany({
       include: { commodity: true, location: true },
@@ -101,7 +101,7 @@ export const inventoryRouter = router({
     );
   }),
 
-  movements: protectedProcedure
+  movements: dashboardProcedure()
     .input(z.object({ inventoryId: z.string().optional() }).optional())
     .query(({ ctx, input }) => {
       if (isMockMode()) {

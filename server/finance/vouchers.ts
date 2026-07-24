@@ -9,6 +9,8 @@ export type VoucherView = {
   counterpartyId: string;
   counterpartyName: string;
   counterpartyCode: string;
+  /** Sell trade this payment is against; null = direct advance. */
+  tradeRef: string | null;
   amountPkr: number;
   method: string | null;
   reference: string | null;
@@ -34,6 +36,7 @@ function voucherRowToView(row: VoucherRow): VoucherView {
     counterpartyId: row.counterpartyId,
     counterpartyName: row.counterparty.name,
     counterpartyCode: row.counterparty.code,
+    tradeRef: row.tradeRef,
     amountPkr: num(row.amountPkr),
     method: row.method,
     reference: row.reference,
@@ -50,6 +53,8 @@ function voucherRowToView(row: VoucherRow): VoucherView {
 /** Execution enters a payment voucher — pending until finance approves it. */
 export async function createVoucher(input: {
   counterpartyId: string;
+  /** Sell trade the payment is against; null/undefined = direct advance. */
+  tradeRef?: string | null;
   amountPkr: number;
   method?: string | null;
   reference?: string | null;
@@ -64,11 +69,26 @@ export async function createVoucher(input: {
     select: { id: true },
   });
   if (!cp) throw new Error("Counterparty not found");
+  const tradeRef = input.tradeRef?.trim() || null;
+  if (tradeRef) {
+    const trade = await prisma.trade.findUnique({
+      where: { tradeRef },
+      select: { counterpartyId: true, direction: true },
+    });
+    if (!trade) throw new Error("Trade not found: " + tradeRef);
+    if (trade.counterpartyId !== input.counterpartyId) {
+      throw new Error(`${tradeRef} does not belong to this counterparty`);
+    }
+    if (trade.direction !== "SELL") {
+      throw new Error("Vouchers can only be linked to SELL trades (money coming in)");
+    }
+  }
   const seq = await nextRef(COUNTER.VOUCHER);
   const row = await prisma.voucher.create({
     data: {
       voucherNo: `VCH-${String(seq).padStart(5, "0")}`,
       counterpartyId: input.counterpartyId,
+      tradeRef,
       amountPkr: input.amountPkr,
       method: input.method?.trim() || null,
       reference: input.reference?.trim() || null,
@@ -105,30 +125,39 @@ export async function approveVoucher(
   approvedByName: string,
   note?: string,
 ): Promise<VoucherView> {
-  const updated = await prisma.voucher.updateMany({
-    where: { id: voucherId, status: "PENDING_FINANCE" },
-    data: {
-      status: "APPROVED",
-      resolvedByName: approvedByName,
-      resolvedAt: new Date(),
-      resolutionNote: note?.trim() || null,
-    },
+  // Status flip + ledger credit are ONE transaction — an approved voucher can
+  // never exist without its credit (and vice versa).
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.voucher.updateMany({
+      where: { id: voucherId, status: "PENDING_FINANCE" },
+      data: {
+        status: "APPROVED",
+        resolvedByName: approvedByName,
+        resolvedAt: new Date(),
+        resolutionNote: note?.trim() || null,
+      },
+    });
+    if (updated.count === 0) {
+      throw new Error("Voucher not found or already resolved");
+    }
+    const row = await tx.voucher.findUnique({ where: { id: voucherId } });
+    await postCreditForVoucher(
+      {
+        voucherId: row!.id,
+        voucherNo: row!.voucherNo,
+        counterpartyId: row!.counterpartyId,
+        amountPkr: num(row!.amountPkr),
+        tradeRef: row!.tradeRef,
+        note: row!.note,
+      },
+      tx,
+    );
   });
-  if (updated.count === 0) {
-    throw new Error("Voucher not found or already resolved");
-  }
-  const row = await prisma.voucher.findUnique({
+  const fresh = await prisma.voucher.findUnique({
     where: { id: voucherId },
     include: VOUCHER_INCLUDE,
   });
-  await postCreditForVoucher({
-    voucherId: row!.id,
-    voucherNo: row!.voucherNo,
-    counterpartyId: row!.counterpartyId,
-    amountPkr: num(row!.amountPkr),
-    note: row!.note,
-  });
-  return voucherRowToView(row!);
+  return voucherRowToView(fresh!);
 }
 
 export async function rejectVoucher(
