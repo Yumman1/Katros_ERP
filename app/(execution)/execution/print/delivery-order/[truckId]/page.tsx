@@ -126,7 +126,7 @@ export default function DeliveryOrderPrintPage() {
                   : "—"
               }
             />
-            <Field label="Weight" value={fmtKg(data.weightKg)} />
+            <Field label="Gate weight" value={fmtKg(data.weightKg)} />
             <Field label="Warehouse" value={data.warehouseName} />
             <Field label="Truck no" value={data.truckNo} />
             <Field label="Trade ref" value={data.tradeRef ?? "—"} />

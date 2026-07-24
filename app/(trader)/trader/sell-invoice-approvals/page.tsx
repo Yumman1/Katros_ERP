@@ -55,10 +55,11 @@ export default function TraderSellInvoiceApprovalsPage() {
   );
 
   const resolve = trpc.trader.resolveSellInvoiceApproval.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       void utils.trader.sellInvoiceApprovals.invalidate();
       void utils.trader.sellInvoiceApprovalsCount.invalidate();
       void utils.trader.unpaidSellTrucks.invalidate();
+      if (variables.decision === "REJECT") void utils.policy.rejections.invalidate();
     },
   });
 

@@ -735,18 +735,12 @@ export async function mockTradeByRefGlobal(tradeRef: string): Promise<MockTrader
 
 export async function mockTraderDeskSummary(traderName: string) {
   const trades = await mockTraderTrades(canonicalTraderName(traderName));
-  const isOpen = (s: TradeStatus) =>
-    s === TradeStatus.PENDING ||
-    s === TradeStatus.LOCKED ||
-    s === TradeStatus.CONFIRMED ||
-    s === TradeStatus.EXECUTED;
+  const isOpen = (s: TradeStatus) => s === TradeStatus.PENDING || s === TradeStatus.LOCKED;
   const open = trades.filter((t) => isOpen(t.tradeStatus));
   const pending = trades.filter((t) => t.tradeStatus === TradeStatus.PENDING);
   const weekEnd = addDays(now(), 7);
   const deliveriesDue = trades.filter(
-    (t) =>
-      t.deliveryStart <= weekEnd &&
-      (t.tradeStatus === TradeStatus.CONFIRMED || t.tradeStatus === TradeStatus.EXECUTED),
+    (t) => t.deliveryStart <= weekEnd && t.tradeStatus === TradeStatus.LOCKED,
   );
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
@@ -828,7 +822,7 @@ export async function mockTraderActionItems(traderName: string) {
         priority: "high",
       });
     }
-    if (t.tradeStatus === TradeStatus.CONFIRMED && t.deliveryStart <= addDays(now(), 5)) {
+    if (t.tradeStatus === TradeStatus.LOCKED && t.deliveryStart <= addDays(now(), 5)) {
       items.push({
         id: `act-${t.id}-del`,
         type: "DELIVERY",

@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { useListPagination } from "@/lib/use-list-pagination";
+import { paymentTypeLabel, type PaymentType } from "@/lib/trade-constants";
 
 const VOUCHER_METHODS = ["Bank transfer", "Cheque", "Cash", "Other"] as const;
 
@@ -42,14 +43,22 @@ export default function ExecutionVouchersPage() {
   const { data: vouchers, isLoading } = trpc.execution.vouchers.useQuery(undefined);
 
   const [counterpartyId, setCounterpartyId] = useState("");
+  const [tradeRef, setTradeRef] = useState("");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<string>(VOUCHER_METHODS[0]);
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
 
+  // Open SELL trades of the chosen counterparty — feeds the "against trade" select.
+  const { data: sellTrades } = trpc.execution.sellTradesForCounterparty.useQuery(
+    { counterpartyId },
+    { enabled: counterpartyId !== "" },
+  );
+
   const create = trpc.execution.createVoucher.useMutation({
     onSuccess: () => {
       setCounterpartyId("");
+      setTradeRef("");
       setAmount("");
       setMethod(VOUCHER_METHODS[0]);
       setReference("");
@@ -57,6 +66,10 @@ export default function ExecutionVouchersPage() {
       void utils.execution.vouchers.invalidate();
       void utils.execution.counterpartyLedgers.invalidate();
       void utils.execution.saleWorkflowRows.invalidate();
+      void utils.policy.overdueLedgerAlerts.invalidate();
+      // Finance mirrors of the voucher queue — keep them fresh in-session.
+      void utils.finance.vouchers.invalidate();
+      void utils.finance.pendingVouchersCount.invalidate();
     },
   });
 
@@ -95,18 +108,38 @@ export default function ExecutionVouchersPage() {
             <ReceiptText className="h-4 w-4 text-accent-secondary" />
             New payment voucher
           </h2>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Counterparty
               <select
                 value={counterpartyId}
-                onChange={(e) => setCounterpartyId(e.target.value)}
+                onChange={(e) => {
+                  setCounterpartyId(e.target.value);
+                  setTradeRef("");
+                }}
                 className="kastros-select kastros-select-sm w-full"
               >
                 <option value="">Select counterparty…</option>
                 {(counterparties ?? []).map((cp) => (
                   <option key={cp.id} value={cp.id}>
                     {cp.code} — {cp.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+              Against trade
+              <select
+                value={tradeRef}
+                onChange={(e) => setTradeRef(e.target.value)}
+                disabled={counterpartyId === ""}
+                className="kastros-select kastros-select-sm w-full disabled:opacity-50"
+              >
+                <option value="">Direct advance (any trade)</option>
+                {(sellTrades ?? []).map((t) => (
+                  <option key={t.tradeRef} value={t.tradeRef}>
+                    {t.tradeRef} · {paymentTypeLabel(t.paymentType as PaymentType)} · {t.quantity}{" "}
+                    {t.quantityUnit}
                   </option>
                 ))}
               </select>
@@ -162,6 +195,7 @@ export default function ExecutionVouchersPage() {
               onClick={() =>
                 create.mutate({
                   counterpartyId,
+                  tradeRef: tradeRef || undefined,
                   amountPkr: Number(amount),
                   method,
                   reference: reference.trim() || undefined,
@@ -189,6 +223,7 @@ export default function ExecutionVouchersPage() {
                 {[
                   "Voucher no",
                   "Counterparty",
+                  "Against",
                   "Amount",
                   "Method / Ref",
                   "Status",
@@ -211,6 +246,17 @@ export default function ExecutionVouchersPage() {
                   <td className="px-5 py-3">
                     <div className="text-foreground">{v.counterpartyName}</div>
                     <div className="font-mono text-subtle">{v.counterpartyCode}</div>
+                  </td>
+                  <td className="px-5 py-3">
+                    {v.tradeRef ? (
+                      <span className="rounded-full bg-accent-secondary-muted px-2 py-1 font-mono text-[10px] font-bold text-accent-secondary">
+                        Against {v.tradeRef}
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-foreground/[0.06] px-2 py-1 text-[10px] font-bold text-muted-foreground">
+                        Direct advance
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-3 font-mono font-semibold tabular-nums text-accent-secondary">
                     {fmtPkr(v.amountPkr)}

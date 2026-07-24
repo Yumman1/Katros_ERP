@@ -185,7 +185,7 @@ export default function WarehouseGatepassPage() {
       ? alternateCounterpartyOptions.length > 0
         ? form.movementType === "INBOUND"
           ? `Only open sale (ex-warehouse) trades exist at this warehouse — use Gate Out for buyers such as ${alternateCounterpartyOptions.map((c) => c.name).join(", ")}.`
-          : `Only open purchase (delivered) trades exist at this warehouse — use Gate In for suppliers such as ${alternateCounterpartyOptions.map((c) => c.name).join(", ")}.`
+          : `Only open purchase trades exist at this warehouse — use Gate In for suppliers such as ${alternateCounterpartyOptions.map((c) => c.name).join(", ")}.`
         : "No open locked trades are allocated to this warehouse for gatepass."
       : null;
 
@@ -619,7 +619,7 @@ export default function WarehouseGatepassPage() {
                 </div>
                 <p className="rounded-xl border border-border bg-foreground/[0.03] px-4 py-3 text-xs text-muted-foreground">
                   Truck is queued for execution. Assign it to a trade on{" "}
-                  <strong className="text-muted-foreground">Execution → Purchase Delivered</strong> (Allocate max).
+                  <strong className="text-muted-foreground">Execution → Truck Movements</strong>.
                 </p>
               </div>
             )}

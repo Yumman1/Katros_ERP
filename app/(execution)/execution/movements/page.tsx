@@ -51,14 +51,20 @@ function hasOpenSaleStage(t: PendingTruck): boolean {
 
 /**
  * A gatepass truck is COMPLETE only when it is fully assigned to a trade AND
- * (inbound) its gate invoice has been entered, or (outbound) its sale payment
- * workflow has finished. Assigned-but-unfinished trucks stay in the incomplete
- * workflow list.
+ * (inbound) its gate invoice has been entered and its receipts are PAID (full
+ * pipeline: assign → invoice → trader approves → finance pays), or (outbound)
+ * its sale payment workflow has finished. Assigned-but-unfinished trucks stay
+ * in the incomplete workflow list.
  */
-function isGateWorkflowComplete(t: PendingTruck): boolean {
+function isGateWorkflowComplete(t: PendingTruck, paidGatepasses: ReadonlySet<string>): boolean {
   if (t.status !== "ASSIGNED") return false;
   if (t.movementType === "OUTBOUND") return !hasOpenSaleStage(t);
-  return Boolean(t.gateInvoiceNo);
+  return Boolean(t.gateInvoiceNo) && paidGatepasses.has(t.gatepassNo);
+}
+
+/** Gate weight for display — assigned/partial trucks would otherwise show 0/leftover kg. */
+function displayWeightKg(t: PendingTruck): number {
+  return t.status === "PENDING" ? t.remainingKg : t.weightKg;
 }
 
 const fmtKg = (n: number) =>
@@ -131,8 +137,24 @@ export default function TruckMovementsPage() {
     [pendingTrucks],
   );
 
+  // Gatepasses whose receipts are ALL paid (≥1 receipt) — the inbound truck's
+  // payment pipeline is finished and it may enter the gate register.
+  const paidGatepasses = useMemo<ReadonlySet<string>>(() => {
+    const byGatepass = new Map<string, boolean>();
+    for (const r of inbound ?? []) {
+      if (!r.gatepassNo) continue;
+      const paid = r.status === "PAID";
+      byGatepass.set(r.gatepassNo, (byGatepass.get(r.gatepassNo) ?? true) && paid);
+    }
+    return new Set([...byGatepass.entries()].filter(([, paid]) => paid).map(([g]) => g));
+  }, [inbound]);
+
   const movements = useMemo<Movement[]>(() => {
-    const inboundRows: Movement[] = (inbound ?? []).map((r) => {
+    // Inbound receipts enter the gate register only once PAID — the truck must
+    // clear the full approval pipeline before it appears here.
+    const inboundRows: Movement[] = (inbound ?? [])
+      .filter((r) => r.status === "PAID")
+      .map((r) => {
       const c = contractByRef.get(r.tradeRef);
       return {
         id: r.id,
@@ -161,7 +183,14 @@ export default function TruckMovementsPage() {
       };
     });
 
-    const outboundRows: Movement[] = (outbound ?? []).map((d) => {
+    // Dispatch rows are hidden while the truck's sale workflow is still open —
+    // they appear on release, so the register never shows a duplicate row.
+    const outboundRows: Movement[] = (outbound ?? [])
+      .filter((d) => {
+        const truck = d.gatepassNo ? truckByGatepass.get(d.gatepassNo) : undefined;
+        return !(truck && truck.saleStage != null && truck.saleReleasedAt == null);
+      })
+      .map((d) => {
       const c = contractByRef.get(d.tradeRef);
       return {
         id: d.id,
@@ -186,14 +215,15 @@ export default function TruckMovementsPage() {
     });
 
     const pendingRows: Movement[] = (pendingTrucks ?? [])
-      // Assigned outbound trucks stay visible while the sale payment workflow is open.
-      .filter((t) => t.status !== "ASSIGNED" || hasOpenSaleStage(t))
+      // Assigned trucks stay visible while their workflow is open — outbound
+      // until released, inbound until their receipts are paid.
+      .filter((t) => !isGateWorkflowComplete(t, paidGatepasses))
       .map((t) => ({
         id: `pending-${t.id}`,
         type: t.movementType,
         date: t.arrivalDate,
         warehouseName: t.warehouseName,
-        tradeRef: t.status === "ASSIGNED" ? (t.assignedTradeRef ?? "—") : "—",
+        tradeRef: t.assignedTradeRef ?? "—",
         commodityCode: t.commodityCode ?? "-",
         commodityName: t.commodityName ?? "Commodity",
         quantityUnit: "KG",
@@ -201,8 +231,8 @@ export default function TruckMovementsPage() {
         truckNo: t.truckNo,
         gatepassNo: t.gatepassNo,
         documentRefs: uploadedDocs(t.documentRefs),
-        grossWeightKg: t.remainingKg,
-        netQtyMt: t.gateInvoiceQtyMt ?? t.remainingKg / 1000,
+        grossWeightKg: displayWeightKg(t),
+        netQtyMt: t.gateInvoiceQtyMt ?? displayWeightKg(t) / 1000,
         // Manually entered invoices exist before assignment — show them either way.
         invoiceNo: t.gateInvoiceNo,
         invoiceQtyMt: t.gateInvoiceQtyMt,
@@ -221,7 +251,7 @@ export default function TruckMovementsPage() {
     return [...pendingRows, ...inboundRows, ...outboundRows].sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
     );
-  }, [contractByRef, inbound, outbound, pendingTrucks]);
+  }, [contractByRef, inbound, outbound, pendingTrucks, paidGatepasses, truckByGatepass]);
 
   const pendingTruckById = useMemo(
     () => new Map((pendingTrucks ?? []).map((t) => [t.id, t])),
@@ -274,8 +304,8 @@ export default function TruckMovementsPage() {
   }, [movementFilter, movements, query, warehouseFilter, commodityFilter, dateFrom, dateTo]);
 
   const unassignedTrucks = useMemo(
-    () => (pendingTrucks ?? []).filter((t) => !isGateWorkflowComplete(t)),
-    [pendingTrucks],
+    () => (pendingTrucks ?? []).filter((t) => !isGateWorkflowComplete(t, paidGatepasses)),
+    [pendingTrucks, paidGatepasses],
   );
 
   const movementFilterKey = `${warehouseFilter}|${commodityFilter}|${movementFilter}|${query}|${dateFrom}|${dateTo}`;
@@ -373,7 +403,7 @@ export default function TruckMovementsPage() {
               icon={<Truck className="h-4 w-4 text-accent-secondary" />}
               title="Truck Workflow"
               count={unassignedGatepassCount}
-              description="Assign each truck to a trade, then enter its gate invoice — the card leaves this list once both steps are complete."
+              description="Assign each truck to a trade and follow its payment workflow — inbound cards leave this list once their receipts are paid, outbound once released."
             />
             <div className="flex flex-col gap-3">
               {unassignedPagination.items.map((t) => (
@@ -402,7 +432,7 @@ export default function TruckMovementsPage() {
                   <div className="ml-auto flex items-center gap-3">
                     <div className="text-right">
                       <div className="font-mono text-sm font-bold text-accent-secondary">
-                        {new Intl.NumberFormat("en-PK").format(t.remainingKg)} kg
+                        {new Intl.NumberFormat("en-PK").format(displayWeightKg(t))} kg
                       </div>
                       {(t.quantityBagsBales ?? t.bags) != null && (
                         <div className="text-[10px] text-subtle">

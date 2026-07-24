@@ -1,6 +1,7 @@
 "use client";
 
 import { TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
+import { priceUnitLabel } from "@/lib/price-units";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import {
@@ -22,7 +23,6 @@ const FILTERS: TradeFilter[] = ["UNFINISHED", "ALL", "DRAFTS", "LOCKED", "CLOSED
 const statusStyle: Partial<Record<TradeStatus, string>> = {
   PENDING: "bg-warning/20 text-warning",
   LOCKED: "bg-purple-500/20 text-purple-300",
-  CONFIRMED: "bg-purple-500/20 text-purple-300",
   EXECUTED: "bg-zinc-500/20 text-muted-foreground",
   SETTLED: "bg-zinc-500/20 text-muted-foreground",
 };
@@ -250,10 +250,25 @@ export default function MyTradesPage() {
                       {formatQty(t.quantity)} {t.quantityUnit ?? t.commodity.unit}
                     </td>
                     <td className="px-2 py-2 data-grid">
-                      {formatCurrency(t.price, t.currency)}
-                      <span className="text-subtle"> /{t.quantityUnit ?? t.commodity.unit}</span>
+                      {t.price > 0 ? (
+                        <>
+                          {t.price.toLocaleString()}{" "}
+                          <span className="text-subtle">
+                            {t.priceCurrency && t.priceWeightUnit
+                              ? priceUnitLabel({
+                                  currency: t.priceCurrency,
+                                  weightUnit: t.priceWeightUnit,
+                                })
+                              : `${t.currency}/${t.quantityUnit ?? t.commodity.unit}`}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-subtle">—</span>
+                      )}
                     </td>
-                    <td className="px-2 py-2 data-grid">{formatCurrency(t.quantity * t.price, t.currency)}</td>
+                    <td className="px-2 py-2 data-grid">
+                      {formatCurrency(t.quantity * (t.pricePerCanonicalQty ?? t.price), t.currency)}
+                    </td>
                     <td className="px-2 py-2 text-xs text-muted-foreground max-w-[120px] truncate">
                       {t.counterparty.name}
                     </td>

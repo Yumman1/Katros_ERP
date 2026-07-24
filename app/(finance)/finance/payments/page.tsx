@@ -8,13 +8,24 @@ import { EntryActions } from "@/components/team/entry-actions";
 
 export default function FinancePaymentsPage() {
   const utils = trpc.useUtils();
-  const { data: pending } = trpc.finance.pendingPayments.useQuery();
+  const { data: pending, error: pendingError } = trpc.finance.pendingPayments.useQuery(undefined, {
+    retry: false,
+  });
   const [rejectComments, setRejectComments] = useState<Record<string, string>>({});
   const approve = trpc.finance.approvePayment.useMutation({
-    onSuccess: () => invalidateTradeFlowCaches(utils),
+    onSuccess: () => {
+      invalidateTradeFlowCaches(utils);
+      void utils.finance.counterpartyLedgers.invalidate();
+      void utils.policy.overdueLedgerAlerts.invalidate();
+    },
   });
   const reject = trpc.finance.rejectPayment.useMutation({
-    onSuccess: () => invalidateTradeFlowCaches(utils),
+    onSuccess: () => {
+      invalidateTradeFlowCaches(utils);
+      void utils.finance.counterpartyLedgers.invalidate();
+      void utils.policy.overdueLedgerAlerts.invalidate();
+      void utils.policy.rejections.invalidate();
+    },
   });
   const del = trpc.finance.deletePayment.useMutation({
     onSuccess: () => invalidateTradeFlowCaches(utils),
@@ -24,7 +35,7 @@ export default function FinancePaymentsPage() {
     <div className="kastros-desk-page">
       <h1 className="text-2xl font-semibold text-foreground">Payment approvals</h1>
       <p className="text-sm text-subtle">
-        Approve before execution can mark inbound paid or release outbound vehicles.
+        Purchase-side payments to sellers — approve before execution can mark inbound trucks paid.
       </p>
       <div className="kastros-desk-scroll space-y-3 pb-6">
         <OverdueAlertsCard />
@@ -86,7 +97,11 @@ export default function FinancePaymentsPage() {
             </div>
           );
         })}
-        {!pending?.length && <p className="text-sm text-subtle">No pending payments.</p>}
+        {pendingError ? (
+          <p className="text-sm text-subtle">You don&apos;t have access to this page.</p>
+        ) : (
+          !pending?.length && <p className="text-sm text-subtle">No pending payments.</p>
+        )}
       </div>
     </div>
   );

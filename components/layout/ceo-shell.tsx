@@ -10,6 +10,7 @@ const nav = [
   { href: "/ceo", label: "Overview", exact: true },
   { href: "/ceo/commodities", label: "Commodities" },
   { href: "/ceo/approvals", label: "Approvals" },
+  { href: "/ceo/rejections", label: "Rejections" },
   { href: "/ceo/users", label: "Users" },
 ];
 
@@ -19,18 +20,24 @@ export function CeoShell({ children }: { children: ReactNode }) {
     refetchInterval: 60_000,
     retry: false,
   });
+  const clearWithoutPayment = trpc.ceo.clearWithoutPaymentCount.useQuery(undefined, {
+    refetchInterval: 60_000,
+    retry: false,
+  });
   const active = trpc.ceo.activeUsers.useQuery(undefined, {
     refetchInterval: 30_000,
     retry: false,
   });
 
+  const approvalsCount = (pending.data ?? 0) + (clearWithoutPayment.data ?? 0);
+
   const appNav = nav.map((item) => ({
     ...item,
     badge:
-      item.href === "/ceo/approvals" && pending.data
+      item.href === "/ceo/approvals" && approvalsCount
         ? (
             <span className="rounded-full bg-warning/20 px-2 py-0.5 text-[10px] font-bold text-warning">
-              {pending.data}
+              {approvalsCount}
             </span>
           )
         : item.href === "/ceo/users" && active.data

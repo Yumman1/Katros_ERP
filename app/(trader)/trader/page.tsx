@@ -1,6 +1,7 @@
 "use client";
 
 import { trpc } from "@/lib/trpc/client";
+import { priceUnitLabel } from "@/lib/price-units";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import Link from "next/link";
 import { TradeStatus } from "@prisma/client";
@@ -9,7 +10,6 @@ import { OverdueAlertsCard } from "@/components/ledgers/overdue-alerts-card";
 const statusStyle: Partial<Record<TradeStatus, string>> = {
   PENDING: "bg-warning/20 text-warning",
   LOCKED: "bg-purple-500/20 text-purple-300",
-  CONFIRMED: "bg-backgroundlue-500/20 text-blue-400",
   EXECUTED: "bg-success/20 text-success",
   SETTLED: "bg-zinc-500/20 text-muted-foreground",
   CANCELLED: "bg-red-500/20 text-red-400",
@@ -116,8 +116,21 @@ export default function TraderDeskPage() {
                       {formatQty(t.quantity)} {t.quantityUnit ?? t.commodity.unit}
                     </td>
                     <td className="px-2 py-1.5 data-grid">
-                      {formatCurrency(t.price, t.currency)}
-                      <span className="text-subtle"> /{t.quantityUnit ?? t.commodity.unit}</span>
+                      {t.price > 0 ? (
+                        <>
+                          {t.price.toLocaleString()}{" "}
+                          <span className="text-subtle">
+                            {t.priceCurrency && t.priceWeightUnit
+                              ? priceUnitLabel({
+                                  currency: t.priceCurrency,
+                                  weightUnit: t.priceWeightUnit,
+                                })
+                              : `${t.currency}/${t.quantityUnit ?? t.commodity.unit}`}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-subtle">—</span>
+                      )}
                     </td>
                     <td className="px-2 py-1.5 text-xs text-muted-foreground max-w-[100px] truncate">{t.counterparty.name}</td>
                     <td className="px-2 py-1.5 text-xs text-subtle">{t.deliveryStart.toISOString().slice(0, 10)}</td>

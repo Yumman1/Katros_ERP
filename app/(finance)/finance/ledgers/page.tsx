@@ -7,8 +7,9 @@ import { trpc } from "@/lib/trpc/client";
 
 export default function FinanceLedgersPage() {
   const utils = trpc.useUtils();
-  const { data: rows, isLoading } = trpc.finance.counterpartyLedgers.useQuery(undefined, {
+  const { data: rows, isLoading, error: rowsError } = trpc.finance.counterpartyLedgers.useQuery(undefined, {
     refetchInterval: 60_000,
+    retry: false,
   });
 
   const [settleError, setSettleError] = useState<string | null>(null);
@@ -17,6 +18,9 @@ export default function FinanceLedgersPage() {
     onSuccess: () => {
       setSettleError(null);
       void utils.finance.counterpartyLedgers.invalidate();
+      void utils.policy.overdueLedgerAlerts.invalidate();
+      void utils.execution.counterpartyLedgers.invalidate();
+      void utils.execution.saleWorkflowRows.invalidate();
     },
     onError: (e) => setSettleError(e.message),
   });
@@ -39,12 +43,16 @@ export default function FinanceLedgersPage() {
             {settleError}
           </p>
         )}
-        <CounterpartyLedgersPanel
-          rows={rows}
-          isLoading={isLoading}
-          onSettle={handleSettle}
-          settlingTruckId={settle.isPending ? settle.variables?.truckId ?? null : null}
-        />
+        {rowsError ? (
+          <div className="exec-empty">You don&apos;t have access to this page.</div>
+        ) : (
+          <CounterpartyLedgersPanel
+            rows={rows}
+            isLoading={isLoading}
+            onSettle={handleSettle}
+            settlingTruckId={settle.isPending ? settle.variables?.truckId ?? null : null}
+          />
+        )}
       </div>
     </div>
   );

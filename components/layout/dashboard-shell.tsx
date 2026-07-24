@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ShellHeader } from "@/components/layout/shell-header";
@@ -77,22 +78,40 @@ function toAppNav(entries: NavEntry[], badges: Record<string, number | undefined
   );
 }
 
+/** Roles that see the Finance nav group and may call the finance badge queries. */
+const FINANCE_NAV_ROLES = new Set(["FINANCE", "ADMIN", "CEO"]);
+
 export function DashboardShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string } | undefined)?.role ?? null;
+  const canSeeFinance = role != null && FINANCE_NAV_ROLES.has(role);
+
   const pendingVouchers = trpc.finance.pendingVouchersCount.useQuery(undefined, {
     refetchInterval: 60_000,
     retry: false,
+    enabled: canSeeFinance,
+  });
+  const pendingPayments = trpc.finance.pendingPayments.useQuery(undefined, {
+    refetchInterval: 60_000,
+    retry: false,
+    enabled: canSeeFinance,
   });
 
   const badges: Record<string, number | undefined> = {
     "/finance/vouchers": pendingVouchers.data,
+    "/finance/payments": pendingPayments.data?.length,
   };
+
+  const visibleNav = canSeeFinance
+    ? nav
+    : nav.filter((entry) => !("children" in entry) || entry.label !== "Finance");
 
   return (
     <AppShell
       brandSubtitle="Control Tower"
       pathname={pathname}
-      nav={toAppNav(nav, badges)}
+      nav={toAppNav(visibleNav, badges)}
       header={
         <ShellHeader
           left={new Date().toLocaleString("en-PK", {

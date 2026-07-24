@@ -35,6 +35,8 @@ export function invalidateGateOpsCaches(utils: Utils) {
   void utils.execution.pendingForLock.invalidate();
   void utils.execution.saleWorkflowRows.invalidate();
   void utils.execution.counterpartyLedgers.invalidate();
+  void utils.execution.vouchers.invalidate();
+  void utils.policy.overdueLedgerAlerts.invalidate();
 }
 
 /** After CEO / department head resolves an approval that may touch master data or trades. */

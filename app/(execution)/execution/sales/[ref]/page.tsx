@@ -1,11 +1,9 @@
 "use client";
 
-import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
 import { ClipboardList } from "lucide-react";
 
 const fmtPKR = (n: number) =>
@@ -14,15 +12,7 @@ const fmtPKR = (n: number) =>
 export default function SaleContractDetailPage() {
   const params = useParams();
   const tradeRef = decodeURIComponent(params.ref as string);
-  const utils = trpc.useUtils();
   const { data, isLoading } = trpc.execution.contractByRef.useQuery({ tradeRef });
-  const requestRelease = trpc.execution.requestOutboundRelease.useMutation({
-    onSuccess: () => invalidateTradeFlowCaches(utils, tradeRef),
-  });
-  const release = trpc.execution.releaseOutbound.useMutation({
-    onSuccess: () => invalidateTradeFlowCaches(utils, tradeRef),
-  });
-  const [doRefs, setDoRefs] = useState<Record<string, string>>({});
 
   if (isLoading) {
     return <div className="flex h-64 items-center justify-center text-sm text-subtle">Loading…</div>;
@@ -115,18 +105,20 @@ export default function SaleContractDetailPage() {
         style={{ background: "rgba(167,139,250,0.06)", border: "1px solid rgba(167,139,250,0.15)" }}
       >
         <div>
-          <p className="text-sm font-semibold text-purple-300">Outbound trucks via gatepass</p>
+          <p className="text-sm font-semibold text-purple-300">Outbound trucks release via Truck Movements</p>
           <p className="mt-0.5 text-xs text-subtle">
-            Assign gatepass trucks to this sale from the sales fulfillment queue, then request finance and issue DO here.
+            Releases go through the payment workflow on the Truck Movements page — assign the
+            gatepass truck to this sale there, confirm the buyer&rsquo;s payment (or CEO clearance),
+            then print the Gate Out Slip and Delivery Order.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
-            href={`/execution/sales?cp=${encodeURIComponent(c.counterpartyName)}`}
+            href="/execution/movements"
             className="rounded-xl px-4 py-2 text-xs font-bold text-foreground"
             style={{ background: "linear-gradient(135deg,#a78bfa,#7c3aed)" }}
           >
-            Assign trucks →
+            Truck Movements →
           </Link>
           <Link
             href="/warehouse/gatepass"
@@ -167,50 +159,11 @@ export default function SaleContractDetailPage() {
                   )}
                   <DispatchBadge status={d.status} />
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {d.status === "WEIGHED" && (
-                    <button
-                      type="button"
-                      onClick={() => requestRelease.mutate({ dispatchId: d.id })}
-                      disabled={requestRelease.isPending}
-                      className="rounded-lg px-3 py-1.5 text-[11px] font-bold disabled:opacity-50"
-                      style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}
-                    >
-                      Request finance approval
-                    </button>
-                  )}
-                  {d.status === "FINANCE_PENDING" && (
-                    <>
-                      <span
-                        className="rounded-lg px-3 py-1.5 text-[11px] font-medium"
-                        style={{ background: "rgba(96,165,250,0.1)", color: "#60a5fa" }}
-                      >
-                        Finance pending
-                      </span>
-                      <input
-                        placeholder="DO reference (after finance OK)"
-                        value={doRefs[d.id] ?? ""}
-                        onChange={(e) => setDoRefs((s) => ({ ...s, [d.id]: e.target.value }))}
-                        className="rounded-lg px-2.5 py-1.5 text-xs text-foreground"
-                        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => release.mutate({ dispatchId: d.id, doRef: doRefs[d.id] ?? "" })}
-                        disabled={!doRefs[d.id] || release.isPending}
-                        className="rounded-lg px-3 py-1.5 text-[11px] font-bold disabled:opacity-50"
-                        style={{ background: "rgba(52,211,153,0.15)", color: "#34d399" }}
-                      >
-                        Issue DO & release
-                      </button>
-                    </>
-                  )}
-                  {d.status === "RELEASED" && (
-                    <span className="text-[11px]" style={{ color: "#34d399" }}>
-                      ✓ Released
-                    </span>
-                  )}
-                </div>
+                {d.status === "RELEASED" && (
+                  <span className="text-[11px]" style={{ color: "#34d399" }}>
+                    ✓ Released
+                  </span>
+                )}
               </div>
             ))}
           </div>
