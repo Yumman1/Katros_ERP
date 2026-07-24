@@ -295,7 +295,8 @@ export default function WarehouseGatepassPage() {
           </div>
           <h1 className="mt-2 text-2xl font-bold">Warehouse Gate Register</h1>
           <p className="mt-1 text-sm text-subtle">
-            Select warehouse first — only counterparties with open trades at that warehouse appear.
+            Select warehouse first — counterparties with open trades at that warehouse (including
+            spot purchase suppliers) appear.
           </p>
         </header>
 
