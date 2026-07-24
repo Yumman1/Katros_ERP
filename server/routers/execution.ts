@@ -38,6 +38,7 @@ import {
   markSaleTruckReleased,
   confirmSalePayment,
   requestClearWithoutPayment,
+  requestInboundOverDelivery,
 } from "@/server/execution-store";
 import { getCounterpartyLedgers } from "@/server/finance/ledger";
 import { createVoucher, listVouchers } from "@/server/finance/vouchers";
@@ -803,6 +804,20 @@ export const executionRouter = router({
           input.truckId,
           ctx.session.user.name ?? ctx.session.user.email ?? "execution",
         );
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  /**
+   * Request trader → CEO approval to accept an over-tolerance inbound truck
+   * onto a purchase trade (the truck delivers more than the trade can absorb).
+   */
+  requestInboundOverDelivery: roleProcedure([...execRoles])
+    .input(z.object({ truckId: z.string(), tradeRef: z.string() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await requestInboundOverDelivery(input.truckId, input.tradeRef);
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }

@@ -10,7 +10,7 @@
 
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- ── 1. Schema (mirrors prisma/migrations, through 20260724_voucher_trade_link) ──
+-- ── 1. Schema (mirrors prisma/migrations, through 20260725_inbound_over_delivery) ──
 
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('ADMIN', 'CEO', 'TRADER', 'EXECUTION', 'RISK_MANAGER', 'FINANCE', 'READ_ONLY');
@@ -26,6 +26,9 @@ CREATE TYPE "CounterpartySide" AS ENUM ('BUY', 'SELL');
 
 -- CreateEnum
 CREATE TYPE "TaxFilerStatus" AS ENUM ('FILER', 'NON_FILER');
+
+-- CreateEnum
+CREATE TYPE "InboundOverStage" AS ENUM ('PENDING_TRADER', 'PENDING_CEO', 'APPROVED');
 
 -- CreateEnum
 CREATE TYPE "KycStatus" AS ENUM ('VERIFIED', 'PENDING', 'EXPIRED', 'NOT_ON_FILE');
@@ -573,6 +576,13 @@ CREATE TABLE "PendingTruck" (
     "saleReleasedBy" TEXT,
     "saleSettledAt" TIMESTAMP(3),
     "saleSettledBy" TEXT,
+    "overDeliveryStage" "InboundOverStage",
+    "overDeliveryTradeRef" TEXT,
+    "overDeliveryQtyKg" DECIMAL(20,3),
+    "overDeliveryTraderBy" TEXT,
+    "overDeliveryTraderAt" TIMESTAMP(3),
+    "overDeliveryCeoBy" TEXT,
+    "overDeliveryCeoAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -1414,7 +1424,8 @@ VALUES (gen_random_uuid()::text, '', now(), '0_init', 1),
        (gen_random_uuid()::text, '', now(), '20260722_sale_ledger_policies', 1),
        (gen_random_uuid()::text, '', now(), '20260722_sale_manual_release', 1),
        (gen_random_uuid()::text, '', now(), '20260723_dual_ledgers_filer_tax', 1),
-       (gen_random_uuid()::text, '', now(), '20260724_voucher_trade_link', 1)
+       (gen_random_uuid()::text, '', now(), '20260724_voucher_trade_link', 1),
+       (gen_random_uuid()::text, '', now(), '20260725_inbound_over_delivery', 1)
 ON CONFLICT DO NOTHING;
 
 -- Policy singleton row.

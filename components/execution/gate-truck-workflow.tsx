@@ -25,6 +25,9 @@ export type WorkflowTruck = {
   gateInvoiceAmount?: number | null;
   gateInvoiceExpectedPkr?: number | null;
   gateInvoiceStage?: string | null;
+  /** Inbound over-delivery approval flow (net weight exceeds the trade's open qty + tolerance). */
+  overDeliveryStage?: "PENDING_TRADER" | "PENDING_CEO" | "APPROVED" | null;
+  overDeliveryTradeRef?: string | null;
 };
 
 /** Minimal contract shape for the inline assign control. */
@@ -183,9 +186,17 @@ export function GateTruckWorkflow({
 
 function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: WorkflowContract[] }) {
   const utils = trpc.useUtils();
-  const [tradeRef, setTradeRef] = useState("");
+  const inbound = truck.movementType === "INBOUND";
+  const overStage = inbound ? truck.overDeliveryStage ?? null : null;
+  // Pre-select the approved trade so execution can complete the assignment.
+  const [tradeRef, setTradeRef] = useState(() =>
+    overStage === "APPROVED" ? truck.overDeliveryTradeRef ?? "" : "",
+  );
 
   const assign = trpc.execution.assignTruckToTrade.useMutation({
+    onSuccess: () => invalidateGateOpsCaches(utils),
+  });
+  const requestOver = trpc.execution.requestInboundOverDelivery.useMutation({
     onSuccess: () => invalidateGateOpsCaches(utils),
   });
 
@@ -212,14 +223,46 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
     );
   }
 
+  // Over-delivery request is with the trader / CEO — replace the assign control
+  // with a status line until it is approved.
+  if (overStage === "PENDING_TRADER" || overStage === "PENDING_CEO") {
+    return (
+      <StepPanel step={1} title="Over-delivery" state="warn" headline="Approval pending">
+        <span className="text-[10px] font-medium text-warning">
+          {overStage === "PENDING_TRADER"
+            ? `Over-delivery sent to trader for ${truck.overDeliveryTradeRef ?? "the trade"}`
+            : "Trader approved — awaiting CEO"}
+        </span>
+      </StepPanel>
+    );
+  }
+
+  const overDeliveryRejected = Boolean(
+    assign.error?.message.includes("Over-delivery approval required"),
+  );
+  // After approval the over-tolerance trade may not appear in the normal
+  // eligible list — surface it explicitly so execution can still assign it.
+  const approvedRef = overStage === "APPROVED" ? truck.overDeliveryTradeRef ?? "" : "";
+  const approvedContract = approvedRef
+    ? contracts.find((c) => c.tradeRef === approvedRef)
+    : undefined;
+  const needsApprovedOption =
+    Boolean(approvedRef) && !eligible.some((c) => c.tradeRef === approvedRef);
+  const showAssignControl = eligible.length > 0 || needsApprovedOption;
+
   return (
     <StepPanel
       step={1}
       title="Assign trade"
-      state="active"
-      headline={eligible.length === 0 ? "No matching open trade" : undefined}
+      state={overStage === "APPROVED" ? "warn" : "active"}
+      headline={!showAssignControl ? "No matching open trade" : undefined}
     >
-      {eligible.length > 0 && (
+      {overStage === "APPROVED" && (
+        <span className="text-[10px] font-medium text-success">
+          Over-delivery approved — assign now
+        </span>
+      )}
+      {showAssignControl && (
         <div className="flex items-center gap-2">
           <select
             value={tradeRef}
@@ -228,6 +271,12 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
             aria-label="Trade to assign"
           >
             <option value="">Select trade…</option>
+            {needsApprovedOption && approvedRef && (
+              <option value={approvedRef}>
+                {approvedRef}
+                {approvedContract ? ` · ${approvedContract.commodityCode}` : ""} · over-delivery
+              </option>
+            )}
             {eligible.map((c) => (
               <option key={c.tradeRef} value={c.tradeRef}>
                 {c.tradeRef} · {c.commodityCode} · open here{" "}
@@ -251,6 +300,19 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
         </span>
       )}
       {assign.error && <ErrorLine message={assign.error.message} />}
+      {inbound && overDeliveryRejected && (
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            disabled={!tradeRef || requestOver.isPending}
+            onClick={() => requestOver.mutate({ truckId: truck.id, tradeRef })}
+            className="kastros-btn-primary shrink-0 self-start px-3 py-1.5 text-[11px] disabled:opacity-50"
+          >
+            {requestOver.isPending ? "Requesting…" : "Request over-delivery approval"}
+          </button>
+          {requestOver.error && <ErrorLine message={requestOver.error.message} />}
+        </div>
+      )}
     </StepPanel>
   );
 }

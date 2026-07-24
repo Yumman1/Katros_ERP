@@ -14,7 +14,9 @@ import { applyApprovedChangeRequest } from "@/server/change-request-apply";
 import { recordTradeChangeResolved } from "@/server/trade-activity";
 import {
   ceoResolveClearWithoutPayment,
+  ceoResolveInboundOverDelivery,
   getCeoClearApprovals,
+  getCeoInboundOverDeliveries,
   getInboundReceipts,
   getLockedContracts,
   getOutboundDispatches,
@@ -293,6 +295,38 @@ export const ceoRouter = router({
   clearWithoutPaymentCount: ceoProcedure().query(
     async () => (await getCeoClearApprovals()).length,
   ),
+
+  // ─── Inbound over-delivery clearance (trader already approved) ─────────────
+
+  overDeliveryApprovals: ceoProcedure().query(() => getCeoInboundOverDeliveries()),
+
+  overDeliveryCount: ceoProcedure().query(
+    async () => (await getCeoInboundOverDeliveries()).length,
+  ),
+
+  resolveOverDelivery: ceoProcedure()
+    .input(
+      z.object({
+        truckId: z.string(),
+        decision: z.enum(["APPROVE", "REJECT"]),
+        reason: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await ceoResolveInboundOverDelivery(
+          input.truckId,
+          ctx.session.user.name ?? ctx.session.user.email ?? "CEO",
+          input.decision,
+          input.reason,
+        );
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Failed",
+        });
+      }
+    }),
 
   /** APPROVE → truck cleared unpaid + slips issued; REJECT requires a reason. */
   resolveClearWithoutPayment: ceoProcedure()

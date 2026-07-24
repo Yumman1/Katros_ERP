@@ -27,10 +27,12 @@ import {
   getTraderInvoiceApprovals,
   getTraderSaleApprovals,
   getTraderUnpaidSellTrucks,
+  getTraderInboundOverDeliveries,
   lockTradeInStore,
   exportLockedContractsCsv,
   traderResolveGateInvoice,
   traderResolveSaleTruck,
+  traderResolveInboundOverDelivery,
   TraderInvoiceOwnershipError,
 } from "@/server/execution-store";
 import { exportTradeFileCsv } from "@/server/trade-file-export";
@@ -867,6 +869,49 @@ export const traderRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not update filer status",
+        });
+      }
+    }),
+
+  // ─── Inbound over-delivery approvals (buy side) ────────────────────────────
+
+  /** Over-tolerance inbound trucks awaiting this trader's approval. */
+  overDeliveryApprovals: protectedProcedure.query(({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    return getTraderInboundOverDeliveries(name);
+  }),
+
+  overDeliveryApprovalsCount: protectedProcedure.query(async ({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    return (await getTraderInboundOverDeliveries(name)).length;
+  }),
+
+  /** Approve (→ CEO) or reject (reason required) an over-delivery request. */
+  resolveOverDeliveryApproval: protectedProcedure
+    .input(
+      z.object({
+        truckId: z.string(),
+        decision: z.enum(["APPROVE", "REJECT"]),
+        reason: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      try {
+        const truck = await traderResolveInboundOverDelivery(
+          name,
+          input.truckId,
+          input.decision,
+          input.reason,
+        );
+        return { ok: true as const, truck };
+      } catch (e) {
+        if (e instanceof TraderInvoiceOwnershipError) {
+          throw new TRPCError({ code: "FORBIDDEN", message: e.message });
+        }
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not update over-delivery",
         });
       }
     }),
