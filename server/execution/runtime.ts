@@ -100,9 +100,19 @@ export type PendingTruck = {
   /** Settle-against-old-dues stamp (finance) for released-unpaid trucks. */
   saleSettledAt?: Date | null;
   saleSettledBy?: string | null;
+  // ── Inbound over-delivery approval ──
+  overDeliveryStage?: InboundOverStage | null;
+  overDeliveryTradeRef?: string | null;
+  overDeliveryQtyKg?: number | null;
+  overDeliveryTraderBy?: string | null;
+  overDeliveryTraderAt?: Date | null;
+  overDeliveryCeoBy?: string | null;
+  overDeliveryCeoAt?: Date | null;
   /** @deprecated legacy persisted trucks only */
   driverCnic?: string | null;
 };
+
+export type InboundOverStage = "PENDING_TRADER" | "PENDING_CEO" | "APPROVED";
 
 export type SaleTruckStage =
   | "AWAITING_BALANCE"
@@ -339,6 +349,13 @@ export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
     saleReleasedBy: row.saleReleasedBy,
     saleSettledAt: row.saleSettledAt,
     saleSettledBy: row.saleSettledBy,
+    overDeliveryStage: row.overDeliveryStage,
+    overDeliveryTradeRef: row.overDeliveryTradeRef,
+    overDeliveryQtyKg: numOrNull(row.overDeliveryQtyKg),
+    overDeliveryTraderBy: row.overDeliveryTraderBy,
+    overDeliveryTraderAt: row.overDeliveryTraderAt,
+    overDeliveryCeoBy: row.overDeliveryCeoBy,
+    overDeliveryCeoAt: row.overDeliveryCeoAt,
     driverCnic: null,
   };
 }

@@ -142,6 +142,15 @@ enum TaxFilerStatus {
   NON_FILER
 }
 
+/// Approval flow when an inbound truck delivers more than a purchase trade's
+/// open quantity + tolerance. It can only be accepted onto the trade once the
+/// trade's trader and then the CEO approve the over-delivery.
+enum InboundOverStage {
+  PENDING_TRADER
+  PENDING_CEO
+  APPROVED
+}
+
 enum KycStatus {
   VERIFIED
   PENDING
@@ -799,6 +808,16 @@ model PendingTruck {
   /// Settle-against-old-dues (finance) for released-unpaid trucks.
   saleSettledAt   DateTime?
   saleSettledBy   String?
+
+  // ── Inbound over-delivery approval (movementType = INBOUND) ──
+  /// Set when a truck delivers more than the target trade's open qty + tolerance.
+  overDeliveryStage    InboundOverStage?
+  overDeliveryTradeRef String?
+  overDeliveryQtyKg    Decimal? @db.Decimal(20, 3)
+  overDeliveryTraderBy String?
+  overDeliveryTraderAt DateTime?
+  overDeliveryCeoBy    String?
+  overDeliveryCeoAt    DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

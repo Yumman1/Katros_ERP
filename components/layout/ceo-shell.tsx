@@ -24,12 +24,17 @@ export function CeoShell({ children }: { children: ReactNode }) {
     refetchInterval: 60_000,
     retry: false,
   });
+  const overDelivery = trpc.ceo.overDeliveryCount.useQuery(undefined, {
+    refetchInterval: 60_000,
+    retry: false,
+  });
   const active = trpc.ceo.activeUsers.useQuery(undefined, {
     refetchInterval: 30_000,
     retry: false,
   });
 
-  const approvalsCount = (pending.data ?? 0) + (clearWithoutPayment.data ?? 0);
+  const approvalsCount =
+    (pending.data ?? 0) + (clearWithoutPayment.data ?? 0) + (overDelivery.data ?? 0);
 
   const appNav = nav.map((item) => ({
     ...item,

@@ -554,6 +554,28 @@ export async function getPendingTrucks(filter?: {
   return list;
 }
 
+/** Open quantity (MT/contract unit) of a contract at a given warehouse. */
+async function inboundWarehouseOpenMt(
+  db: Prisma.TransactionClient | typeof prisma,
+  contract: ReturnType<typeof normalizeContract>,
+  warehouseName: string,
+): Promise<number> {
+  const whAllocatedQty = contractRequiresWarehouse(contract)
+    ? resolveWarehouseAllocations(contract)
+        .filter((a) => normWarehouse(a.warehouseName) === normWarehouse(warehouseName))
+        .reduce((s, a) => s + a.qtyMt, 0)
+    : contract.contractualQtyMt;
+  const whFulfilledQty = contractRequiresWarehouse(contract)
+    ? await fulfilledQtyForTradeAtWarehouseDb(
+        db as Prisma.TransactionClient,
+        contract.tradeRef,
+        warehouseName,
+        contract.direction,
+      )
+    : contract.receivedQtyMt;
+  return Math.max(0, whAllocatedQty - whFulfilledQty);
+}
+
 export async function assignTruckToTrade(
   truckId: string,
   tradeRef: string,
@@ -648,25 +670,30 @@ export async function assignTruckToTrade(
         );
       }
     }
-    const whAllocatedQty = contractRequiresWarehouse(contract)
-      ? resolveWarehouseAllocations(contract)
-          .filter((a) => normWarehouse(a.warehouseName) === normWarehouse(truck.warehouseName))
-          .reduce((s, a) => s + a.qtyMt, 0)
-      : contract.contractualQtyMt;
-    const whFulfilledQty = contractRequiresWarehouse(contract)
-      ? await fulfilledQtyForTradeAtWarehouseDb(tx, tradeRef, truck.warehouseName, contract.direction)
-      : contract.receivedQtyMt;
-    const whOpenQty = Math.max(0, whAllocatedQty - whFulfilledQty);
+    const whOpenQty = await inboundWarehouseOpenMt(tx, contract, truck.warehouseName);
     const tradeOpenKg = quantityUnitToKg(whOpenQty, contract.quantityUnit);
-    const requestedKg = overrideWeightKg ?? truck.remainingKg;
-    const allocateKg = Math.min(requestedKg, truck.remainingKg, Math.max(tradeOpenKg, 0));
+    const unit = contract.quantityUnit;
+    const assignedAt = new Date();
+
+    // Inbound: one truck fills exactly ONE purchase trade — never split. This
+    // keeps receipts, inventory and the buy-ledger debit from double-counting.
+    // Outbound sale trucks may still split across the same buyer's trades.
+    let allocateKg: number;
+    let splitRemainingKg: number;
+    let truckStatus: PendingTruckStatus;
+    if (truck.movementType === "INBOUND") {
+      allocateKg = truck.remainingKg;
+      splitRemainingKg = 0;
+      truckStatus = "ASSIGNED";
+    } else {
+      const requestedKg = overrideWeightKg ?? truck.remainingKg;
+      allocateKg = Math.min(requestedKg, truck.remainingKg, Math.max(tradeOpenKg, 0));
+      splitRemainingKg = truck.remainingKg - allocateKg;
+      truckStatus = splitRemainingKg > 0.5 ? "PARTIAL" : "ASSIGNED";
+    }
     if (allocateKg <= 0) {
       throw new Error("Nothing to allocate — check truck remaining weight and order open quantity");
     }
-    const splitRemainingKg = truck.remainingKg - allocateKg;
-    const unit = contract.quantityUnit;
-    const truckStatus: PendingTruckStatus = splitRemainingKg > 0.5 ? "PARTIAL" : "ASSIGNED";
-    const assignedAt = new Date();
 
     if (truck.movementType === "INBOUND") {
       // No invoice is auto-generated any more. Assignment computes the EXPECTED
@@ -681,6 +708,20 @@ export async function assignTruckToTrade(
         throw new Error(
           "Enter warehouse weight on the gatepass before assignment — invoice uses warehouse weight minus deductions",
         );
+      }
+
+      // Over-tolerance gate: a truck delivering more than the trade's open
+      // quantity + tolerance can only be accepted after trader + CEO approval.
+      const truckQtyMt = kgToQuantityUnit(invoiceNetKg, unit);
+      const toleranceMt = contract.quantityToleranceMt ?? 0;
+      if (truckQtyMt > whOpenQty + toleranceMt + 1e-6) {
+        const approved =
+          truckRow.overDeliveryStage === "APPROVED" && truckRow.overDeliveryTradeRef === tradeRef;
+        if (!approved) {
+          throw new Error(
+            `Over-delivery approval required: this truck delivers ${truckQtyMt.toFixed(2)} ${unit} but ${tradeRef} has only ${whOpenQty.toFixed(2)} ${unit} open (tolerance ${toleranceMt} ${unit}). The trade's trader and the CEO must approve accepting it before assignment.`,
+          );
+        }
       }
       const invoiceRateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
       truck.gateInvoiceExpectedPkr = Math.round(invoiceNetKg * invoiceRateKg * 100) / 100;
@@ -1374,6 +1415,272 @@ export async function traderResolveGateInvoice(
     }
   }
 
+  const fresh = await prisma.pendingTruck.findUnique({
+    where: { id: truckId },
+    include: TRUCK_INCLUDE,
+  });
+  return truckRowToRuntime(fresh!);
+}
+
+// ─── Inbound over-delivery approval (trader → CEO) ────────────────────────────
+
+/** Load + validate the target purchase contract for an over-delivery request. */
+async function loadOverDeliveryContext(truckId: string, tradeRef: string) {
+  const truckRow = await prisma.pendingTruck.findUnique({
+    where: { id: truckId },
+    include: TRUCK_INCLUDE,
+  });
+  if (!truckRow) throw new Error("Gate entry not found");
+  const truck = truckRowToRuntime(truckRow);
+  if (truck.movementType !== "INBOUND") {
+    throw new Error("Over-delivery approval applies to inbound purchase trucks only");
+  }
+  if (truck.status === "ASSIGNED") throw new Error("Truck already assigned");
+  const netKg = inboundNetInvoiceWeightKg(truck.warehouseWeightKg, truck.totalDeductionsKg);
+  if (netKg == null) {
+    throw new Error("Enter warehouse weight before requesting over-delivery approval");
+  }
+  const contractRow = await prisma.executionContract.findUnique({
+    where: { tradeRef },
+    include: CONTRACT_INCLUDE,
+  });
+  if (!contractRow) throw new Error("Locked contract not found: " + tradeRef);
+  const contract = normalizeContract(contractRowToRuntime(contractRow));
+  if (
+    contract.executionProfile !== "PURCHASE_DELIVERED" &&
+    contract.executionProfile !== "PURCHASE_SPOT"
+  ) {
+    throw new Error("Over-delivery approval is only for purchase trades");
+  }
+  if (!counterpartyMatchesTruck(truck, contract)) {
+    throw new Error("Counterparty mismatch between truck and trade");
+  }
+  if (!commodityMatchesTruck(truck, contract)) {
+    throw new Error("Commodity mismatch between truck and trade");
+  }
+  const whOpenQty = await inboundWarehouseOpenMt(prisma, contract, truck.warehouseName);
+  const truckQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
+  const toleranceMt = contract.quantityToleranceMt ?? 0;
+  return { truck, contract, netKg, whOpenQty, truckQtyMt, toleranceMt };
+}
+
+/**
+ * Execution requests over-delivery approval for a truck onto a purchase trade
+ * that cannot absorb it within tolerance — routes to the trade's trader.
+ */
+export async function requestInboundOverDelivery(
+  truckId: string,
+  tradeRef: string,
+): Promise<PendingTruck> {
+  const ctx = await loadOverDeliveryContext(truckId, tradeRef);
+  if (ctx.truckQtyMt <= ctx.whOpenQty + ctx.toleranceMt + 1e-6) {
+    throw new Error(
+      "This truck is within the trade's open quantity and tolerance — assign it directly, no approval needed",
+    );
+  }
+  await prisma.pendingTruck.update({
+    where: { id: truckId },
+    data: {
+      overDeliveryStage: "PENDING_TRADER",
+      overDeliveryTradeRef: tradeRef,
+      overDeliveryQtyKg: ctx.netKg,
+      overDeliveryTraderBy: null,
+      overDeliveryTraderAt: null,
+      overDeliveryCeoBy: null,
+      overDeliveryCeoAt: null,
+    },
+  });
+  const fresh = await prisma.pendingTruck.findUnique({
+    where: { id: truckId },
+    include: TRUCK_INCLUDE,
+  });
+  return truckRowToRuntime(fresh!);
+}
+
+export type OverDeliveryApprovalRow = {
+  truckId: string;
+  gatepassNo: string;
+  truckNo: string;
+  arrivalDate: Date;
+  warehouseName: string;
+  tradeRef: string;
+  counterpartyName: string;
+  commodityName: string;
+  /** Truck net quantity (contract unit). */
+  truckQtyMt: number;
+  /** Trade open quantity at this warehouse. */
+  openQtyMt: number;
+  toleranceMt: number;
+  quantityUnit: string;
+  traderName: string;
+  overDeliveryTraderBy: string | null;
+  stage: "PENDING_TRADER" | "PENDING_CEO";
+};
+
+async function buildOverDeliveryRows(
+  stage: "PENDING_TRADER" | "PENDING_CEO",
+): Promise<OverDeliveryApprovalRow[]> {
+  const rows = await prisma.pendingTruck.findMany({
+    where: { movementType: "INBOUND", overDeliveryStage: stage },
+    orderBy: { arrivalDate: "asc" },
+  });
+  const result: OverDeliveryApprovalRow[] = [];
+  for (const r of rows) {
+    if (!r.overDeliveryTradeRef) continue;
+    const contractRow = await prisma.executionContract.findUnique({
+      where: { tradeRef: r.overDeliveryTradeRef },
+      include: CONTRACT_INCLUDE,
+    });
+    if (!contractRow) continue;
+    const contract = normalizeContract(contractRowToRuntime(contractRow));
+    const trade = await prisma.trade.findUnique({
+      where: { tradeRef: r.overDeliveryTradeRef },
+      select: { traderName: true, counterparty: { select: { name: true } }, commodity: { select: { name: true } } },
+    });
+    if (!trade) continue;
+    const whOpenQty = await inboundWarehouseOpenMt(prisma, contract, r.warehouseName);
+    const netKg = numOrNull(r.overDeliveryQtyKg) ?? 0;
+    result.push({
+      truckId: r.id,
+      gatepassNo: r.gatepassNo,
+      truckNo: r.truckNo,
+      arrivalDate: r.arrivalDate,
+      warehouseName: r.warehouseName,
+      tradeRef: r.overDeliveryTradeRef,
+      counterpartyName: trade.counterparty.name,
+      commodityName: trade.commodity.name,
+      truckQtyMt: kgToQuantityUnit(netKg, contract.quantityUnit),
+      openQtyMt: whOpenQty,
+      toleranceMt: contract.quantityToleranceMt ?? 0,
+      quantityUnit: contract.quantityUnit,
+      traderName: trade.traderName,
+      overDeliveryTraderBy: r.overDeliveryTraderBy,
+      stage,
+    });
+  }
+  return result;
+}
+
+/** Over-delivery requests awaiting the given trader. */
+export async function getTraderInboundOverDeliveries(
+  traderName: string,
+): Promise<OverDeliveryApprovalRow[]> {
+  return (await buildOverDeliveryRows("PENDING_TRADER")).filter((r) =>
+    traderNamesMatch(r.traderName, traderName),
+  );
+}
+
+/** Over-delivery requests awaiting the CEO (trader already approved). */
+export async function getCeoInboundOverDeliveries(): Promise<OverDeliveryApprovalRow[]> {
+  return buildOverDeliveryRows("PENDING_CEO");
+}
+
+/** Trader decision: APPROVE → CEO, REJECT (reason) → clears the request. */
+export async function traderResolveInboundOverDelivery(
+  traderName: string,
+  truckId: string,
+  decision: "APPROVE" | "REJECT",
+  reason?: string,
+): Promise<PendingTruck> {
+  const row = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
+  if (!row) throw new Error("Gate entry not found");
+  if (row.overDeliveryStage !== "PENDING_TRADER") {
+    throw new Error("This truck is not awaiting your over-delivery approval");
+  }
+  const trade = row.overDeliveryTradeRef
+    ? await prisma.trade.findUnique({
+        where: { tradeRef: row.overDeliveryTradeRef },
+        select: { traderName: true },
+      })
+    : null;
+  if (!trade || !traderNamesMatch(trade.traderName, traderName)) {
+    throw new TraderInvoiceOwnershipError("This over-delivery is not linked to one of your trades");
+  }
+  if (decision === "REJECT") {
+    const why = reason?.trim();
+    if (!why) throw new Error("A rejection reason is required");
+    await prisma.pendingTruck.update({
+      where: { id: truckId },
+      data: { overDeliveryStage: null, overDeliveryTradeRef: null, overDeliveryQtyKg: null },
+    });
+    const { recordRejection } = await import("@/server/rejections");
+    await recordRejection({
+      kind: "INBOUND_OVER_TRADER",
+      refLabel: row.gatepassNo,
+      gatepassNo: row.gatepassNo,
+      tradeRef: row.overDeliveryTradeRef,
+      counterpartyName: row.counterpartyName,
+      amountPkr: null,
+      traderName,
+      rejectedBy: traderName,
+      rejectedRole: "TRADER",
+      reason: why,
+    });
+  } else {
+    await prisma.pendingTruck.update({
+      where: { id: truckId },
+      data: {
+        overDeliveryStage: "PENDING_CEO",
+        overDeliveryTraderBy: traderName,
+        overDeliveryTraderAt: new Date(),
+      },
+    });
+  }
+  const fresh = await prisma.pendingTruck.findUnique({
+    where: { id: truckId },
+    include: TRUCK_INCLUDE,
+  });
+  return truckRowToRuntime(fresh!);
+}
+
+/** CEO decision: APPROVE → truck can be assigned, REJECT (reason) → clears. */
+export async function ceoResolveInboundOverDelivery(
+  truckId: string,
+  ceoName: string,
+  decision: "APPROVE" | "REJECT",
+  reason?: string,
+): Promise<PendingTruck> {
+  const row = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
+  if (!row) throw new Error("Gate entry not found");
+  if (row.overDeliveryStage !== "PENDING_CEO") {
+    throw new Error("This truck is not awaiting CEO over-delivery clearance");
+  }
+  if (decision === "REJECT") {
+    const why = reason?.trim();
+    if (!why) throw new Error("A rejection reason is required");
+    await prisma.pendingTruck.update({
+      where: { id: truckId },
+      data: { overDeliveryStage: null, overDeliveryTradeRef: null, overDeliveryQtyKg: null },
+    });
+    const trade = row.overDeliveryTradeRef
+      ? await prisma.trade.findUnique({
+          where: { tradeRef: row.overDeliveryTradeRef },
+          select: { traderName: true },
+        })
+      : null;
+    const { recordRejection } = await import("@/server/rejections");
+    await recordRejection({
+      kind: "INBOUND_OVER_CEO",
+      refLabel: row.gatepassNo,
+      gatepassNo: row.gatepassNo,
+      tradeRef: row.overDeliveryTradeRef,
+      counterpartyName: row.counterpartyName,
+      amountPkr: null,
+      traderName: trade?.traderName ?? null,
+      rejectedBy: ceoName,
+      rejectedRole: "CEO",
+      reason: why,
+    });
+  } else {
+    await prisma.pendingTruck.update({
+      where: { id: truckId },
+      data: {
+        overDeliveryStage: "APPROVED",
+        overDeliveryCeoBy: ceoName,
+        overDeliveryCeoAt: new Date(),
+      },
+    });
+  }
   const fresh = await prisma.pendingTruck.findUnique({
     where: { id: truckId },
     include: TRUCK_INCLUDE,

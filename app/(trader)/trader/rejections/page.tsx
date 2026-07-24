@@ -12,6 +12,8 @@ const PAGE_SIZE = 25;
 const KIND_LABELS: Record<string, string> = {
   SELL_RELEASE_TRADER: "Release on credit — trader",
   SELL_RELEASE_CEO: "Release on credit — CEO",
+  INBOUND_OVER_TRADER: "Over-delivery — trader",
+  INBOUND_OVER_CEO: "Over-delivery — CEO",
   VOUCHER: "Voucher",
   PAYMENT: "Payment",
 };

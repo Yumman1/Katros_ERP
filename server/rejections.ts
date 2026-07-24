@@ -2,7 +2,13 @@ import { prisma } from "@/server/db";
 import { numOrNull } from "@/server/db/convert";
 import { traderNamesMatch } from "@/lib/trader-identity";
 
-export type RejectionKind = "SELL_RELEASE_TRADER" | "SELL_RELEASE_CEO" | "VOUCHER" | "PAYMENT";
+export type RejectionKind =
+  | "SELL_RELEASE_TRADER"
+  | "SELL_RELEASE_CEO"
+  | "VOUCHER"
+  | "PAYMENT"
+  | "INBOUND_OVER_TRADER"
+  | "INBOUND_OVER_CEO";
 
 export type RejectionView = {
   id: string;
