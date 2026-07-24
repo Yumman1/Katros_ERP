@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { format } from "date-fns";
-import { Check, Inbox, Package, Truck, X } from "lucide-react";
+import { Check, Handshake, Inbox, Package, Truck, X } from "lucide-react";
 import { CeoApprovalsInbox } from "@/components/team/ceo-approvals-inbox";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,7 @@ export default function CeoApprovalsPage() {
       <CeoApprovalsInbox />
       <OverDeliverySection />
       <ClearWithoutPaymentSection />
+      <TradeSettlementSection />
     </>
   );
 }
@@ -134,6 +135,135 @@ function OverDeliverySection() {
                         truckId: r.truckId,
                         decision: "REJECT",
                         reason: rejectReasons[r.truckId].trim(),
+                      })
+                    }
+                    className="inline-flex items-center gap-1 rounded-md border border-kastros-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    {busy && resolve.variables?.decision === "REJECT" ? "Rejecting…" : "Reject"}
+                  </button>
+                </div>
+              </div>
+              {errorHere && <p className="mt-2 text-xs text-destructive">{resolve.error?.message}</p>}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function TradeSettlementSection() {
+  const utils = trpc.useUtils();
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
+  const { data: rows } = trpc.ceo.tradeSettlements.useQuery(undefined, {
+    refetchInterval: 60_000,
+    staleTime: 60_000,
+  });
+
+  const resolve = trpc.ceo.resolveTradeSettlement.useMutation({
+    onSuccess: (_data, variables) => {
+      void utils.ceo.tradeSettlements.invalidate();
+      void utils.ceo.tradeSettlementCount.invalidate();
+      if (variables.decision === "REJECT") void utils.policy.rejections.invalidate();
+    },
+  });
+
+  const items = rows ?? [];
+
+  return (
+    <section className="mb-6 mt-2 max-h-[45dvh] shrink-0 overflow-auto rounded-xl border border-kastros-border bg-kastros-card">
+      <div className="flex items-center justify-between border-b border-kastros-border px-5 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Handshake className="h-4 w-4 text-brand" />
+          Direct trade settlements
+        </div>
+        <span className="rounded-full bg-warning/15 px-2.5 py-0.5 text-xs font-semibold text-warning">
+          {items.length} pending
+        </span>
+      </div>
+
+      <div className="divide-y divide-kastros-border">
+        {items.length === 0 && (
+          <div className="flex items-center gap-2 px-5 py-8 text-sm text-subtle">
+            <Inbox className="h-4 w-4" /> No direct settlement requests.
+          </div>
+        )}
+        {items.map((r) => {
+          const busy = resolve.isPending && resolve.variables?.tradeRef === r.tradeRef;
+          const errorHere = resolve.error && resolve.variables?.tradeRef === r.tradeRef;
+          return (
+            <div key={r.tradeRef} className="px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-sm font-semibold text-accent-secondary">{r.tradeRef}</span>
+                    <span
+                      className={cn(
+                        "text-xs font-medium",
+                        r.direction === "BUY" ? "text-success" : "text-destructive",
+                      )}
+                    >
+                      {r.direction}
+                    </span>
+                    <span className="text-sm text-foreground">{r.commodityName}</span>
+                    <span className="text-xs text-subtle">{r.commodityCode}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    {r.counterpartyName} ·{" "}
+                    <span className="tabular-nums text-foreground">{fmtQty(r.quantity, r.quantityUnit)}</span> ·{" "}
+                    <span className="tabular-nums text-foreground">
+                      {pkrFormat.format(r.notionalPkr)} {r.currency}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs text-accent-secondary">
+                    Trader {r.traderName} requested
+                    {r.requestedBy ? ` · ${r.requestedBy}` : ""}
+                    {r.requestedAt ? ` · ${format(new Date(r.requestedAt), "d MMM yyyy HH:mm")}` : ""}
+                  </div>
+                  {r.note && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      <span className="text-subtle">Reason:</span> {r.note}
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-warning">
+                    Approving closes this trade with no delivery or gatepass.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => resolve.mutate({ tradeRef: r.tradeRef, decision: "APPROVE" })}
+                  className="inline-flex items-center gap-1 rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-kastros-bg hover:opacity-90 disabled:opacity-50"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  {busy && resolve.variables?.decision === "APPROVE" ? "Approving…" : "Approve settlement"}
+                </button>
+              </div>
+              <div className="mt-2">
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-subtle">
+                  Reason — shown on all dashboards *
+                </label>
+                <div className="flex flex-wrap items-start gap-2">
+                  <textarea
+                    required
+                    value={rejectReasons[r.tradeRef] ?? ""}
+                    onChange={(e) => setRejectReasons((s) => ({ ...s, [r.tradeRef]: e.target.value }))}
+                    placeholder="Why is this direct settlement rejected?"
+                    rows={2}
+                    className="kastros-input w-72 text-xs"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || !(rejectReasons[r.tradeRef] ?? "").trim()}
+                    onClick={() =>
+                      resolve.mutate({
+                        tradeRef: r.tradeRef,
+                        decision: "REJECT",
+                        reason: rejectReasons[r.tradeRef].trim(),
                       })
                     }
                     className="inline-flex items-center gap-1 rounded-md border border-kastros-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"

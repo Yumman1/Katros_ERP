@@ -204,7 +204,7 @@ export default function MyTradesPage() {
                 {trades?.map((t) => (
                   <tr key={t.id} className="border-b border-kastros-border/60 hover:bg-foreground/[0.02]">
                     <td className="px-2 py-2">
-                      {traderCanEditTrade(t) ? (
+                      {traderCanEditTrade(t) && !t.settlementRequested ? (
                         <button
                           type="button"
                           onClick={() => setEditRef(t.tradeRef)}
@@ -276,9 +276,21 @@ export default function MyTradesPage() {
                       {t.deliveryStart.toISOString().slice(0, 10)}
                     </td>
                     <td className="px-2 py-2">
-                      <span className={`rounded px-1.5 py-0.5 text-xs ${statusStyle[t.tradeStatus] ?? ""}`}>
-                        {traderListStatusLabel(t)}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className={`rounded px-1.5 py-0.5 text-xs ${statusStyle[t.tradeStatus] ?? ""}`}>
+                          {traderListStatusLabel(t)}
+                        </span>
+                        {t.settlementRequested && !t.directSettled && (
+                          <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-warning/20 text-warning">
+                            Settlement pending
+                          </span>
+                        )}
+                        {t.directSettled && (
+                          <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-success/15 text-success">
+                            Directly settled
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

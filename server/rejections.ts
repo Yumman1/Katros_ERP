@@ -8,7 +8,8 @@ export type RejectionKind =
   | "VOUCHER"
   | "PAYMENT"
   | "INBOUND_OVER_TRADER"
-  | "INBOUND_OVER_CEO";
+  | "INBOUND_OVER_CEO"
+  | "TRADE_SETTLEMENT";
 
 export type RejectionView = {
   id: string;

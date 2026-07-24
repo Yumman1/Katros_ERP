@@ -132,7 +132,14 @@ export type OpenTradePatch = {
 };
 
 function isOpenTrade(t: MockTraderTrade): boolean {
-  return t.tradeStatus === TradeStatus.PENDING && t.submittedToExecution === true;
+  return (
+    t.tradeStatus === TradeStatus.PENDING &&
+    t.submittedToExecution === true &&
+    // Trades awaiting or granted direct settlement are frozen out of the
+    // execution review/lock flow — they never go to delivery.
+    t.settlementRequested !== true &&
+    t.directSettled !== true
+  );
 }
 
 function assertOpenTrade(t: MockTraderTrade, tradeRef: string): void {
@@ -201,6 +208,11 @@ export async function submitTradeToExecution(
     !traderNamesMatch(t.traderName, canonicalTraderName(traderName))
   ) {
     throw new Error("You can only submit your own trades to execution");
+  }
+  if (t.settlementRequested === true || t.directSettled === true) {
+    throw new Error(
+      "This trade is in direct settlement — it cannot be submitted to execution",
+    );
   }
   if (t.tradeStatus !== TradeStatus.PENDING) {
     throw new Error("Only draft trades can be submitted to execution");
@@ -403,6 +415,9 @@ export async function updateTraderDraftTrade(
 ): Promise<MockTraderTrade> {
   const trade = await mockTradeByRefGlobal(tradeRef.trim());
   if (!trade) throw new Error("Trade not found");
+  if (trade.settlementRequested === true || trade.directSettled === true) {
+    throw new Error("This trade is in direct settlement — it cannot be edited");
+  }
   if (trade.tradeStatus !== TradeStatus.PENDING || trade.submittedToExecution) {
     throw new Error("Only trader drafts (not yet submitted to execution) can be edited directly");
   }

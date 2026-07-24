@@ -80,6 +80,7 @@ import {
   listTradeDrafts,
   upsertTradeDraft,
 } from "@/server/trade-drafts";
+import { cancelTradeSettlement, requestTradeSettlement } from "@/server/trade-settlement";
 
 const paymentTypeSchema = z.enum([
   "DP",
@@ -869,6 +870,39 @@ export const traderRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not update filer status",
+        });
+      }
+    }),
+
+  // ─── Direct trade settlement (no delivery / gatepass, CEO-approved) ────────
+
+  /** Request to settle an unlocked trade directly — routes to the CEO. */
+  requestSettlement: roleProcedure(["TRADER", "ADMIN"])
+    .input(z.object({ tradeRef: z.string(), note: z.string().min(1, "A settlement reason is required") }))
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      try {
+        await requestTradeSettlement(name, input.tradeRef.trim(), input.note);
+        return { ok: true as const };
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not request settlement",
+        });
+      }
+    }),
+
+  cancelSettlement: roleProcedure(["TRADER", "ADMIN"])
+    .input(z.object({ tradeRef: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      try {
+        await cancelTradeSettlement(name, input.tradeRef.trim());
+        return { ok: true as const };
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not cancel settlement",
         });
       }
     }),

@@ -31,6 +31,11 @@ import {
   getMergedLocations,
 } from "@/server/trader-master-data";
 import { mockAllTraderTrades, mockTradeByRefGlobal } from "@/server/dummy-data";
+import {
+  ceoResolveTradeSettlement,
+  getCeoTradeSettlementCount,
+  getCeoTradeSettlements,
+} from "@/server/trade-settlement";
 import { commodityCreateInputSchema } from "@/lib/commodity-registration";
 import {
   aggregateWarehouseStorageMetrics,
@@ -295,6 +300,37 @@ export const ceoRouter = router({
   clearWithoutPaymentCount: ceoProcedure().query(
     async () => (await getCeoClearApprovals()).length,
   ),
+
+  // ─── Direct trade settlements (trader requested, no delivery) ──────────────
+
+  tradeSettlements: ceoProcedure().query(() => getCeoTradeSettlements()),
+
+  tradeSettlementCount: ceoProcedure().query(() => getCeoTradeSettlementCount()),
+
+  resolveTradeSettlement: ceoProcedure()
+    .input(
+      z.object({
+        tradeRef: z.string(),
+        decision: z.enum(["APPROVE", "REJECT"]),
+        reason: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        await ceoResolveTradeSettlement(
+          input.tradeRef.trim(),
+          ctx.session.user.name ?? ctx.session.user.email ?? "CEO",
+          input.decision,
+          input.reason,
+        );
+        return { ok: true as const };
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Failed",
+        });
+      }
+    }),
 
   // ─── Inbound over-delivery clearance (trader already approved) ─────────────
 

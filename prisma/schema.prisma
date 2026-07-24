@@ -378,6 +378,18 @@ model Trade {
   lockedAt DateTime?
   lockedBy String?
 
+  // ── Direct settlement (no delivery / gatepass) ──
+  /// Trader requested to settle this trade directly — awaiting CEO approval.
+  /// Only permitted while the trade is still PENDING (before lock).
+  settlementRequested   Boolean   @default(false)
+  /// CEO approved the direct settlement (trade closed with tradeStatus SETTLED).
+  directSettled         Boolean   @default(false)
+  settlementNote        String?
+  settlementRequestedBy String?
+  settlementRequestedAt DateTime?
+  settlementApprovedBy  String?
+  settlementApprovedAt  DateTime?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   createdById String

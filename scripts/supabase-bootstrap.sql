@@ -10,7 +10,7 @@
 
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- ── 1. Schema (mirrors prisma/migrations, through 20260725_inbound_over_delivery) ──
+-- ── 1. Schema (mirrors prisma/migrations, through 20260726_trade_direct_settlement) ──
 
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('ADMIN', 'CEO', 'TRADER', 'EXECUTION', 'RISK_MANAGER', 'FINANCE', 'READ_ONLY');
@@ -292,6 +292,13 @@ CREATE TABLE "Trade" (
     "pendingWarehouseApproval" BOOLEAN NOT NULL DEFAULT false,
     "lockedAt" TIMESTAMP(3),
     "lockedBy" TEXT,
+    "settlementRequested" BOOLEAN NOT NULL DEFAULT false,
+    "directSettled" BOOLEAN NOT NULL DEFAULT false,
+    "settlementNote" TEXT,
+    "settlementRequestedBy" TEXT,
+    "settlementRequestedAt" TIMESTAMP(3),
+    "settlementApprovedBy" TEXT,
+    "settlementApprovedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "createdById" TEXT NOT NULL,
@@ -1425,7 +1432,8 @@ VALUES (gen_random_uuid()::text, '', now(), '0_init', 1),
        (gen_random_uuid()::text, '', now(), '20260722_sale_manual_release', 1),
        (gen_random_uuid()::text, '', now(), '20260723_dual_ledgers_filer_tax', 1),
        (gen_random_uuid()::text, '', now(), '20260724_voucher_trade_link', 1),
-       (gen_random_uuid()::text, '', now(), '20260725_inbound_over_delivery', 1)
+       (gen_random_uuid()::text, '', now(), '20260725_inbound_over_delivery', 1),
+       (gen_random_uuid()::text, '', now(), '20260726_trade_direct_settlement', 1)
 ON CONFLICT DO NOTHING;
 
 -- Policy singleton row.
