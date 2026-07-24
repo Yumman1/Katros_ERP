@@ -15,7 +15,7 @@ export function WarehouseCapacityStats({ view, compact }: Props) {
   return (
     <div className={compact ? "space-y-2" : undefined}>
       <p className="text-[10px] text-subtle">
-        Divisions: {view.grainDivisionSqFt} sq ft / MT grain · {view.balesDivisionSqFt} sq ft / bale
+        Divisions: {view.grainDivisionSqFt} sq ft / MT grain · {view.balesDivisionSqFt} sq ft / MT baled
       </p>
       <div className={gridClass}>
         <Stat label="On hand (MT)" value={view.stockMt.toFixed(1)} />

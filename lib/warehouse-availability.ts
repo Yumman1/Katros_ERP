@@ -149,14 +149,10 @@ export function computeWarehouseAvailability(
       ? warehouseCapacityForDivision(view, storageDivision)
       : null;
 
-    // Capacity (MT) for the commodity's division. Grain: capacitySqFt / grainDivisionSqFt
-    // (via estimatedCapacityMt convention). Bale: bale capacity as grain-MT equivalent.
+    // Capacity (MT) for the commodity's division — both divisions are now
+    // sq ft/MT, so bale and grain use the identical capacitySqFt / division MT.
     const capacityMt =
-      storageDivision === "bale"
-        ? view.grainDivisionSqFt > 0
-          ? (view.theoreticalMaxBales * view.balesDivisionSqFt) / view.grainDivisionSqFt
-          : null
-        : view.theoreticalMaxMt;
+      storageDivision === "bale" ? view.theoreticalMaxBales : view.theoreticalMaxMt;
 
     // Free space against each side of the physical inventory split.
     const freeOfAllocatedMt =

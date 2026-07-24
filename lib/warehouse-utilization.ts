@@ -19,11 +19,11 @@ export type WarehouseUtilizationSummary = {
   utilizationPct: number;
   /** Theoretical max if the entire warehouse held only grain (MT). */
   theoreticalMaxMt: number;
-  /** Theoretical max if the entire warehouse held only bales. */
+  /** Theoretical max if the entire warehouse held only baled goods (MT). */
   theoreticalMaxBales: number;
-  /** Remaining room expressed as MT after accounting for bales on hand. */
+  /** Remaining room expressed as grain MT after accounting for baled goods on hand. */
   balanceMt: number;
-  /** Remaining room expressed as bales after accounting for grain on hand. */
+  /** Remaining room expressed as baled MT after accounting for grain on hand. */
   balanceBales: number;
 };
 
@@ -48,14 +48,22 @@ export function estimatedCapacityMt(capacity: WarehouseCapacityInput): number {
   return roundCapacityMt(capacitySqFt / grainDivisionSqFt);
 }
 
-/** Theoretical bale-only capacity: ROUNDUP((SqFt / Bales Division) / 10, 0) * 10 */
+/**
+ * Theoretical baled-commodity capacity (MT): MROUND(SqFt / Bales Division, 10).
+ * Bales division is now sq ft per MT of baled goods — the same metric as the
+ * grain division — so this parallels estimatedCapacityMt exactly.
+ */
 export function estimatedCapacityBales(capacity: WarehouseCapacityInput): number {
   const { capacitySqFt, balesDivisionSqFt } = capacity;
   if (capacitySqFt <= 0 || balesDivisionSqFt <= 0) return 0;
-  return roundCapacityBales(capacitySqFt / balesDivisionSqFt);
+  return roundCapacityMt(capacitySqFt / balesDivisionSqFt);
 }
 
-/** Sq ft consumed by on-hand stock (grain + bales share the same floor area). */
+/**
+ * Sq ft consumed by on-hand stock (grain + baled goods share the same floor).
+ * Both stockMt and stockBales are tonnages; each is multiplied by its own
+ * sq ft/MT division factor.
+ */
 export function stockConsumptionSqFt(
   stock: WarehouseStockInput,
   capacity: WarehouseCapacityInput,
@@ -150,7 +158,7 @@ export function warehouseUtilizationSummary(
   };
 }
 
-/** Convert remaining bale balance to grain MT using warehouse sq ft divisions. */
+/** Convert a free baled-MT balance to the grain-MT floor equivalent. */
 export function baleBalanceAsGrainMt(
   balanceBales: number,
   capacity: Pick<WarehouseCapacityInput, "balesDivisionSqFt" | "grainDivisionSqFt">,
@@ -269,8 +277,10 @@ export function warehouseCapacityForDivision(
 ): { availabilityPct: number | null; availableMt: number | null; label: string } {
   if (division === "bale") {
     return {
+      // Bales division is now sq ft/MT, so free capacity is a baled tonnage
+      // in the commodity's own MT — parallel to grain, no cross-conversion.
       availabilityPct: view.baleAvailabilityPct,
-      availableMt: view.availableBaleAsGrainMt,
+      availableMt: view.balanceBales,
       label: "bale division",
     };
   }

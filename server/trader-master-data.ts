@@ -592,7 +592,9 @@ export async function addCustomLocation(input: {
       province: input.province?.trim() || null,
       capacitySqFt: input.capacitySqFt ?? null,
       costPerSqFt: input.costPerSqFt ?? null,
-      balesDivisionSqFt: input.balesDivisionSqFt ?? 4.5,
+      // Bales division is sq ft per MT of baled goods (same metric as grain);
+      // left unset unless provided — no meaningful universal default.
+      balesDivisionSqFt: input.balesDivisionSqFt ?? null,
       grainDivisionSqFt: input.grainDivisionSqFt ?? 7,
       serviceStartDate: input.serviceStartDate?.trim()
         ? new Date(input.serviceStartDate.trim())
