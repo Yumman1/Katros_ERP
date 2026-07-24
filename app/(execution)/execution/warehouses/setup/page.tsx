@@ -41,7 +41,7 @@ const emptyForm = (): FormState => ({
   province: "",
   capacitySqFt: "",
   costPerSqFt: "",
-  balesDivisionSqFt: "4.5",
+  balesDivisionSqFt: "",
   grainDivisionSqFt: "7",
 });
 
@@ -183,7 +183,7 @@ export default function WarehouseSetupPage() {
               ["province", "Province", "Punjab"],
               ["capacitySqFt", "Number of square feet", "32000"],
               ["costPerSqFt", "Rental cost per sq ft / month (PKR)", "18"],
-              ["balesDivisionSqFt", "Bales division (sq ft/bale)", "4.5"],
+              ["balesDivisionSqFt", "Bales division (sq ft/MT)", ""],
               ["grainDivisionSqFt", "Grain division (sq ft/MT)", "6.04"],
             ] as const
           ).map(([key, label, placeholder]) => (

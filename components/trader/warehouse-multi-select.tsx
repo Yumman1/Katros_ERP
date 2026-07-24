@@ -119,7 +119,7 @@ export function WarehouseMultiSelect({
               )}
               {showDivisionScoped && w.balesDivisionSqFt != null && storageDivision === "bale" && (
                 <p className="mt-0.5 text-[10px] text-subtle">
-                  Bale division: {w.balesDivisionSqFt} sq ft / bale
+                  Bale division: {w.balesDivisionSqFt} sq ft / MT
                 </p>
               )}
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

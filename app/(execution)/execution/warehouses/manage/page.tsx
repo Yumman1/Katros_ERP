@@ -61,7 +61,7 @@ function locToForm(loc: Loc): FormState {
     province: loc.province ?? "",
     capacitySqFt: loc.capacitySqFt != null ? String(loc.capacitySqFt) : "",
     costPerSqFt: loc.costPerSqFt != null ? String(loc.costPerSqFt) : "",
-    balesDivisionSqFt: loc.balesDivisionSqFt != null ? String(loc.balesDivisionSqFt) : "4.5",
+    balesDivisionSqFt: loc.balesDivisionSqFt != null ? String(loc.balesDivisionSqFt) : "",
     grainDivisionSqFt: loc.grainDivisionSqFt != null ? String(loc.grainDivisionSqFt) : "7",
   };
 }
@@ -261,7 +261,7 @@ export default function WarehouseManagePage() {
                   ["province", "Province"],
                   ["capacitySqFt", "Square feet"],
                   ["costPerSqFt", "Rental / sq ft (PKR)"],
-                  ["balesDivisionSqFt", "Bales division (sq ft/bale)"],
+                  ["balesDivisionSqFt", "Bales division (sq ft/MT)"],
                   ["grainDivisionSqFt", "Grain division (sq ft/MT)"],
                 ] as const
               ).map(([key, label]) => (
