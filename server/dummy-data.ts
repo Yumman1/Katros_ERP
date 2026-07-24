@@ -578,6 +578,14 @@ export type MockTraderTrade = {
   warehouseSplitApprovedBy?: string | null;
   /** Staff submitted warehouse split awaiting head approval. */
   pendingWarehouseApproval?: boolean;
+  /** Direct settlement (no delivery/gatepass) — trader requested, CEO approves. */
+  settlementRequested?: boolean;
+  directSettled?: boolean;
+  settlementNote?: string | null;
+  settlementRequestedBy?: string | null;
+  settlementRequestedAt?: Date | null;
+  settlementApprovedBy?: string | null;
+  settlementApprovedAt?: Date | null;
   qualityTolerancesDetail?: {
     damagePct: number;
     brokenPct: number;

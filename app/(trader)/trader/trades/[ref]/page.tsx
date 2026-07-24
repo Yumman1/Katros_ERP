@@ -16,6 +16,7 @@ import { trpc } from "@/lib/trpc/client";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { format } from "date-fns";
 import { PenLine, X } from "lucide-react";
 import { TradeChangeForm, TRADE_EDIT_SECTION_ID } from "@/components/trader/trade-change-form";
 import { TradeActivityPanel } from "@/components/trade/trade-activity-panel";
@@ -42,11 +43,27 @@ export default function TradeDetailPage() {
       void utils.trader.executionEditApprovalsCount.invalidate();
     },
   });
+  const requestSettlement = trpc.trader.requestSettlement.useMutation({
+    onSuccess: () => {
+      void utils.trader.myTrades.invalidate();
+      void utils.trader.tradeByRef.invalidate({ tradeRef });
+      setSettling(false);
+      setSettlementReason("");
+    },
+  });
+  const cancelSettlement = trpc.trader.cancelSettlement.useMutation({
+    onSuccess: () => {
+      void utils.trader.myTrades.invalidate();
+      void utils.trader.tradeByRef.invalidate({ tradeRef });
+    },
+  });
   const policy = trpc.policy.get.useQuery();
   const refData = trpc.trader.referenceData.useQuery();
   const [priceInput, setPriceInput] = useState<number>(0);
   const [commissionInput, setCommissionInput] = useState<number>(0);
   const [editing, setEditing] = useState(false);
+  const [settling, setSettling] = useState(false);
+  const [settlementReason, setSettlementReason] = useState("");
 
   useEffect(() => {
     if (typeof window === "undefined" || !trade) return;
@@ -130,7 +147,8 @@ export default function TradeDetailPage() {
     trade.direction === "SELL" && notional > 0 && advanceTaxRatePct != null
       ? (notional * advanceTaxRatePct) / 100
       : 0;
-  const canEdit = traderCanEditTrade(trade);
+  const frozen = trade.settlementRequested === true;
+  const canEdit = traderCanEditTrade(trade) && !frozen;
   const paramStr = (v: unknown) => (v == null || v === "" ? null : String(v));
   const contactPerson = paramStr(trade.tradeParams?.contactPerson);
   const contactNumber = paramStr(trade.tradeParams?.contactNumber);
@@ -186,6 +204,16 @@ export default function TradeDetailPage() {
                 ? "Closed"
                 : trade.tradeStatus}
             </span>
+            {trade.settlementRequested && !trade.directSettled && (
+              <span className="rounded-md bg-warning/20 px-3 py-1 text-sm font-medium text-warning">
+                Settlement pending CEO approval
+              </span>
+            )}
+            {trade.directSettled && (
+              <span className="rounded-md bg-success/15 px-3 py-1 text-sm font-medium text-success">
+                Directly settled
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -511,7 +539,7 @@ export default function TradeDetailPage() {
         </div>
       )}
 
-      {trade.tradeStatus === "PENDING" && !trade.submittedToExecution && (
+      {trade.tradeStatus === "PENDING" && !trade.submittedToExecution && !frozen && (
         <div className="rounded-lg border border-kastros-border bg-kastros-card p-4">
           <h2 className="text-sm font-medium text-muted-foreground">Submit to execution</h2>
           <p className="mt-1 text-xs text-subtle">
@@ -527,6 +555,112 @@ export default function TradeDetailPage() {
           </button>
           {submitToExecution.error && (
             <p className="mt-2 text-xs text-kastros-red">{submitToExecution.error.message}</p>
+          )}
+        </div>
+      )}
+
+      {trade.tradeStatus === "PENDING" &&
+        !trade.submittedToExecution &&
+        !trade.lockedAt &&
+        !trade.settlementRequested &&
+        !trade.directSettled && (
+        <div className="rounded-lg border border-kastros-border bg-kastros-card p-4">
+          <h2 className="text-sm font-medium text-muted-foreground">Settle directly</h2>
+          <p className="mt-1 text-xs text-subtle">
+            Direct settlement closes the trade with no delivery or gatepass and needs CEO approval. Only possible
+            before the trade is locked.
+          </p>
+          {settling ? (
+            <div className="mt-3 space-y-2">
+              <label className="block text-xs text-muted-foreground">
+                Reason for direct settlement (no delivery) *
+                <textarea
+                  required
+                  rows={3}
+                  value={settlementReason}
+                  onChange={(e) => setSettlementReason(e.target.value)}
+                  placeholder="Why is this trade being settled directly?"
+                  className="kastros-input mt-1 w-full text-sm"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={requestSettlement.isPending || !settlementReason.trim()}
+                  onClick={() => requestSettlement.mutate({ tradeRef, note: settlementReason.trim() })}
+                  className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-kastros-bg disabled:opacity-50"
+                >
+                  {requestSettlement.isPending ? "Requesting…" : "Request direct settlement"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettling(false);
+                    setSettlementReason("");
+                  }}
+                  className="rounded-md border border-kastros-border px-4 py-2 text-sm text-muted-foreground hover:bg-foreground/5"
+                >
+                  Cancel
+                </button>
+              </div>
+              {requestSettlement.error && (
+                <p className="text-xs text-kastros-red">{requestSettlement.error.message}</p>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSettling(true)}
+              className="mt-3 rounded-md border border-brand/40 bg-brand/10 px-4 py-2 text-sm font-semibold text-brand hover:bg-brand/20"
+            >
+              Settle directly
+            </button>
+          )}
+        </div>
+      )}
+
+      {trade.settlementRequested && !trade.directSettled && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
+          <div className="font-medium">Settlement pending CEO approval</div>
+          <p className="mt-1 text-xs text-warning/90">
+            This trade is frozen while direct settlement is pending — it can&apos;t be submitted, locked, or edited.
+            Direct settlement closes the trade with no delivery or gatepass.
+          </p>
+          {trade.settlementNote && (
+            <p className="mt-2 text-xs text-muted-foreground">Reason: {trade.settlementNote}</p>
+          )}
+          {trade.settlementRequestedAt && (
+            <p className="mt-1 text-xs text-subtle">
+              Requested {format(new Date(trade.settlementRequestedAt), "d MMM yyyy HH:mm")}
+              {trade.settlementRequestedBy ? ` · ${trade.settlementRequestedBy}` : ""}
+            </p>
+          )}
+          <button
+            type="button"
+            disabled={cancelSettlement.isPending}
+            onClick={() => cancelSettlement.mutate({ tradeRef })}
+            className="mt-3 rounded-md border border-kastros-border px-4 py-2 text-sm text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+          >
+            {cancelSettlement.isPending ? "Cancelling…" : "Cancel request"}
+          </button>
+          {cancelSettlement.error && (
+            <p className="mt-2 text-xs text-kastros-red">{cancelSettlement.error.message}</p>
+          )}
+        </div>
+      )}
+
+      {trade.directSettled && (
+        <div className="rounded-lg border border-success/30 bg-success/10 p-4 text-sm text-success">
+          <div className="font-medium">Directly settled</div>
+          <p className="mt-1 text-xs text-success/90">Closed with no delivery or gatepass.</p>
+          {(trade.settlementApprovedAt || trade.settlementApprovedBy) && (
+            <p className="mt-1 text-xs text-subtle">
+              Settled{" "}
+              {trade.settlementApprovedAt
+                ? format(new Date(trade.settlementApprovedAt), "d MMM yyyy HH:mm")
+                : "—"}
+              {trade.settlementApprovedBy ? ` · approved by ${trade.settlementApprovedBy}` : ""}
+            </p>
           )}
         </div>
       )}

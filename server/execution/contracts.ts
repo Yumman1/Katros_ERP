@@ -575,6 +575,9 @@ export async function lockTradeInStore(
     (await mockTraderTradeByRef(canonicalTraderName(traderName), tradeRef)) ??
     (await mockTradeByRefGlobal(tradeRef));
   if (!trade) throw new Error("Trade not found");
+  if (trade.settlementRequested === true || trade.directSettled === true) {
+    throw new Error("This trade is in direct settlement — it cannot be locked");
+  }
   if (trade.tradeStatus !== TradeStatus.PENDING) {
     throw new Error(`Only PENDING trades can be locked (current: ${trade.tradeStatus})`);
   }
