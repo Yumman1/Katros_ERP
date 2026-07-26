@@ -21,6 +21,8 @@ export type LedgerEntryRow = {
   saleStage: string | null;
   /** Settlement-invoice debits: collection status of that invoice. */
   settlementStatus?: string | null;
+  /** DEBIT rows whose money has already moved — not outstanding. */
+  settled?: boolean;
   note: string | null;
 };
 
@@ -35,6 +37,10 @@ export type LedgerRow = {
   ledgerAccountId: string;
   totalDebitPkr: number;
   totalCreditPkr: number;
+  /** Debits whose money has already moved (buy: receipt PAID; sell: truck paid). */
+  settledDebitPkr: number;
+  /** Debits still owed on this account. */
+  outstandingDebitPkr: number;
   /** credit − debit; negative = money outstanding on this account. */
   balancePkr: number;
   /** SELL only — credit available for settling trucks; 0 for BUY. */
@@ -161,7 +167,9 @@ function SideSection({
     const debit = accounts.reduce((s, r) => s + r.totalDebitPkr, 0);
     const credit = accounts.reduce((s, r) => s + r.totalCreditPkr, 0);
     const available = accounts.reduce((s, r) => s + r.availableCreditPkr, 0);
-    return { debit, credit, balance: credit - debit, available };
+    const settled = accounts.reduce((s, r) => s + r.settledDebitPkr, 0);
+    const outstanding = accounts.reduce((s, r) => s + r.outstandingDebitPkr, 0);
+    return { debit, credit, balance: credit - debit, available, settled, outstanding };
   }, [accounts]);
 
   return (
@@ -171,23 +179,41 @@ function SideSection({
         <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
       </div>
 
-      <div className={cn("grid gap-3 sm:grid-cols-3", side === "SELL" && "lg:grid-cols-4")}>
-        <SummaryCell label="Total debit" value={fmtPkr(totals.debit)} tone="text-destructive" />
-        <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
-        <SummaryCell
-          label="Net balance"
-          value={fmtPkr(totals.balance)}
-          tone={totals.balance >= 0 ? "text-success" : "text-destructive"}
-        />
-        {side === "SELL" && (
+      {/* Payables are settled by the payment process marking the receipt paid,
+          not by a credit row — so the buy side is read as billed / paid / still
+          owed rather than debit vs credit. */}
+      {side === "BUY" ? (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <SummaryCell label="Total payable" value={fmtPkr(totals.debit)} tone="text-foreground" />
+          <SummaryCell label="Paid" value={fmtPkr(totals.settled)} tone="text-success" />
+          <SummaryCell
+            label="Still to pay"
+            value={fmtPkr(totals.outstanding)}
+            tone={totals.outstanding > 0 ? "text-destructive" : "text-success"}
+          />
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <SummaryCell label="Total debit" value={fmtPkr(totals.debit)} tone="text-destructive" />
+          <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
+          <SummaryCell
+            label="Net balance"
+            value={fmtPkr(totals.balance)}
+            tone={totals.balance >= 0 ? "text-success" : "text-destructive"}
+          />
           <SummaryCell label="Available credit" value={fmtPkr(totals.available)} tone="text-foreground" />
-        )}
-      </div>
+        </div>
+      )}
 
-      {side === "SELL" && (
+      {side === "SELL" ? (
         <p className="text-xs text-muted-foreground">
           Credit-terms trades release within their trade ceiling (balance may run negative within credit
           days); advance trades need vouchers against the trade or direct advances.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          A purchase is settled when its receipt is marked paid through the payment process — paid
+          payables stop aging and are not owed. This account never mixes with the sell ledger.
         </p>
       )}
 
@@ -248,15 +274,27 @@ function AccountCard({
           </span>
         </div>
         <div className="flex flex-wrap justify-end gap-x-6 gap-y-2 text-right">
-          <Metric label="Debit" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
-          <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
-          <Metric
-            label="Balance"
-            value={fmtPkr(r.balancePkr)}
-            tone={r.balancePkr >= 0 ? "text-success" : "text-destructive"}
-          />
-          {isSell && (
-            <Metric label="Available credit" value={fmtPkr(r.availableCreditPkr)} tone="text-foreground" />
+          {isSell ? (
+            <>
+              <Metric label="Debit" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
+              <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
+              <Metric
+                label="Balance"
+                value={fmtPkr(r.balancePkr)}
+                tone={r.balancePkr >= 0 ? "text-success" : "text-destructive"}
+              />
+              <Metric label="Available credit" value={fmtPkr(r.availableCreditPkr)} tone="text-foreground" />
+            </>
+          ) : (
+            <>
+              <Metric label="Payable" value={fmtPkr(r.totalDebitPkr)} tone="text-foreground" />
+              <Metric label="Paid" value={fmtPkr(r.settledDebitPkr)} tone="text-success" />
+              <Metric
+                label="Still to pay"
+                value={fmtPkr(r.outstandingDebitPkr)}
+                tone={r.outstandingDebitPkr > 0 ? "text-destructive" : "text-success"}
+              />
+            </>
           )}
         </div>
       </div>
@@ -313,17 +351,24 @@ function AccountCard({
                   return (
                     <tr key={e.id}>
                       <td className="whitespace-nowrap">{fmtDate(e.entryDate)}</td>
-                      <td>
+                      <td className="whitespace-nowrap">
                         <span
                           className={cn(
                             "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                            e.entryType === "DEBIT"
-                              ? "bg-destructive/15 text-destructive"
-                              : "bg-success/15 text-success",
+                            e.entryType === "CREDIT"
+                              ? "bg-success/15 text-success"
+                              : e.settled
+                                ? "bg-foreground/[0.06] text-subtle"
+                                : "bg-destructive/15 text-destructive",
                           )}
                         >
                           {e.entryType}
                         </span>
+                        {e.settled && (
+                          <span className="ml-1.5 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase text-success">
+                            Paid
+                          </span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(e.amountPkr)}</td>
                       <td className="whitespace-nowrap">

@@ -412,6 +412,8 @@ export type LedgerEntryView = {
   saleStage: string | null;
   /** For settlement-invoice debits: collection status of that invoice. */
   settlementStatus: string | null;
+  /** DEBIT rows: the money behind this entry has moved, so it is not outstanding. */
+  settled: boolean;
   note: string | null;
 };
 
@@ -426,6 +428,10 @@ export type CounterpartyLedgerView = {
   ledgerAccountId: string;
   totalDebitPkr: number;
   totalCreditPkr: number;
+  /** Debits whose money has already moved (buy: receipts PAID; sell: truck paid). */
+  settledDebitPkr: number;
+  /** Debits still owed — what this account actually has open. */
+  outstandingDebitPkr: number;
   /** credit − debit; negative = money outstanding on this account. */
   balancePkr: number;
   /** SELL side only: credit available for confirming/settling trucks. */
@@ -503,8 +509,23 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     }
   }
 
+  const settledStages = new Set<string>(SETTLED_STAGES);
+
   const byAccount = new Map<string, LedgerEntryView[]>();
   for (const e of entries) {
+    const stage = (e.truckId ? truckStage.get(e.truckId) : null) ?? null;
+    // A debit is settled once the money behind it has moved. On the buy side
+    // that is the receipt reaching PAID through the payment process — there is
+    // no credit row to wait for; on the sell side it is the truck being paid,
+    // or a settlement invoice fully collected.
+    const settled =
+      e.entryType === "DEBIT" &&
+      (e.side === "BUY"
+        ? e.sourceRef != null && paidGatepasses.has(e.sourceRef)
+        : (stage != null && settledStages.has(stage)) ||
+          (e.sourceType === "INVOICE" &&
+            (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) === "PAID"));
+
     const view: LedgerEntryView = {
       id: e.id,
       entryDate: e.entryDate,
@@ -517,8 +538,9 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       voucherNo: e.voucher?.voucherNo ?? (e.sourceType === "VOUCHER" ? e.sourceRef : null),
       dueDate: e.dueDate,
       agingBucket: e.entryType === "DEBIT" ? agingBucketFor(e.dueDate) : null,
-      saleStage: (e.truckId ? truckStage.get(e.truckId) : null) ?? null,
+      saleStage: stage,
       settlementStatus: (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) ?? null,
+      settled,
       note: e.note,
     };
     const key = `${e.counterpartyId}:${e.side}`;
@@ -527,7 +549,6 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     byAccount.set(key, list);
   }
 
-  const settled = new Set<string>(SETTLED_STAGES);
   const earmarkStages = new Set<string>(CREDIT_CONSUMING_STAGES);
 
   const accounts: CounterpartyLedgerView[] = [];
@@ -538,23 +559,19 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       if (side === "BUY" && list.length === 0) continue;
       let totalDebit = 0;
       let totalCredit = 0;
+      let settledDebit = 0;
       let earmarked = 0;
       const aging = emptyAging();
       for (const e of list) {
         if (e.entryType === "DEBIT") {
           totalDebit += e.amountPkr;
           const stage = e.saleStage;
-          const isSettlement = e.sourceType === "INVOICE";
-          if (side === "SELL" && ((stage && earmarkStages.has(stage)) || isSettlement)) {
+          if (side === "SELL" && ((stage && earmarkStages.has(stage)) || e.sourceType === "INVOICE")) {
             earmarked += e.amountPkr;
           }
-          // Paid / settled sell receivables and paid buy payables stop
-          // aging; everything else ages by its due date.
-          const stopped =
-            (side === "SELL" && stage != null && settled.has(stage)) ||
-            (side === "SELL" && isSettlement && e.settlementStatus === "PAID") ||
-            (side === "BUY" && e.sourceRef != null && paidGatepasses.has(e.sourceRef));
-          if (!stopped && e.agingBucket) aging[e.agingBucket] += e.amountPkr;
+          // Settled debits are done — they neither age nor count as owed.
+          if (e.settled) settledDebit += e.amountPkr;
+          else if (e.agingBucket) aging[e.agingBucket] += e.amountPkr;
         } else {
           totalCredit += e.amountPkr;
         }
@@ -567,6 +584,8 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
         ledgerAccountId: `${cp.code}-${side === "SELL" ? "S" : "B"}`,
         totalDebitPkr: Math.round(totalDebit * 100) / 100,
         totalCreditPkr: Math.round(totalCredit * 100) / 100,
+        settledDebitPkr: Math.round(settledDebit * 100) / 100,
+        outstandingDebitPkr: Math.round((totalDebit - settledDebit) * 100) / 100,
         balancePkr: Math.round((totalCredit - totalDebit) * 100) / 100,
         availableCreditPkr:
           side === "SELL" ? Math.round((totalCredit - earmarked) * 100) / 100 : 0,
