@@ -12,7 +12,8 @@ export type TradeActivityKind =
   | "EDIT_REQUESTED"
   | "EDIT_APPROVED"
   | "EDIT_REJECTED"
-  | "DELETE_REQUESTED";
+  | "DELETE_REQUESTED"
+  | "CANCELLED";
 
 export type TradeActivityEntry = {
   id: string;

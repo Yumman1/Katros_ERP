@@ -52,11 +52,11 @@ export function LockedContractsPage() {
   const [scopeFilter, setScopeFilter] = useState(() => searchParams.get("scope") ?? "");
   const [commodityFilter, setCommodityFilter] = useState(() => searchParams.get("commodity") ?? "ALL");
   const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
-  const [statusFilter, setStatusFilter] = useState<"all" | "Open" | "Close">(() => {
-    const s = searchParams.get("status");
-    return s === "Open" || s === "Close" ? s : "all";
-  });
-  const [viewTab, setViewTab] = useState<"contracts" | "closed">("contracts");
+  // Single source of truth for the In Progress / Closed split. `?status=Close`
+  // from older links still lands on the Closed tab.
+  const [viewTab, setViewTab] = useState<"contracts" | "closed">(() =>
+    searchParams.get("status") === "Close" ? "closed" : "contracts",
+  );
 
   const syncUrl = useCallback(
     (next: {
@@ -64,14 +64,14 @@ export function LockedContractsPage() {
       scope: string;
       commodity: string;
       q: string;
-      status: "all" | "Open" | "Close";
+      status: "contracts" | "closed";
     }) => {
       const params = new URLSearchParams();
       if (next.incoterm) params.set("incoterm", next.incoterm);
       if (next.scope) params.set("scope", next.scope);
       if (next.commodity && next.commodity !== "ALL") params.set("commodity", next.commodity);
       if (next.q) params.set("q", next.q);
-      if (next.status !== "all") params.set("status", next.status);
+      if (next.status === "closed") params.set("status", "Close");
       const qs = params.toString();
       router.replace(qs ? `/execution/contracts?${qs}` : "/execution/contracts", { scroll: false });
     },
@@ -79,8 +79,8 @@ export function LockedContractsPage() {
   );
 
   useEffect(() => {
-    syncUrl({ incoterm, scope: scopeFilter, commodity: commodityFilter, q: search, status: statusFilter });
-  }, [incoterm, scopeFilter, commodityFilter, search, statusFilter, syncUrl]);
+    syncUrl({ incoterm, scope: scopeFilter, commodity: commodityFilter, q: search, status: viewTab });
+  }, [incoterm, scopeFilter, commodityFilter, search, viewTab, syncUrl]);
 
   const { data: contracts, isLoading } = trpc.execution.lockedContracts.useQuery({
     openOnly: false,
@@ -100,26 +100,27 @@ export function LockedContractsPage() {
       c.counterpartyName.toLowerCase().includes(search.toLowerCase()) ||
       c.commodityCode.toLowerCase().includes(search.toLowerCase()) ||
       c.commodityName.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === "all" || c.contractStatus === statusFilter;
+    // The In Progress tab shows in-progress contracts only — closed ones live
+    // in the Closed tab, so the tab count and the row count always agree.
+    const matchStatus = c.contractStatus === "Open";
     const matchCommodity = matchesCommodityFilter(c.commodityCode, commodityFilter);
     return matchSearch && matchStatus && matchCommodity;
   });
 
-  const filterKey = `${incoterm}|${scopeFilter}|${commodityFilter}|${search}|${statusFilter}`;
+  const filterKey = `${incoterm}|${scopeFilter}|${commodityFilter}|${search}`;
   const contractsPagination = useListPagination(filtered, { resetKey: filterKey, pageSize: 6 });
 
   const totalOpen = (contracts ?? []).filter((c) => c.contractStatus === "Open").length;
   const totalClosedCount = (contracts ?? []).filter((c) => c.contractStatus !== "Open").length;
 
   const hasActiveFilters =
-    incoterm !== "" || scopeFilter !== "" || commodityFilter !== "ALL" || search !== "" || statusFilter !== "all";
+    incoterm !== "" || scopeFilter !== "" || commodityFilter !== "ALL" || search !== "";
 
   const clearFilters = () => {
     setIncoterm("");
     setScopeFilter("");
     setCommodityFilter("ALL");
     setSearch("");
-    setStatusFilter("all");
   };
 
   if (isLoading && !contracts) {
@@ -211,21 +212,6 @@ export function LockedContractsPage() {
                 </option>
               ))}
             </select>
-            <div className="exec-segment h-7">
-              {(["all", "Open", "Close"] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStatusFilter(s)}
-                  className={cn(
-                    "exec-segment-item px-2 py-0.5 text-xs capitalize",
-                    statusFilter === s && "exec-segment-active",
-                  )}
-                >
-                  {s === "Close" ? "Closed" : s === "Open" ? "In Progress" : s === "all" ? "All" : s}
-                </button>
-              ))}
-            </div>
             {hasActiveFilters && (
               <button type="button" onClick={clearFilters} className="kastros-btn-secondary px-2 py-0.5 text-xs">
                 Clear

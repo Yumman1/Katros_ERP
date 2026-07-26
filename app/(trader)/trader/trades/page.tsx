@@ -6,31 +6,36 @@ import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import {
   isTraderDraft,
+  traderCanCancelTrade,
+  traderCancelBlockedReason,
   traderCanEditTrade,
   traderListStatusLabel,
 } from "@/lib/trade-lifecycle";
 import Link from "next/link";
 import { TradeStatus } from "@prisma/client";
 import { endOfMonth, format, startOfMonth } from "date-fns";
-import { PenLine } from "lucide-react";
+import { Ban, PenLine } from "lucide-react";
 import { useState } from "react";
 import { TradeEditModal } from "@/components/trader/trade-edit-modal";
+import { TradeCancelModal } from "@/components/trader/trade-cancel-modal";
 
-type TradeFilter = "UNFINISHED" | "ALL" | "DRAFTS" | "LOCKED" | "CLOSED";
+type TradeFilter = "UNFINISHED" | "ALL" | "DRAFTS" | "LOCKED" | "CLOSED" | "CANCELLED";
 
-const FILTERS: TradeFilter[] = ["UNFINISHED", "ALL", "DRAFTS", "LOCKED", "CLOSED"];
+const FILTERS: TradeFilter[] = ["UNFINISHED", "ALL", "DRAFTS", "LOCKED", "CLOSED", "CANCELLED"];
 
 const statusStyle: Partial<Record<TradeStatus, string>> = {
   PENDING: "bg-warning/20 text-warning",
   LOCKED: "bg-purple-500/20 text-purple-300",
   EXECUTED: "bg-zinc-500/20 text-muted-foreground",
   SETTLED: "bg-zinc-500/20 text-muted-foreground",
+  CANCELLED: "bg-red-500/20 text-red-400",
 };
 
 function filterInput(filter: TradeFilter) {
   if (filter === "DRAFTS") return { bucket: "DRAFTS" as const };
   if (filter === "CLOSED") return { bucket: "CLOSED" as const };
   if (filter === "LOCKED") return { bucket: "LOCKED" as const };
+  if (filter === "CANCELLED") return { bucket: "CANCELLED" as const };
   if (filter === "ALL") return {};
   return {};
 }
@@ -38,7 +43,9 @@ function filterInput(filter: TradeFilter) {
 export default function MyTradesPage() {
   const [filter, setFilter] = useState<TradeFilter>("ALL");
   const [editRef, setEditRef] = useState<string | null>(null);
+  const [cancelRef, setCancelRef] = useState<string | null>(null);
   const utils = trpc.useUtils();
+  const { data: cancelledCount } = trpc.trader.myCancelledCount.useQuery();
   const { data: drafts, isLoading: draftsLoading } = trpc.trader.bookingDrafts.useQuery();
   const deleteDraft = trpc.trader.deleteBookingDraft.useMutation({
     onSuccess: () => void utils.trader.bookingDrafts.invalidate(),
@@ -59,6 +66,11 @@ export default function MyTradesPage() {
   return (
     <div className="kastros-desk-page">
       <TradeEditModal tradeRef={editRef} open={editRef != null} onClose={() => setEditRef(null)} />
+      <TradeCancelModal
+        tradeRef={cancelRef}
+        open={cancelRef != null}
+        onClose={() => setCancelRef(null)}
+      />
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
@@ -108,9 +120,11 @@ export default function MyTradesPage() {
                 ? "Drafts"
                 : f === "CLOSED"
                   ? "Closed"
-                  : f === "ALL"
-                    ? "All"
-                    : "Locked"}
+                  : f === "CANCELLED"
+                    ? `Cancelled (${cancelledCount ?? 0})`
+                    : f === "ALL"
+                      ? "All"
+                      : "Locked"}
           </button>
         ))}
       </div>
@@ -175,13 +189,19 @@ export default function MyTradesPage() {
         )
       ) : isLoading ? (
         <div className="text-subtle">Loading trades…</div>
+      ) : !trades?.length ? (
+        <div className="rounded-xl border border-kastros-border bg-kastros-card px-6 py-10 text-center text-sm text-subtle">
+          {filter === "CANCELLED"
+            ? "No cancelled trades. Trades you cancel before they are locked appear here."
+            : "No trades match this filter."}
+        </div>
       ) : (
       <div className="kastros-table-wrap text-sm">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-subtle">
                 <tr>
                   {[
-                    "Edit",
+                    "Actions",
                     "Trade ref",
                     "Date",
                     "Market",
@@ -204,23 +224,42 @@ export default function MyTradesPage() {
                 {trades?.map((t) => (
                   <tr key={t.id} className="border-b border-kastros-border/60 hover:bg-foreground/[0.02]">
                     <td className="px-2 py-2">
-                      {traderCanEditTrade(t) && !t.settlementRequested ? (
-                        <button
-                          type="button"
-                          onClick={() => setEditRef(t.tradeRef)}
-                          className="inline-flex items-center gap-1 rounded-md border border-brand/40 bg-brand/10 px-2 py-1 text-[11px] font-semibold text-brand hover:bg-brand/20"
-                          title={
-                            isTraderDraft(t)
-                              ? "Edit draft (saves directly)"
-                              : "Propose changes (CEO approval required)"
-                          }
-                        >
-                          <PenLine className="h-3 w-3" />
-                          Edit
-                        </button>
-                      ) : (
-                        <span className="text-[11px] text-subtle">—</span>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {traderCanEditTrade(t) && !t.settlementRequested ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditRef(t.tradeRef)}
+                            className="inline-flex items-center gap-1 rounded-md border border-brand/40 bg-brand/10 px-2 py-1 text-[11px] font-semibold text-brand hover:bg-brand/20"
+                            title={
+                              isTraderDraft(t)
+                                ? "Edit draft (saves directly)"
+                                : "Propose changes (CEO approval required)"
+                            }
+                          >
+                            <PenLine className="h-3 w-3" />
+                            Edit
+                          </button>
+                        ) : null}
+                        {traderCanCancelTrade(t) ? (
+                          <button
+                            type="button"
+                            onClick={() => setCancelRef(t.tradeRef)}
+                            className="inline-flex items-center gap-1 rounded-md border border-kastros-red/40 bg-kastros-red/10 px-2 py-1 text-[11px] font-semibold text-kastros-red hover:bg-kastros-red/20"
+                            title="Cancel this trade (only possible before it is locked)"
+                          >
+                            <Ban className="h-3 w-3" />
+                            Cancel
+                          </button>
+                        ) : null}
+                        {!traderCanEditTrade(t) && !traderCanCancelTrade(t) && (
+                          <span
+                            className="text-[11px] text-subtle"
+                            title={traderCancelBlockedReason(t) ?? undefined}
+                          >
+                            —
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-2 py-2">
                       <Link

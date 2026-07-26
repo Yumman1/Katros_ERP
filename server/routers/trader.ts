@@ -67,6 +67,7 @@ import {
 import {
   assertPriceReadyForLock,
   assertWarehouseReadyForLock,
+  cancelTraderTrade,
   lockOpenTradeAfterTraderReview,
   completeTraderTradePrice,
   submitTradeToExecution,
@@ -225,7 +226,7 @@ export const traderRouter = router({
       z
         .object({
           status: z.nativeEnum(TradeStatus).optional(),
-          bucket: z.enum(["DRAFTS", "LOCKED", "CLOSED"]).optional(),
+          bucket: z.enum(["DRAFTS", "LOCKED", "CLOSED", "CANCELLED"]).optional(),
         })
         .optional(),
     )
@@ -252,13 +253,48 @@ export const traderRouter = router({
         s === TradeStatus.LOCKED || s === TradeStatus.CONFIRMED;
       const isClosed = (s: TradeStatus) =>
         s === TradeStatus.EXECUTED || s === TradeStatus.SETTLED;
+      const isCancelled = (s: TradeStatus) => s === TradeStatus.CANCELLED;
 
       const bucket = input?.bucket;
       if (bucket === "DRAFTS") return overlaid.filter((t) => isDraft(t.tradeStatus));
       if (bucket === "LOCKED") return overlaid.filter((t) => isLocked(t.tradeStatus));
       if (bucket === "CLOSED") return overlaid.filter((t) => isClosed(t.tradeStatus));
+      if (bucket === "CANCELLED") return overlaid.filter((t) => isCancelled(t.tradeStatus));
       if (input?.status) return overlaid.filter((t) => t.tradeStatus === input.status);
       return overlaid;
+    }),
+
+  /** Count for the Cancelled tab badge in My Trades. */
+  myCancelledCount: protectedProcedure.query(async ({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    const all = await mockTraderTrades(name);
+    return all.filter((t) => t.tradeStatus === TradeStatus.CANCELLED).length;
+  }),
+
+  cancelTrade: roleProcedure(["TRADER", "ADMIN"])
+    .input(
+      z.object({
+        tradeRef: z.string(),
+        reason: z.string().trim().min(3, "Give a short reason for cancelling"),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const traderName = traderNameFromSession(ctx.session.user);
+        const cancelledBy = ctx.session.user.name ?? ctx.session.user.email ?? traderName;
+        const trade = await cancelTraderTrade(
+          traderName,
+          input.tradeRef.trim(),
+          input.reason,
+          cancelledBy,
+        );
+        return { ok: true as const, trade };
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not cancel trade",
+        });
+      }
     }),
 
   tradeByRef: protectedProcedure
