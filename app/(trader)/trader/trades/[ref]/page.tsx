@@ -583,8 +583,9 @@ export default function TradeDetailPage() {
         </div>
       )}
 
+      {/* Drafts and unreviewed trades alike — anything execution has not yet
+          locked can be settled directly, matching the server's own gate. */}
       {trade.tradeStatus === "PENDING" &&
-        !trade.submittedToExecution &&
         !trade.lockedAt &&
         !trade.settlementRequested &&
         !trade.directSettled && (
