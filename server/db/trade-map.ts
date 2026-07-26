@@ -116,6 +116,8 @@ export function tradeRowToMock(row: TradeRowWithRelations): MockTraderTrade {
     settlementRequestedAt: row.settlementRequestedAt,
     settlementApprovedBy: row.settlementApprovedBy,
     settlementApprovedAt: row.settlementApprovedAt,
+    settlementClosedAt: row.settlementClosedAt,
+    settlementClosedBy: row.settlementClosedBy,
     qualityTolerancesDetail: json<QualityTolerances>(row.qualityTolerancesDetail),
     activityLog: (row.activityLog ?? []).map(activityRowToEntry),
   } as MockTraderTrade;
@@ -188,6 +190,8 @@ export function mockTradeToColumns(t: MockTraderTrade) {
     settlementRequestedAt: t.settlementRequestedAt ?? null,
     settlementApprovedBy: t.settlementApprovedBy ?? null,
     settlementApprovedAt: t.settlementApprovedAt ?? null,
+    settlementClosedAt: t.settlementClosedAt ?? null,
+    settlementClosedBy: t.settlementClosedBy ?? null,
     lockedAt: t.lockedAt ?? null,
     lockedBy: t.lockedBy ?? null,
   };

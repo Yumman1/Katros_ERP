@@ -98,7 +98,7 @@ export default function ExecutionVouchersPage() {
           </>
         }
         title="Vouchers"
-        subtitle="Record money received from a counterparty — finance approval credits it into their ledger and unlocks their trucks."
+        subtitle="Record money received from a counterparty — finance approval credits it into their ledger, unlocking their trucks and closing settled trades once the full amount is in."
       />
 
       <div className="kastros-desk-scroll flex flex-col gap-4">
@@ -138,8 +138,11 @@ export default function ExecutionVouchersPage() {
                 <option value="">Direct advance (any trade)</option>
                 {(sellTrades ?? []).map((t) => (
                   <option key={t.tradeRef} value={t.tradeRef}>
-                    {t.tradeRef} · {paymentTypeLabel(t.paymentType as PaymentType)} · {t.quantity}{" "}
-                    {t.quantityUnit}
+                    {t.tradeRef} ·{" "}
+                    {t.isSettlement
+                      ? "Settlement (no delivery)"
+                      : paymentTypeLabel(t.paymentType as PaymentType)}{" "}
+                    · {t.quantity} {t.quantityUnit}
                   </option>
                 ))}
               </select>

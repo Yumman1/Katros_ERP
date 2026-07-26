@@ -5,7 +5,13 @@ type TradeLike = {
   submittedToExecution?: boolean;
   settlementRequested?: boolean;
   directSettled?: boolean;
+  settlementClosedAt?: Date | null;
 };
+
+/** Settled, but the trade amount is still being gathered in the ledger. */
+export function isSettlementCollecting(trade: TradeLike): boolean {
+  return trade.directSettled === true && trade.settlementClosedAt == null;
+}
 
 /** Trader draft — not yet sent to execution; direct edits allowed. */
 export function isTraderDraft(trade: TradeLike): boolean {
@@ -72,9 +78,10 @@ export function traderListStatusLabel(trade: TradeLike & { submittedToExecution?
   if (trade.tradeStatus === TradeStatus.PENDING) {
     return trade.submittedToExecution ? "Unreviewed" : "Draft";
   }
-  if (trade.tradeStatus === TradeStatus.EXECUTED || trade.tradeStatus === TradeStatus.SETTLED) {
-    return "Closed";
+  if (trade.tradeStatus === TradeStatus.SETTLED) {
+    return isSettlementCollecting(trade) ? "Settling" : "Closed";
   }
+  if (trade.tradeStatus === TradeStatus.EXECUTED) return "Closed";
   if (trade.tradeStatus === TradeStatus.CONFIRMED) return "Locked";
   if (trade.tradeStatus === TradeStatus.LOCKED) return "Locked";
   if (trade.tradeStatus === TradeStatus.CANCELLED) return "Cancelled";

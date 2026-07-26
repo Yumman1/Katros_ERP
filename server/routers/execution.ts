@@ -862,8 +862,11 @@ export const executionRouter = router({
   ),
 
   /**
-   * Open SELL trades of a counterparty — the voucher form's "against trade"
-   * dropdown (or direct advance).
+   * Trades of a counterparty that money can be received against — the voucher
+   * form's "against trade" dropdown (or direct advance). Open SELL trades,
+   * plus settled trades of either direction still collecting their amount:
+   * a settled trade has no truck, so vouchers are the only way its receivable
+   * ever reaches the ledger.
    */
   sellTradesForCounterparty: roleProcedure([...execRoles, Role.FINANCE])
     .input(z.object({ counterpartyId: z.string().min(1) }))
@@ -871,11 +874,19 @@ export const executionRouter = router({
       const trades = await prisma.trade.findMany({
         where: {
           counterpartyId: input.counterpartyId,
-          direction: "SELL",
-          tradeStatus: { in: ["LOCKED", "CONFIRMED", "PENDING"] },
+          OR: [
+            { direction: "SELL", tradeStatus: { in: ["LOCKED", "CONFIRMED", "PENDING"] } },
+            { directSettled: true, settlementClosedAt: null },
+          ],
         },
         orderBy: { tradeDate: "desc" },
-        select: { tradeRef: true, paymentType: true, quantity: true, quantityUnit: true },
+        select: {
+          tradeRef: true,
+          paymentType: true,
+          quantity: true,
+          quantityUnit: true,
+          directSettled: true,
+        },
         take: 50,
       });
       return trades.map((t) => ({
@@ -883,6 +894,7 @@ export const executionRouter = router({
         paymentType: t.paymentType,
         quantity: num(t.quantity),
         quantityUnit: t.quantityUnit,
+        isSettlement: t.directSettled,
       }));
     }),
 

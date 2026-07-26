@@ -11,7 +11,7 @@ export type LedgerEntryRow = {
   entryDate: Date;
   entryType: "DEBIT" | "CREDIT";
   amountPkr: number;
-  sourceType: "GATEPASS" | "VOUCHER" | "PAYMENT" | "ADJUSTMENT";
+  sourceType: "GATEPASS" | "VOUCHER" | "PAYMENT" | "ADJUSTMENT" | "INVOICE";
   sourceRef: string | null;
   tradeRef: string | null;
   truckId: string | null;
@@ -19,6 +19,8 @@ export type LedgerEntryRow = {
   dueDate: Date | null;
   agingBucket: string | null;
   saleStage: string | null;
+  /** Settlement-invoice debits: collection status of that invoice. */
+  settlementStatus?: string | null;
   note: string | null;
 };
 
@@ -71,6 +73,8 @@ const SOURCE_LABELS: Record<LedgerEntryRow["sourceType"], string> = {
   VOUCHER: "Voucher",
   PAYMENT: "Payment",
   ADJUSTMENT: "Adjustment",
+  // Receivable on a settled trade — raised by invoice, since no truck runs.
+  INVOICE: "Settlement",
 };
 
 function agingCellTone(bucket: AgingBucket, amount: number): string {

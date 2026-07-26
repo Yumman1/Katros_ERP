@@ -18,10 +18,26 @@ import { Ban, PenLine } from "lucide-react";
 import { useState } from "react";
 import { TradeEditModal } from "@/components/trader/trade-edit-modal";
 import { TradeCancelModal } from "@/components/trader/trade-cancel-modal";
+import { SettledTradesSection } from "@/components/trader/settled-trades-section";
 
-type TradeFilter = "UNFINISHED" | "ALL" | "DRAFTS" | "LOCKED" | "CLOSED" | "CANCELLED";
+type TradeFilter =
+  | "UNFINISHED"
+  | "ALL"
+  | "DRAFTS"
+  | "LOCKED"
+  | "SETTLED"
+  | "CLOSED"
+  | "CANCELLED";
 
-const FILTERS: TradeFilter[] = ["UNFINISHED", "ALL", "DRAFTS", "LOCKED", "CLOSED", "CANCELLED"];
+const FILTERS: TradeFilter[] = [
+  "UNFINISHED",
+  "ALL",
+  "DRAFTS",
+  "LOCKED",
+  "SETTLED",
+  "CLOSED",
+  "CANCELLED",
+];
 
 const statusStyle: Partial<Record<TradeStatus, string>> = {
   PENDING: "bg-warning/20 text-warning",
@@ -46,6 +62,7 @@ export default function MyTradesPage() {
   const [cancelRef, setCancelRef] = useState<string | null>(null);
   const utils = trpc.useUtils();
   const { data: cancelledCount } = trpc.trader.myCancelledCount.useQuery();
+  const { data: settledCount } = trpc.trader.mySettledCount.useQuery();
   const { data: drafts, isLoading: draftsLoading } = trpc.trader.bookingDrafts.useQuery();
   const deleteDraft = trpc.trader.deleteBookingDraft.useMutation({
     onSuccess: () => void utils.trader.bookingDrafts.invalidate(),
@@ -120,16 +137,20 @@ export default function MyTradesPage() {
                 ? "Drafts"
                 : f === "CLOSED"
                   ? "Closed"
-                  : f === "CANCELLED"
-                    ? `Cancelled (${cancelledCount ?? 0})`
-                    : f === "ALL"
-                      ? "All"
-                      : "Locked"}
+                  : f === "SETTLED"
+                    ? `Settled (${settledCount ?? 0})`
+                    : f === "CANCELLED"
+                      ? `Cancelled (${cancelledCount ?? 0})`
+                      : f === "ALL"
+                        ? "All"
+                        : "Locked"}
           </button>
         ))}
       </div>
 
-      {filter === "UNFINISHED" ? (
+      {filter === "SETTLED" ? (
+        <SettledTradesSection />
+      ) : filter === "UNFINISHED" ? (
         draftsLoading ? (
           <div className="text-subtle">Loading unfinished bookings…</div>
         ) : !drafts?.length ? (

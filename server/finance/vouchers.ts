@@ -73,14 +73,29 @@ export async function createVoucher(input: {
   if (tradeRef) {
     const trade = await prisma.trade.findUnique({
       where: { tradeRef },
-      select: { counterpartyId: true, direction: true },
+      select: {
+        counterpartyId: true,
+        direction: true,
+        directSettled: true,
+        settlementClosedAt: true,
+      },
     });
     if (!trade) throw new Error("Trade not found: " + tradeRef);
     if (trade.counterpartyId !== input.counterpartyId) {
       throw new Error(`${tradeRef} does not belong to this counterparty`);
     }
-    if (trade.direction !== "SELL") {
-      throw new Error("Vouchers can only be linked to SELL trades (money coming in)");
+    // A settled trade is collected the same way whichever side it was booked
+    // on — the counterparty owes the settlement amount, so money comes in.
+    if (trade.directSettled) {
+      if (trade.settlementClosedAt) {
+        throw new Error(
+          `${tradeRef} is settled and closed — its full trade amount is already in the ledger`,
+        );
+      }
+    } else if (trade.direction !== "SELL") {
+      throw new Error(
+        "Vouchers can only be linked to SELL trades (money coming in) or to settled trades",
+      );
     }
   }
   const seq = await nextRef(COUNTER.VOUCHER);
@@ -157,6 +172,12 @@ export async function approveVoucher(
     where: { id: voucherId },
     include: VOUCHER_INCLUDE,
   });
+  // The credit just landed — if it completes a settled trade's amount, that
+  // trade closes now.
+  if (fresh?.tradeRef) {
+    const { syncSettlementCollection } = await import("@/server/settlement-billing");
+    await syncSettlementCollection(fresh.tradeRef, approvedByName);
+  }
   return voucherRowToView(fresh!);
 }
 

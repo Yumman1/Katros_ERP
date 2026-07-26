@@ -389,6 +389,10 @@ model Trade {
   settlementRequestedAt DateTime?
   settlementApprovedBy  String?
   settlementApprovedAt  DateTime?
+  /// Settlement collection finished — every rupee of the trade amount has been
+  /// gathered in the counterparty's ledger, so the trade is closed for good.
+  settlementClosedAt    DateTime?
+  settlementClosedBy    String?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1101,6 +1105,9 @@ enum InvoiceType {
   SALES
   PROVISIONAL
   FINAL
+  /// Raised against a directly settled trade — no delivery, no gatepass, no
+  /// inventory. Carries the receivable that vouchers are collected against.
+  SETTLEMENT
 }
 
 model Invoice {
@@ -1117,12 +1124,20 @@ model Invoice {
   currency       String
   status         InvoiceStatus
   invoiceType    InvoiceType
+  /// What this invoice covers — shown on the settlement page and the ledger.
+  note           String?
+  /// Settlement invoices only: raised in error and reversed off the ledger.
+  voidedAt       DateTime?
+  voidedBy       String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   createdById    String
   createdBy      User         @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
 
-  payments Payment[]
+  payments    Payment[]
+  ledgerEntry CounterpartyLedgerEntry?
+
+  @@index([tradeId, invoiceType])
 }
 
 model Payment {
@@ -1310,6 +1325,9 @@ enum LedgerSourceType {
   VOUCHER
   PAYMENT
   ADJUSTMENT
+  /// Settlement-invoice receivable on a trade closed with no delivery — the
+  /// debit source that replaces the outbound truck for settled trades.
+  INVOICE
 }
 
 /// Running credit/debit ledger for SELL-side counterparties. DEBIT rows are
@@ -1332,6 +1350,10 @@ model CounterpartyLedgerEntry {
   tradeRef       String?
   /// Debit entries: the outbound PendingTruck that raised the receivable.
   truckId        String?      @unique
+  /// Debit entries on settled trades: the settlement invoice that raised the
+  /// receivable (there is no truck on a settled trade).
+  invoiceId      String?      @unique
+  invoice        Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   /// Credit entries: the finance-approved voucher.
   voucherId      String?      @unique
   voucher        Voucher?     @relation(fields: [voucherId], references: [id], onDelete: SetNull)

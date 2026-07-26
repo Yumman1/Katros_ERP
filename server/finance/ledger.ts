@@ -190,7 +190,7 @@ export async function getSellFundingState(
   counterpartyId: string,
   db: Db = prisma,
 ): Promise<SellFundingState> {
-  const [credits, debits] = await Promise.all([
+  const [credits, debits, settlementDebits] = await Promise.all([
     db.counterpartyLedgerEntry.findMany({
       where: { counterpartyId, side: "SELL", entryType: "CREDIT" },
       select: { amountPkr: true, tradeRef: true },
@@ -198,6 +198,12 @@ export async function getSellFundingState(
     db.counterpartyLedgerEntry.findMany({
       where: { counterpartyId, side: "SELL", entryType: "DEBIT", truckId: { not: null } },
       select: { truckId: true, tradeRef: true, amountPkr: true },
+    }),
+    // Settled trades have no truck — their receivable is the settlement
+    // invoice, and it always consumes the credit collected against it.
+    db.counterpartyLedgerEntry.findMany({
+      where: { counterpartyId, side: "SELL", entryType: "DEBIT", invoiceId: { not: null } },
+      select: { tradeRef: true, amountPkr: true },
     }),
   ]);
 
@@ -228,15 +234,28 @@ export async function getSellFundingState(
     if (!d.truckId || !consuming.has(d.truckId) || !d.tradeRef) continue;
     consumedByTrade.set(d.tradeRef, (consumedByTrade.get(d.tradeRef) ?? 0) + num(d.amountPkr));
   }
+  const settlementRefs = new Set<string>();
+  for (const d of settlementDebits) {
+    if (!d.tradeRef) continue;
+    settlementRefs.add(d.tradeRef);
+    consumedByTrade.set(d.tradeRef, (consumedByTrade.get(d.tradeRef) ?? 0) + num(d.amountPkr));
+  }
 
   const refs = [...new Set([...creditsByTrade.keys(), ...consumedByTrade.keys()])];
   const termsByTrade = new Map<string, "CREDIT" | "ADVANCE">();
   if (refs.length) {
     const trades = await db.trade.findMany({
       where: { tradeRef: { in: refs } },
-      select: { tradeRef: true, paymentType: true },
+      select: { tradeRef: true, paymentType: true, directSettled: true },
     });
-    for (const t of trades) termsByTrade.set(t.tradeRef, tradeTermsKind(t.paymentType));
+    // A settled trade's receivable is due in full whatever its booked terms —
+    // there is no delivery left to run on credit, so it always draws cash.
+    for (const t of trades) {
+      termsByTrade.set(
+        t.tradeRef,
+        t.directSettled || settlementRefs.has(t.tradeRef) ? "ADVANCE" : tradeTermsKind(t.paymentType),
+      );
+    }
   }
 
   return { creditsByTrade, directCredits, consumedByTrade, termsByTrade };
@@ -341,7 +360,7 @@ export async function canFundTruck(
  * trucks — the aggregate figure shown on ledger pages.
  */
 export async function availableCreditPkr(counterpartyId: string, db: Db = prisma): Promise<number> {
-  const [creditAgg, debitEntries] = await Promise.all([
+  const [creditAgg, debitEntries, settlementAgg] = await Promise.all([
     db.counterpartyLedgerEntry.aggregate({
       where: { counterpartyId, side: "SELL", entryType: "CREDIT" },
       _sum: { amountPkr: true },
@@ -350,8 +369,15 @@ export async function availableCreditPkr(counterpartyId: string, db: Db = prisma
       where: { counterpartyId, side: "SELL", entryType: "DEBIT", truckId: { not: null } },
       select: { truckId: true, amountPkr: true },
     }),
+    // Settlement receivables earmark their credit just like a paid truck does —
+    // money collected to settle a trade is never free to release another one.
+    db.counterpartyLedgerEntry.aggregate({
+      where: { counterpartyId, side: "SELL", entryType: "DEBIT", invoiceId: { not: null } },
+      _sum: { amountPkr: true },
+    }),
   ]);
   const credit = numOrNull(creditAgg._sum.amountPkr) ?? 0;
+  const settlementEarmark = numOrNull(settlementAgg._sum.amountPkr) ?? 0;
   const truckIds = debitEntries.map((e) => e.truckId).filter((id): id is string => Boolean(id));
   const consuming = truckIds.length
     ? new Set(
@@ -367,7 +393,7 @@ export async function availableCreditPkr(counterpartyId: string, db: Db = prisma
     (s, e) => (e.truckId && consuming.has(e.truckId) ? s + num(e.amountPkr) : s),
     0,
   );
-  return credit - earmarked;
+  return credit - earmarked - settlementEarmark;
 }
 
 export type LedgerEntryView = {
@@ -375,7 +401,7 @@ export type LedgerEntryView = {
   entryDate: Date;
   entryType: "DEBIT" | "CREDIT";
   amountPkr: number;
-  sourceType: "GATEPASS" | "VOUCHER" | "PAYMENT" | "ADJUSTMENT";
+  sourceType: "GATEPASS" | "VOUCHER" | "PAYMENT" | "ADJUSTMENT" | "INVOICE";
   sourceRef: string | null;
   tradeRef: string | null;
   truckId: string | null;
@@ -384,6 +410,8 @@ export type LedgerEntryView = {
   agingBucket: AgingBucket | null;
   /** For truck debits: current sale workflow stage (null once truck deleted). */
   saleStage: string | null;
+  /** For settlement-invoice debits: collection status of that invoice. */
+  settlementStatus: string | null;
   note: string | null;
 };
 
@@ -434,6 +462,20 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
 
   const truckStage = new Map(trucks.map((t) => [t.id, t.saleStage]));
 
+  // Settlement-invoice debits carry their collection status instead of a truck
+  // stage — a PAID settlement invoice stops aging exactly like a paid truck.
+  const invoiceIds = entries.map((e) => e.invoiceId).filter((id): id is string => Boolean(id));
+  const invoiceStatus = invoiceIds.length
+    ? new Map(
+        (
+          await prisma.invoice.findMany({
+            where: { id: { in: invoiceIds } },
+            select: { id: true, status: true },
+          })
+        ).map((i) => [i.id, i.status as string]),
+      )
+    : new Map<string, string>();
+
   // BUY payables stop aging once finance has paid — i.e. every inbound
   // receipt of the entry's gatepass is PAID.
   const buyGatepassRefs = [
@@ -476,6 +518,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       dueDate: e.dueDate,
       agingBucket: e.entryType === "DEBIT" ? agingBucketFor(e.dueDate) : null,
       saleStage: (e.truckId ? truckStage.get(e.truckId) : null) ?? null,
+      settlementStatus: (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) ?? null,
       note: e.note,
     };
     const key = `${e.counterpartyId}:${e.side}`;
@@ -501,11 +544,15 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
         if (e.entryType === "DEBIT") {
           totalDebit += e.amountPkr;
           const stage = e.saleStage;
-          if (side === "SELL" && stage && earmarkStages.has(stage)) earmarked += e.amountPkr;
+          const isSettlement = e.sourceType === "INVOICE";
+          if (side === "SELL" && ((stage && earmarkStages.has(stage)) || isSettlement)) {
+            earmarked += e.amountPkr;
+          }
           // Paid / settled sell receivables and paid buy payables stop
           // aging; everything else ages by its due date.
           const stopped =
             (side === "SELL" && stage != null && settled.has(stage)) ||
+            (side === "SELL" && isSettlement && e.settlementStatus === "PAID") ||
             (side === "BUY" && e.sourceRef != null && paidGatepasses.has(e.sourceRef));
           if (!stopped && e.agingBucket) aging[e.agingBucket] += e.amountPkr;
         } else {
@@ -592,12 +639,24 @@ export async function getOverdueLedgerAlerts(): Promise<OverdueLedgerAlert[]> {
     }
   }
 
+  // Settlement receivables that have been collected in full stop alerting.
+  const paidInvoices = new Set<string>();
+  const invoiceIds = entries.map((e) => e.invoiceId).filter((id): id is string => Boolean(id));
+  if (invoiceIds.length) {
+    const invs = await prisma.invoice.findMany({
+      where: { id: { in: invoiceIds }, status: "PAID" },
+      select: { id: true },
+    });
+    for (const i of invs) paidInvoices.add(i.id);
+  }
+
   const settled = new Set<string>(SETTLED_STAGES);
   return entries
     .filter((e) => {
       if (e.side === "BUY") {
         return !(e.sourceRef && paidGatepasses.has(e.sourceRef));
       }
+      if (e.invoiceId) return !paidInvoices.has(e.invoiceId);
       if (!e.truckId) return true;
       const stage = stages.get(e.truckId);
       return !(stage && settled.has(stage));

@@ -39,6 +39,7 @@ export const COUNTER = {
   COUNTERPARTY: "counterparty",
   WAREHOUSE: "warehouse",
   VOUCHER: "voucher",
+  SETTLEMENT_INVOICE: "settlement-invoice",
   GATE_OUT_SLIP: "gate-out-slip",
   DELIVERY_ORDER: "delivery-order",
 } as const;
