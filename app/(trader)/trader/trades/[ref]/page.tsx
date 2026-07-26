@@ -218,6 +218,30 @@ export default function TradeDetailPage() {
         </div>
       </div>
 
+      {trade.directSettled && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-kastros-border bg-kastros-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">
+            {trade.settlementClosedAt ? (
+              <>
+                Settlement complete — the full trade amount was gathered in the ledger and this
+                trade is closed.
+              </>
+            ) : (
+              <>
+                This trade settles with no delivery and no truck. Its amount is invoiced and
+                collected through vouchers on the settlement desk.
+              </>
+            )}
+          </p>
+          <Link
+            href={`/trader/trades/${encodeURIComponent(tradeRef)}/settlement`}
+            className="shrink-0 rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-kastros-bg hover:opacity-90"
+          >
+            {trade.settlementClosedAt ? "View settlement" : "Open settlement desk"}
+          </Link>
+        </div>
+      )}
+
       {editing && canEdit ? (
         <TradeChangeForm trade={trade} mode={isTraderDraft(trade) ? "direct" : "ceo"} />
       ) : (
@@ -559,8 +583,9 @@ export default function TradeDetailPage() {
         </div>
       )}
 
+      {/* Drafts and unreviewed trades alike — anything execution has not yet
+          locked can be settled directly, matching the server's own gate. */}
       {trade.tradeStatus === "PENDING" &&
-        !trade.submittedToExecution &&
         !trade.lockedAt &&
         !trade.settlementRequested &&
         !trade.directSettled && (

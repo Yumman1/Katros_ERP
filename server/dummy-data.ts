@@ -586,6 +586,9 @@ export type MockTraderTrade = {
   settlementRequestedAt?: Date | null;
   settlementApprovedBy?: string | null;
   settlementApprovedAt?: Date | null;
+  /** Settlement collected in full — the trade is closed for good. */
+  settlementClosedAt?: Date | null;
+  settlementClosedBy?: string | null;
   qualityTolerancesDetail?: {
     damagePct: number;
     brokenPct: number;

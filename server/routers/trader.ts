@@ -4,7 +4,7 @@ import { CounterpartyType, TradeDirection, TradeStatus } from "@prisma/client";
 import type { Session } from "next-auth";
 import { headProcedure, protectedProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import { traderDisplayName } from "@/lib/trader-display-name";
-import { canonicalTraderName } from "@/lib/trader-identity";
+import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import {
   buyingCategoryFromIncoterms,
   EXECUTION_PROFILES,
@@ -67,6 +67,7 @@ import {
 import {
   assertPriceReadyForLock,
   assertWarehouseReadyForLock,
+  cancelTraderTrade,
   lockOpenTradeAfterTraderReview,
   completeTraderTradePrice,
   submitTradeToExecution,
@@ -81,6 +82,12 @@ import {
   upsertTradeDraft,
 } from "@/server/trade-drafts";
 import { cancelTradeSettlement, requestTradeSettlement } from "@/server/trade-settlement";
+import {
+  getTradeSettlement,
+  listSettledTrades,
+  raiseSettlementInvoice,
+  voidSettlementInvoice,
+} from "@/server/settlement-billing";
 
 const paymentTypeSchema = z.enum([
   "DP",
@@ -225,7 +232,7 @@ export const traderRouter = router({
       z
         .object({
           status: z.nativeEnum(TradeStatus).optional(),
-          bucket: z.enum(["DRAFTS", "LOCKED", "CLOSED"]).optional(),
+          bucket: z.enum(["DRAFTS", "LOCKED", "CLOSED", "CANCELLED", "SETTLED"]).optional(),
         })
         .optional(),
     )
@@ -250,15 +257,56 @@ export const traderRouter = router({
       const isDraft = (s: TradeStatus) => s === TradeStatus.PENDING;
       const isLocked = (s: TradeStatus) =>
         s === TradeStatus.LOCKED || s === TradeStatus.CONFIRMED;
-      const isClosed = (s: TradeStatus) =>
-        s === TradeStatus.EXECUTED || s === TradeStatus.SETTLED;
+      const isCancelled = (s: TradeStatus) => s === TradeStatus.CANCELLED;
+      // A settled trade is still collecting its money until the ledger is
+      // whole, so it belongs in Settled — not Closed — until it closes.
+      const isSettling = (t: (typeof overlaid)[number]) =>
+        t.directSettled === true && t.settlementClosedAt == null;
+      const isClosed = (t: (typeof overlaid)[number]) =>
+        t.tradeStatus === TradeStatus.EXECUTED ||
+        (t.tradeStatus === TradeStatus.SETTLED && !isSettling(t));
 
       const bucket = input?.bucket;
       if (bucket === "DRAFTS") return overlaid.filter((t) => isDraft(t.tradeStatus));
       if (bucket === "LOCKED") return overlaid.filter((t) => isLocked(t.tradeStatus));
-      if (bucket === "CLOSED") return overlaid.filter((t) => isClosed(t.tradeStatus));
+      if (bucket === "CLOSED") return overlaid.filter(isClosed);
+      if (bucket === "SETTLED") return overlaid.filter((t) => t.directSettled === true);
+      if (bucket === "CANCELLED") return overlaid.filter((t) => isCancelled(t.tradeStatus));
       if (input?.status) return overlaid.filter((t) => t.tradeStatus === input.status);
       return overlaid;
+    }),
+
+  /** Count for the Cancelled tab badge in My Trades. */
+  myCancelledCount: protectedProcedure.query(async ({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    const all = await mockTraderTrades(name);
+    return all.filter((t) => t.tradeStatus === TradeStatus.CANCELLED).length;
+  }),
+
+  cancelTrade: roleProcedure(["TRADER", "ADMIN"])
+    .input(
+      z.object({
+        tradeRef: z.string(),
+        reason: z.string().trim().min(3, "Give a short reason for cancelling"),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const traderName = traderNameFromSession(ctx.session.user);
+        const cancelledBy = ctx.session.user.name ?? ctx.session.user.email ?? traderName;
+        const trade = await cancelTraderTrade(
+          traderName,
+          input.tradeRef.trim(),
+          input.reason,
+          cancelledBy,
+        );
+        return { ok: true as const, trade };
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not cancel trade",
+        });
+      }
     }),
 
   tradeByRef: protectedProcedure
@@ -903,6 +951,95 @@ export const traderRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not cancel settlement",
+        });
+      }
+    }),
+
+  // ─── Settlement collection (settled trades: invoices → vouchers → ledger) ───
+
+  /** Settled trades with collection progress — the Settled tab in My Trades. */
+  settledTrades: protectedProcedure.query(({ ctx }) =>
+    listSettledTrades(traderNameFromSession(ctx.session.user)),
+  ),
+
+  /** Count for the Settled tab badge. */
+  mySettledCount: protectedProcedure.query(async ({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    return (await listSettledTrades(name)).length;
+  }),
+
+  /** Full settlement picture for one settled trade — target, invoices, money in. */
+  tradeSettlement: protectedProcedure
+    .input(z.object({ tradeRef: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      const view = await getTradeSettlement(input.tradeRef.trim());
+      if (!view) return null;
+      if (!traderNamesMatch(view.traderName, canonicalTraderName(name))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "This is not your trade" });
+      }
+      return view;
+    }),
+
+  /** Raise a settlement invoice — posts the receivable onto the ledger. */
+  raiseSettlementInvoice: roleProcedure(["TRADER", "ADMIN"])
+    .input(
+      z.object({
+        tradeRef: z.string(),
+        amountPkr: z.number().positive("Invoice amount must be more than zero"),
+        dueDate: z.date().optional(),
+        note: z.string().trim().max(300).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      const view = await getTradeSettlement(input.tradeRef.trim());
+      if (!view) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "This trade is not settled" });
+      }
+      if (!traderNamesMatch(view.traderName, canonicalTraderName(name))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "This is not your trade" });
+      }
+      try {
+        return await raiseSettlementInvoice({
+          tradeRef: input.tradeRef.trim(),
+          amountPkr: input.amountPkr,
+          dueDate: input.dueDate ?? null,
+          note: input.note ?? null,
+          createdById: ctx.session.user.id,
+          actorName: ctx.session.user.name ?? name,
+        });
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not raise the settlement invoice",
+        });
+      }
+    }),
+
+  /** Void a settlement invoice raised in error — removes its ledger debit. */
+  voidSettlementInvoice: roleProcedure(["TRADER", "ADMIN"])
+    .input(z.object({ tradeRef: z.string(), invoiceId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      const view = await getTradeSettlement(input.tradeRef.trim());
+      if (!view) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "This trade is not settled" });
+      }
+      if (!traderNamesMatch(view.traderName, canonicalTraderName(name))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "This is not your trade" });
+      }
+      try {
+        await voidSettlementInvoice({
+          tradeRef: input.tradeRef.trim(),
+          invoiceId: input.invoiceId,
+          actorName: ctx.session.user.name ?? name,
+        });
+        return { ok: true as const };
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not void the settlement invoice",
         });
       }
     }),

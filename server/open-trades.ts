@@ -441,6 +441,56 @@ export async function updateTraderDraftTrade(
   return result;
 }
 
+/**
+ * Cancel a trade before it is locked. Terminal: a cancelled trade leaves the
+ * execution queue (see `isOpenTrade`) and can no longer be edited or locked.
+ */
+export async function cancelTraderTrade(
+  traderName: string,
+  tradeRef: string,
+  reason: string,
+  cancelledBy: string,
+): Promise<MockTraderTrade> {
+  const trade = await mockTradeByRefGlobal(tradeRef.trim());
+  if (!trade) throw new Error("Trade not found");
+  if (trade.tradeStatus === TradeStatus.CANCELLED) {
+    throw new Error("This trade is already cancelled");
+  }
+  if (trade.settlementRequested === true || trade.directSettled === true) {
+    throw new Error("This trade is in direct settlement — cancel the settlement request first");
+  }
+  // The hard gate: cancellation is only possible before execution locks the trade.
+  if (trade.tradeStatus !== TradeStatus.PENDING) {
+    throw new Error(
+      "Only trades that are not yet locked can be cancelled — this trade is already locked",
+    );
+  }
+  if (!traderNamesMatch(trade.traderName, canonicalTraderName(traderName))) {
+    throw new Error("You can only cancel your own trades");
+  }
+
+  const trimmedReason = reason.trim();
+  const result: MockTraderTrade = {
+    ...trade,
+    tradeStatus: TradeStatus.CANCELLED,
+    // Drop it out of any execution review queue it was sitting in.
+    submittedToExecution: false,
+    pendingTraderReview: false,
+    pendingTraderPrice: false,
+    pendingWarehouseApproval: false,
+  };
+  await upsertBookedTrade(result);
+  await appendTradeActivity(trade.tradeRef, {
+    actorName: cancelledBy,
+    actorSide: "TRADER",
+    kind: "CANCELLED",
+    requiresApproval: false,
+    summary: `Trade cancelled — ${trimmedReason}`,
+    note: trimmedReason,
+  });
+  return result;
+}
+
 /** Apply an approved change-request payload to an open trade. */
 export async function applyOpenTradeEditFromPayload(
   tradeRef: string,
