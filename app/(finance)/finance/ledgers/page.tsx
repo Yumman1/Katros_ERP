@@ -35,7 +35,7 @@ export default function FinanceLedgersPage() {
     <div className="kastros-desk-page">
       <PageHeader
         title="Counterparty Ledgers"
-        subtitle="One ledger account per counterparty per side — sell receivables and buy payables, with balances, available credit, and aging."
+        subtitle="One ledger account per counterparty per side — sell receivables with balances, available credit and aging; buy payables as billed, paid and still to pay."
       />
       <div className="kastros-desk-scroll space-y-4 pb-6">
         {settleError && (

@@ -168,11 +168,14 @@ export type TradeSettlementView = {
 
 /**
  * Money gathered in the ledger against a trade — approved voucher credits.
- * A trade sits on exactly one account, so no side filter is needed.
+ * A trade sits on exactly one account, so no side filter is needed. The
+ * sourceType filter is load-bearing: a purchase trade also carries BUY credits
+ * from paying the seller (sourceType PAYMENT), and money paid out is not money
+ * collected. Only voucher credits settle a trade.
  */
 export async function collectedForTradePkr(tradeRef: string, db: Db = prisma): Promise<number> {
   const agg = await db.counterpartyLedgerEntry.aggregate({
-    where: { tradeRef, entryType: "CREDIT" },
+    where: { tradeRef, entryType: "CREDIT", sourceType: "VOUCHER" },
     _sum: { amountPkr: true },
   });
   return round2(num(agg._sum.amountPkr ?? 0));
@@ -574,7 +577,9 @@ export async function listSettledTrades(traderName?: string): Promise<SettledTra
   const [credits, invoices] = await Promise.all([
     prisma.counterpartyLedgerEntry.groupBy({
       by: ["tradeRef"],
-      where: { tradeRef: { in: refs }, entryType: "CREDIT" },
+      // Voucher credits only — see collectedForTradePkr: paying a seller also
+      // credits the buy account, and that is not settlement money collected.
+      where: { tradeRef: { in: refs }, entryType: "CREDIT", sourceType: "VOUCHER" },
       _sum: { amountPkr: true },
     }),
     prisma.invoice.groupBy({
