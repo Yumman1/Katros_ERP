@@ -42,6 +42,7 @@ export default function ExecutionVouchersPage() {
   const { data: counterparties } = trpc.execution.sellCounterparties.useQuery();
   const { data: vouchers, isLoading } = trpc.execution.vouchers.useQuery(undefined);
 
+  const [side, setSide] = useState<"SELL" | "BUY">("SELL");
   const [counterpartyId, setCounterpartyId] = useState("");
   const [tradeRef, setTradeRef] = useState("");
   const [amount, setAmount] = useState("");
@@ -51,7 +52,7 @@ export default function ExecutionVouchersPage() {
 
   // Open SELL trades of the chosen counterparty — feeds the "against trade" select.
   const { data: sellTrades } = trpc.execution.sellTradesForCounterparty.useQuery(
-    { counterpartyId },
+    { counterpartyId, side },
     { enabled: counterpartyId !== "" },
   );
 
@@ -75,7 +76,13 @@ export default function ExecutionVouchersPage() {
 
   const pagination = useListPagination(vouchers ?? []);
 
-  const canSubmit = counterpartyId !== "" && Number(amount) > 0 && !create.isPending;
+  // A purchase voucher must name the settled trade it pays — there is no
+  // direct-advance pool on the buy side.
+  const canSubmit =
+    counterpartyId !== "" &&
+    Number(amount) > 0 &&
+    (side === "SELL" || tradeRef !== "") &&
+    !create.isPending;
 
   if (isLoading && !vouchers) {
     return (
@@ -108,6 +115,35 @@ export default function ExecutionVouchersPage() {
             <ReceiptText className="h-4 w-4 text-accent-secondary" />
             New payment voucher
           </h2>
+
+          {/* Which ledger the money lands on. A purchase credits the buy
+              account, a sale the sell account — the two never mix. */}
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <div className="exec-segment h-8">
+              {(["SELL", "BUY"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => {
+                    setSide(s);
+                    setTradeRef("");
+                  }}
+                  className={cn(
+                    "exec-segment-item px-3 py-1 text-xs",
+                    side === s && "exec-segment-active",
+                  )}
+                >
+                  {s === "SELL" ? "Sale" : "Purchase"}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-subtle">
+              {side === "SELL"
+                ? "Credits the sell ledger — money received from a buyer."
+                : "Credits the buy ledger — money received on a settled purchase."}
+            </span>
+          </div>
+
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Counterparty
@@ -135,7 +171,11 @@ export default function ExecutionVouchersPage() {
                 disabled={counterpartyId === ""}
                 className="kastros-select kastros-select-sm w-full disabled:opacity-50"
               >
-                <option value="">Direct advance (any trade)</option>
+                {side === "SELL" ? (
+                  <option value="">Direct advance (any trade)</option>
+                ) : (
+                  <option value="">Select settled purchase…</option>
+                )}
                 {(sellTrades ?? []).map((t) => (
                   <option key={t.tradeRef} value={t.tradeRef}>
                     {t.tradeRef} ·{" "}
@@ -198,6 +238,7 @@ export default function ExecutionVouchersPage() {
               onClick={() =>
                 create.mutate({
                   counterpartyId,
+                  side,
                   tradeRef: tradeRef || undefined,
                   amountPkr: Number(amount),
                   method,
@@ -251,15 +292,27 @@ export default function ExecutionVouchersPage() {
                     <div className="font-mono text-subtle">{v.counterpartyCode}</div>
                   </td>
                   <td className="px-5 py-3">
-                    {v.tradeRef ? (
-                      <span className="rounded-full bg-accent-secondary-muted px-2 py-1 font-mono text-[10px] font-bold text-accent-secondary">
-                        Against {v.tradeRef}
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-1 text-[10px] font-bold uppercase",
+                          v.side === "BUY"
+                            ? "bg-warning/15 text-warning"
+                            : "bg-success/15 text-success",
+                        )}
+                      >
+                        {v.side === "BUY" ? "Purchase" : "Sale"}
                       </span>
-                    ) : (
-                      <span className="rounded-full bg-foreground/[0.06] px-2 py-1 text-[10px] font-bold text-muted-foreground">
-                        Direct advance
-                      </span>
-                    )}
+                      {v.tradeRef ? (
+                        <span className="rounded-full bg-accent-secondary-muted px-2 py-1 font-mono text-[10px] font-bold text-accent-secondary">
+                          {v.tradeRef}
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-foreground/[0.06] px-2 py-1 text-[10px] font-bold text-muted-foreground">
+                          Direct advance
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-5 py-3 font-mono font-semibold tabular-nums text-accent-secondary">
                     {fmtPkr(v.amountPkr)}

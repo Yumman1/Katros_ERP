@@ -9,7 +9,9 @@ export type VoucherView = {
   counterpartyId: string;
   counterpartyName: string;
   counterpartyCode: string;
-  /** Sell trade this payment is against; null = direct advance. */
+  /** Ledger account credited — SELL for a sale, BUY for a purchase settlement. */
+  side: "BUY" | "SELL";
+  /** Trade this payment is against; null = direct advance. */
   tradeRef: string | null;
   amountPkr: number;
   method: string | null;
@@ -36,6 +38,7 @@ function voucherRowToView(row: VoucherRow): VoucherView {
     counterpartyId: row.counterpartyId,
     counterpartyName: row.counterparty.name,
     counterpartyCode: row.counterparty.code,
+    side: row.side,
     tradeRef: row.tradeRef,
     amountPkr: num(row.amountPkr),
     method: row.method,
@@ -53,7 +56,9 @@ function voucherRowToView(row: VoucherRow): VoucherView {
 /** Execution enters a payment voucher — pending until finance approves it. */
 export async function createVoucher(input: {
   counterpartyId: string;
-  /** Sell trade the payment is against; null/undefined = direct advance. */
+  /** Ledger account to credit — SELL (a sale) or BUY (a purchase settlement). */
+  side?: "BUY" | "SELL";
+  /** Trade the payment is against; null/undefined = direct advance. */
   tradeRef?: string | null;
   amountPkr: number;
   method?: string | null;
@@ -69,6 +74,7 @@ export async function createVoucher(input: {
     select: { id: true },
   });
   if (!cp) throw new Error("Counterparty not found");
+  const side = input.side ?? "SELL";
   const tradeRef = input.tradeRef?.trim() || null;
   if (tradeRef) {
     const trade = await prisma.trade.findUnique({
@@ -84,25 +90,38 @@ export async function createVoucher(input: {
     if (trade.counterpartyId !== input.counterpartyId) {
       throw new Error(`${tradeRef} does not belong to this counterparty`);
     }
-    // A settled trade is collected the same way whichever side it was booked
-    // on — the counterparty owes the settlement amount, so money comes in.
+    // A settled trade is collected on the account matching its direction, so
+    // the voucher credit meets the settlement invoice's debit.
     if (trade.directSettled) {
       if (trade.settlementClosedAt) {
         throw new Error(
           `${tradeRef} is settled and closed — its full trade amount is already in the ledger`,
         );
       }
+      const want = trade.direction === "BUY" ? "BUY" : "SELL";
+      if (side !== want) {
+        throw new Error(
+          `${tradeRef} is a ${trade.direction} trade — record it as a ${want === "BUY" ? "purchase" : "sale"} so it credits the ${want.toLowerCase()} ledger`,
+        );
+      }
     } else if (trade.direction !== "SELL") {
       throw new Error(
         "Vouchers can only be linked to SELL trades (money coming in) or to settled trades",
       );
+    } else if (side !== "SELL") {
+      throw new Error(`${tradeRef} is a sale — record it as a sale so it credits the sell ledger`);
     }
+  } else if (side !== "SELL") {
+    // A direct advance funds a buyer's future trucks, which only exists on the
+    // sell side; a purchase voucher must name the settled trade it pays.
+    throw new Error("A purchase voucher must be recorded against a settled purchase trade");
   }
   const seq = await nextRef(COUNTER.VOUCHER);
   const row = await prisma.voucher.create({
     data: {
       voucherNo: `VCH-${String(seq).padStart(5, "0")}`,
       counterpartyId: input.counterpartyId,
+      side,
       tradeRef,
       amountPkr: input.amountPkr,
       method: input.method?.trim() || null,
@@ -162,6 +181,7 @@ export async function approveVoucher(
         voucherNo: row!.voucherNo,
         counterpartyId: row!.counterpartyId,
         amountPkr: num(row!.amountPkr),
+        side: row!.side,
         tradeRef: row!.tradeRef,
         note: row!.note,
       },

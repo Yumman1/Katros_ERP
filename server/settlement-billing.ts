@@ -25,6 +25,15 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * Which ledger account a settled trade lives on. A purchase settles on the BUY
+ * account and a sale on the SELL account — the invoice debit and the voucher
+ * credit always meet on the same side, and the two ledgers never mix.
+ */
+export function settlementSideFor(direction: string): "BUY" | "SELL" {
+  return direction === "BUY" ? "BUY" : "SELL";
+}
+
 /** Rounding headroom (PKR) when comparing money totals. */
 const EPSILON = 0.005;
 
@@ -157,10 +166,13 @@ export type TradeSettlementView = {
   pendingVoucherPkr: number;
 };
 
-/** Money gathered in the ledger against a trade — approved voucher credits. */
+/**
+ * Money gathered in the ledger against a trade — approved voucher credits.
+ * A trade sits on exactly one account, so no side filter is needed.
+ */
 export async function collectedForTradePkr(tradeRef: string, db: Db = prisma): Promise<number> {
   const agg = await db.counterpartyLedgerEntry.aggregate({
-    where: { tradeRef, side: "SELL", entryType: "CREDIT" },
+    where: { tradeRef, entryType: "CREDIT" },
     _sum: { amountPkr: true },
   });
   return round2(num(agg._sum.amountPkr ?? 0));
@@ -384,11 +396,12 @@ export async function raiseSettlementInvoice(input: {
         createdById: input.createdById,
       },
     });
-    // The receivable that replaces the outbound truck's debit.
+    // The receivable that replaces the outbound truck's debit — on the buy
+    // account for a purchase, the sell account for a sale.
     await tx.counterpartyLedgerEntry.create({
       data: {
         counterpartyId: trade.counterpartyId,
-        side: "SELL",
+        side: settlementSideFor(trade.direction),
         entryType: "DEBIT",
         amountPkr,
         sourceType: "INVOICE",
@@ -561,7 +574,7 @@ export async function listSettledTrades(traderName?: string): Promise<SettledTra
   const [credits, invoices] = await Promise.all([
     prisma.counterpartyLedgerEntry.groupBy({
       by: ["tradeRef"],
-      where: { tradeRef: { in: refs }, side: "SELL", entryType: "CREDIT" },
+      where: { tradeRef: { in: refs }, entryType: "CREDIT" },
       _sum: { amountPkr: true },
     }),
     prisma.invoice.groupBy({
