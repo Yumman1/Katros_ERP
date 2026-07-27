@@ -303,19 +303,24 @@ function AccountCard({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-5">
-        {AGING_BUCKETS.map((bucket) => (
-          <div
-            key={bucket}
-            className={cn("rounded-lg border px-2.5 py-1.5", agingCellTone(bucket, r.aging[bucket]))}
-          >
-            <div className="text-[10px] font-semibold uppercase tracking-wider opacity-80">
-              {AGING_BUCKET_LABELS[bucket]}
+      {/* Receivables age; payables do not. A purchase is paid outright before
+          the truck is released, so a buy debit is either paid or deliberately
+          held — an aging strip on it would only ever read as overdue. */}
+      {isSell && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-5">
+          {AGING_BUCKETS.map((bucket) => (
+            <div
+              key={bucket}
+              className={cn("rounded-lg border px-2.5 py-1.5", agingCellTone(bucket, r.aging[bucket]))}
+            >
+              <div className="text-[10px] font-semibold uppercase tracking-wider opacity-80">
+                {AGING_BUCKET_LABELS[bucket]}
+              </div>
+              <div className="mt-0.5 truncate text-xs font-bold tabular-nums">{fmtPkr(r.aging[bucket])}</div>
             </div>
-            <div className="mt-0.5 truncate text-xs font-bold tabular-nums">{fmtPkr(r.aging[bucket])}</div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       <button
         type="button"
@@ -340,8 +345,9 @@ function AccountCard({
                   <th className="text-right">Amount</th>
                   <th>Source</th>
                   <th>Trade</th>
-                  <th>Due date</th>
-                  <th>Aging</th>
+                  {/* Payables carry neither — see the aging note above. */}
+                  {isSell && <th>Due date</th>}
+                  {isSell && <th>Aging</th>}
                   <th>Status</th>
                   <th>Note</th>
                   {onSettle && <th />}
@@ -407,12 +413,16 @@ function AccountCard({
                           e.tradeRef ?? "—"
                         )}
                       </td>
-                      <td className="whitespace-nowrap">{e.dueDate ? fmtDate(e.dueDate) : "—"}</td>
-                      <td className="whitespace-nowrap">
-                        {e.agingBucket && e.agingBucket in AGING_BUCKET_LABELS
-                          ? AGING_BUCKET_LABELS[e.agingBucket as AgingBucket]
-                          : "—"}
-                      </td>
+                      {isSell && (
+                        <td className="whitespace-nowrap">{e.dueDate ? fmtDate(e.dueDate) : "—"}</td>
+                      )}
+                      {isSell && (
+                        <td className="whitespace-nowrap">
+                          {e.agingBucket && e.agingBucket in AGING_BUCKET_LABELS
+                            ? AGING_BUCKET_LABELS[e.agingBucket as AgingBucket]
+                            : "—"}
+                        </td>
+                      )}
                       <td className="whitespace-nowrap">{humanizeStage(e.saleStage)}</td>
                       <td className="max-w-[220px] truncate text-muted-foreground" title={e.note ?? undefined}>
                         {e.note ?? "—"}

@@ -576,7 +576,9 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       truckId: e.truckId,
       voucherNo: e.voucher?.voucherNo ?? (e.sourceType === "VOUCHER" ? e.sourceRef : null),
       dueDate: e.dueDate,
-      agingBucket: e.entryType === "DEBIT" ? agingBucketFor(e.dueDate) : null,
+      // Sell-side debits only — payables are paid outright, so they never age.
+      agingBucket:
+        e.entryType === "DEBIT" && e.side === "SELL" ? agingBucketFor(e.dueDate) : null,
       saleStage: stage,
       settlementStatus: invStatus,
       settled,
@@ -614,7 +616,10 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
           // deliberately, and a fully settled debit never ages.
           settledDebit += e.paidPkr;
           const openPkr = Math.max(0, e.amountPkr - e.paidPkr);
-          if (!e.settled && !e.held && openPkr > 0 && e.agingBucket) {
+          // Payables do not age: a purchase is paid outright and the truck is
+          // released, so a buy debit is either paid or deliberately held —
+          // neither is an overdue receivable. Aging is a sell-side measure.
+          if (side === "SELL" && !e.settled && !e.held && openPkr > 0 && e.agingBucket) {
             aging[e.agingBucket] += openPkr;
           }
         } else {
@@ -658,13 +663,17 @@ export type OverdueLedgerAlert = {
 };
 
 /**
- * Debit entries past their due date that are still unsettled — surfaced as
+ * Receivable debits past their due date that are still unsettled — surfaced as
  * alerts on every portal dashboard.
+ *
+ * Sell side only. A payable is paid outright before the truck is released, so
+ * it is never overdue; when the trader holds one back that is a decision, not a
+ * missed payment, and it must not raise an alert.
  */
 export async function getOverdueLedgerAlerts(): Promise<OverdueLedgerAlert[]> {
   const now = new Date();
   const entries = await prisma.counterpartyLedgerEntry.findMany({
-    where: { entryType: "DEBIT", dueDate: { lt: now } },
+    where: { side: "SELL", entryType: "DEBIT", dueDate: { lt: now } },
     include: { counterparty: { select: { name: true, code: true } } },
     orderBy: { dueDate: "asc" },
   });
@@ -681,40 +690,6 @@ export async function getOverdueLedgerAlerts(): Promise<OverdueLedgerAlert[]> {
       )
     : new Map<string, string | null>();
 
-  // Paid buy payables stop alerting: every receipt of the gatepass is PAID.
-  const buyRefs = [
-    ...new Set(entries.filter((e) => e.side === "BUY" && e.sourceRef).map((e) => e.sourceRef!)),
-  ];
-  // Paid payables stop alerting — and so do deliberate holds, which are a
-  // decision the trader has already made rather than a missed payment.
-  const paidGatepasses = new Set<string>();
-  if (buyRefs.length) {
-    const [receipts, heldTrucks] = await Promise.all([
-      prisma.inboundReceipt.findMany({
-        where: { gatepassNo: { in: buyRefs } },
-        select: { gatepassNo: true, status: true },
-      }),
-      prisma.pendingTruck.findMany({
-        where: {
-          gatepassNo: { in: buyRefs },
-          gateInvoiceStage: { in: ["PARTIAL_PAYMENT", "HOLD_OLD_DUES"] },
-        },
-        select: { gatepassNo: true },
-      }),
-    ]);
-    for (const t of heldTrucks) paidGatepasses.add(t.gatepassNo);
-    const byGp = new Map<string, string[]>();
-    for (const r of receipts) {
-      if (!r.gatepassNo) continue;
-      const list = byGp.get(r.gatepassNo) ?? [];
-      list.push(r.status);
-      byGp.set(r.gatepassNo, list);
-    }
-    for (const [gp, statuses] of byGp) {
-      if (statuses.length > 0 && statuses.every((s) => s === "PAID")) paidGatepasses.add(gp);
-    }
-  }
-
   // Settlement receivables that have been collected in full stop alerting.
   const paidInvoices = new Set<string>();
   const invoiceIds = entries.map((e) => e.invoiceId).filter((id): id is string => Boolean(id));
@@ -729,9 +704,6 @@ export async function getOverdueLedgerAlerts(): Promise<OverdueLedgerAlert[]> {
   const settled = new Set<string>(SETTLED_STAGES);
   return entries
     .filter((e) => {
-      if (e.side === "BUY") {
-        return !(e.sourceRef && paidGatepasses.has(e.sourceRef));
-      }
       if (e.invoiceId) return !paidInvoices.has(e.invoiceId);
       if (!e.truckId) return true;
       const stage = stages.get(e.truckId);

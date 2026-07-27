@@ -1,0 +1,36 @@
+# Corn Summer Purchase import
+
+Run these **in numbered order** against the target database. The second file
+updates rows the first one creates, so running it alone does nothing and
+running it first silently leaves every hold unapplied.
+
+```
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f 01-corn-summer-purchase-data.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f 02-corn-summer-purchase-holds.sql
+```
+
+| File | What it does |
+| --- | --- |
+| `01-corn-summer-purchase-data.sql` | Trades, contracts, trucks, gate invoices and inbound receipts from the workbook. |
+| `02-corn-summer-purchase-holds.sql` | Payment holds, split per truck. Sets each receipt's paid amount and each truck's gate-invoice stage. |
+
+Both are idempotent — re-running sets the same absolute values rather than
+accumulating, so a partial or repeated run is safe to redo from the top.
+
+## Why the holds are a separate step
+
+The workbook records a hold once against a whole gate invoice ("1.1M hold /
+Remain released"), but an invoice covers several trucks and the money model
+holds against a truck. Splitting that group figure into per-truck shares is a
+judgement the bulk data file has no room to express, so it lives on its own with
+the arithmetic written out and checkable. See the header of file 02.
+
+## What the import deliberately does not create
+
+Payments in this workbook already happened, so the import writes each receipt's
+paid amount directly instead of replaying the live pipeline (trader approves →
+finance pays). That means no `PaymentRequest` rows and no buy-ledger `CREDIT`
+rows for imported history — matching how the buy side reads: a payable is billed
+by its gatepass debit and settled by its receipt being paid, never by a credit
+row. Money still owed on an imported truck is released through the normal
+trader-approval flow from here on.
