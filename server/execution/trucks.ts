@@ -1309,6 +1309,12 @@ export type TraderInvoiceApprovalRow = {
   remainingPkr: number;
   /** Why the trader is holding the remainder back. */
   holdNote: string | null;
+  /** How many trucks this one gate invoice covers — often more than one. */
+  invoiceTruckCount: number;
+  /** This truck's place in that group, so five cards are not five invoices. */
+  invoiceTruckIndex: number;
+  /** Value of the whole gate invoice across all its trucks (PKR). */
+  invoiceTotalPkr: number;
 };
 
 /**
@@ -1368,6 +1374,39 @@ export async function getTraderInvoiceApprovals(
     }
   }
 
+  // One gate invoice routinely covers several trucks, and each truck is
+  // approved or held on its own. Group by trade + invoice no (invoice numbers
+  // like "21" repeat across counterparties) over every truck of the invoice,
+  // not just the ones still awaiting a decision, so approving one truck does
+  // not shrink the group underneath the others.
+  const invoiceGroups = new Map<string, { gatepassNos: string[]; totalPkr: number }>();
+  const invoiceNos = [...new Set(rows.map((r) => r.gateInvoiceNo!).filter(Boolean))];
+  if (invoiceNos.length) {
+    const siblings = await prisma.pendingTruck.findMany({
+      where: { gateInvoiceNo: { in: invoiceNos } },
+      select: {
+        gatepassNo: true,
+        gateInvoiceNo: true,
+        gateInvoiceAmount: true,
+        assignedTradeRef: true,
+        gateInvoiceTradeRef: true,
+      },
+    });
+    for (const s of siblings) {
+      const ref = s.assignedTradeRef ?? s.gateInvoiceTradeRef;
+      if (!ref || !s.gateInvoiceNo) continue;
+      const key = `${ref}::${s.gateInvoiceNo}`;
+      const group = invoiceGroups.get(key) ?? { gatepassNos: [], totalPkr: 0 };
+      group.gatepassNos.push(s.gatepassNo);
+      group.totalPkr += numOrNull(s.gateInvoiceAmount) ?? 0;
+      invoiceGroups.set(key, group);
+    }
+    for (const group of invoiceGroups.values()) {
+      group.gatepassNos.sort();
+      group.totalPkr = Math.round(group.totalPkr * 100) / 100;
+    }
+  }
+
   const result: TraderInvoiceApprovalRow[] = [];
   for (const r of rows) {
     const tradeRef = r.assignedTradeRef ?? r.gateInvoiceTradeRef;
@@ -1398,6 +1437,13 @@ export async function getTraderInvoiceApprovals(
         return Math.round(Math.max(0, due - (m?.paid ?? 0)) * 100) / 100;
       })(),
       holdNote: r.gateInvoiceHoldNote,
+      invoiceTruckCount: invoiceGroups.get(`${tradeRef}::${r.gateInvoiceNo}`)?.gatepassNos.length ?? 1,
+      invoiceTruckIndex:
+        (invoiceGroups.get(`${tradeRef}::${r.gateInvoiceNo}`)?.gatepassNos.indexOf(r.gatepassNo) ??
+          0) + 1,
+      invoiceTotalPkr:
+        invoiceGroups.get(`${tradeRef}::${r.gateInvoiceNo}`)?.totalPkr ??
+        (numOrNull(r.gateInvoiceAmount) ?? 0),
     });
   }
   return result;

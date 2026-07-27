@@ -25,6 +25,9 @@ type ApprovalRow = {
   paidPkr: number;
   remainingPkr: number;
   holdNote: string | null;
+  invoiceTruckCount: number;
+  invoiceTruckIndex: number;
+  invoiceTotalPkr: number;
 };
 
 export default function TraderInvoiceApprovalsPage() {
@@ -144,6 +147,7 @@ function InvoiceCard({
 }) {
   const isPending = row.stage === "PENDING_TRADE_APPROVAL";
   const isPartial = row.stage === "PARTIAL_PAYMENT";
+  const multiTruck = row.invoiceTruckCount > 1;
   const busy = resolve.isPending && resolve.variables?.truckId === row.truckId;
   const errorHere = resolve.error && resolve.variables?.truckId === row.truckId;
 
@@ -172,12 +176,25 @@ function InvoiceCard({
           </span>
         </div>
         <div className="text-right">
-          <div className="text-[10px] uppercase tracking-wider text-subtle">Amount due</div>
+          <div className="text-[10px] uppercase tracking-wider text-subtle">
+            {multiTruck ? "Amount due — this truck" : "Amount due"}
+          </div>
           <div className="tabular-nums text-lg font-bold text-foreground">
             {formatCurrency(row.amountPkr, "PKR")}
           </div>
         </div>
       </div>
+
+      {/* One invoice, many trucks: pay or hold each truck on its own, so a
+          single hold figure quoted for the invoice has to be split per truck. */}
+      {multiTruck && (
+        <p className="mt-2 text-[11px] text-subtle">
+          Truck {row.invoiceTruckIndex} of {row.invoiceTruckCount} on invoice{" "}
+          <span className="font-mono">{row.invoiceNo}</span> (whole invoice{" "}
+          {formatCurrency(row.invoiceTotalPkr, "PKR")}) — approving or holding here applies to this
+          truck only.
+        </p>
+      )}
 
       {/* Paid out of the total, so a held remainder is never invisible. */}
       {row.paidPkr > 0 && (
@@ -287,7 +304,11 @@ function InvoiceCard({
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="e.g. 1M held against old dues"
+              placeholder={
+                multiTruck
+                  ? "e.g. this truck's share of the 1M held against old dues"
+                  : "e.g. 1M held against old dues"
+              }
               className="kastros-input kastros-input-sm w-full"
             />
           </label>
@@ -310,7 +331,7 @@ function InvoiceCard({
         <p className="mt-2 text-[11px] text-subtle">
           {overRemaining ? (
             <span className="text-destructive">
-              Only {formatCurrency(row.remainingPkr, "PKR")} is still unpaid on this invoice.
+              Only {formatCurrency(row.remainingPkr, "PKR")} is still unpaid on this truck.
             </span>
           ) : (
             <>
