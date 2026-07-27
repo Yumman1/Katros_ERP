@@ -170,10 +170,33 @@ export async function approvePayment(
     if (updated.count === 0) throw new Error(`Cannot approve status ${pr.status}`);
 
     if (pr.sourceType === "INBOUND") {
-      await tx.inboundReceipt.updateMany({
+      // Money actually paid accumulates; the receipt is only PAID once it
+      // covers the amount due, so a held remainder keeps it partially paid.
+      const receipt = await tx.inboundReceipt.findUnique({
         where: { id: pr.sourceId },
-        data: { status: "PAID" },
+        select: { amountDue: true, paidAmountPkr: true, gatepassNo: true },
       });
+      if (receipt) {
+        const paid = Math.round((num(receipt.paidAmountPkr) + num(pr.amount)) * 100) / 100;
+        const fully = paid + 0.005 >= num(receipt.amountDue);
+        await tx.inboundReceipt.updateMany({
+          where: { id: pr.sourceId },
+          data: { paidAmountPkr: paid, status: fully ? "PAID" : "PARTIALLY_PAID" },
+        });
+        // Once every receipt of the truck is settled the invoice is no longer
+        // partly held — it reads as fully approved in the gate register.
+        if (fully && receipt.gatepassNo) {
+          const stillOwed = await tx.inboundReceipt.count({
+            where: { gatepassNo: receipt.gatepassNo, status: { not: "PAID" } },
+          });
+          if (stillOwed === 0) {
+            await tx.pendingTruck.updateMany({
+              where: { gatepassNo: receipt.gatepassNo, gateInvoiceStage: "PARTIAL_PAYMENT" },
+              data: { gateInvoiceStage: "PAYMENT_APPROVED" },
+            });
+          }
+        }
+      }
     } else if (pr.sourceType === "OUTBOUND") {
       /* stays FINANCE_PENDING until releaseOutbound */
     } else if (pr.sourceType === "SPOT") {

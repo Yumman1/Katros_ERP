@@ -730,6 +730,9 @@ enum GateInvoiceStage {
   PENDING_TRADE_APPROVAL
   HOLD_OLD_DUES
   WRONG_INVOICING
+  /// Trader released part of the invoice and is holding the remainder — the
+  /// truck stays in their queue until the rest is released.
+  PARTIAL_PAYMENT
   PAYMENT_APPROVED
 }
 
@@ -800,6 +803,8 @@ model PendingTruck {
   gateInvoiceStage     GateInvoiceStage?
   /// Expected invoice amount (PKR) computed at trade assignment — net warehouse weight × contract rate.
   gateInvoiceExpectedPkr Decimal? @db.Decimal(20, 4)
+  /// Why the trader is holding back part (or all) of this invoice.
+  gateInvoiceHoldNote    String?
 
   // ── Outbound sale payment workflow (movementType = OUTBOUND) ──
   /// Sale value before tax: dispatched weight × contract rate (PKR).
@@ -865,6 +870,8 @@ enum InboundReceiptStatus {
   DRAFT
   ALLOCATED
   FINANCE_PENDING
+  /// Part of the amount due has been paid; the trader is holding the rest.
+  PARTIALLY_PAID
   PAID
 }
 
@@ -904,6 +911,9 @@ model InboundReceipt {
   allocatedQtyMt     Decimal @db.Decimal(20, 6)
   fifoOverrideReason String?
   amountDue          Decimal @default(0) @db.Decimal(20, 4)
+  /// Running total actually paid to the seller — equals amountDue once fully
+  /// paid, less while the trader is holding part of it back.
+  paidAmountPkr      Decimal @default(0) @db.Decimal(20, 4)
   status             InboundReceiptStatus @default(DRAFT)
   paymentRequestId String?
   paymentRequest   PaymentRequest? @relation(fields: [paymentRequestId], references: [id], onDelete: SetNull)

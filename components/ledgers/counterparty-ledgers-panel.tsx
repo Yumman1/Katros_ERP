@@ -23,6 +23,10 @@ export type LedgerEntryRow = {
   settlementStatus?: string | null;
   /** DEBIT rows whose money has already moved — not outstanding. */
   settled?: boolean;
+  /** DEBIT rows: how much of this entry has actually been paid. */
+  paidPkr?: number;
+  /** Buy debits the trader is deliberately holding — held money never ages. */
+  held?: boolean;
   note: string | null;
 };
 
@@ -364,11 +368,22 @@ function AccountCard({
                         >
                           {e.entryType}
                         </span>
-                        {e.settled && (
+                        {e.settled ? (
                           <span className="ml-1.5 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase text-success">
                             Paid
                           </span>
-                        )}
+                        ) : e.paidPkr ? (
+                          <span
+                            className="ml-1.5 rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-bold uppercase text-warning"
+                            title={`${fmtPkr(e.paidPkr)} paid, ${fmtPkr(e.amountPkr - e.paidPkr)} held`}
+                          >
+                            Part paid
+                          </span>
+                        ) : e.held ? (
+                          <span className="ml-1.5 rounded-full bg-foreground/[0.08] px-2 py-0.5 text-[10px] font-bold uppercase text-subtle">
+                            Held
+                          </span>
+                        ) : null}
                       </td>
                       <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(e.amountPkr)}</td>
                       <td className="whitespace-nowrap">

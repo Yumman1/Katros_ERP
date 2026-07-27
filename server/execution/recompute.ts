@@ -42,10 +42,12 @@ export async function recomputeTradeLinkedAmounts(tradeRef: string): Promise<voi
 
   for (const truck of trucks) {
     if (truck.movementType === "INBOUND") {
-      // Approved / trader-held invoices are locked — never recompute them.
+      // Approved, held, or partly-paid invoices are locked — never recompute
+      // them; money has already moved against a partly-paid one.
       if (
         truck.gateInvoiceStage === "PAYMENT_APPROVED" ||
-        truck.gateInvoiceStage === "HOLD_OLD_DUES"
+        truck.gateInvoiceStage === "HOLD_OLD_DUES" ||
+        truck.gateInvoiceStage === "PARTIAL_PAYMENT"
       ) {
         continue;
       }

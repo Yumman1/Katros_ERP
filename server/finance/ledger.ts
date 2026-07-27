@@ -417,8 +417,12 @@ export type LedgerEntryView = {
   saleStage: string | null;
   /** For settlement-invoice debits: collection status of that invoice. */
   settlementStatus: string | null;
-  /** DEBIT rows: the money behind this entry has moved, so it is not outstanding. */
+  /** DEBIT rows: the money behind this entry has moved in full. */
   settled: boolean;
+  /** DEBIT rows: how much of this entry has actually been paid. */
+  paidPkr: number;
+  /** Buy debits the trader is holding back — held money never ages. */
+  held: boolean;
   note: string | null;
 };
 
@@ -497,17 +501,32 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     ),
   ];
   const paidGatepasses = new Set<string>();
+  /** Money actually paid per gatepass — a partly-released truck counts only its paid part. */
+  const paidByGatepass = new Map<string, number>();
+  /** Gatepasses the trader is deliberately holding — a hold never ages. */
+  const heldGatepasses = new Set<string>();
   if (buyGatepassRefs.length) {
-    const receipts = await prisma.inboundReceipt.findMany({
-      where: { gatepassNo: { in: buyGatepassRefs } },
-      select: { gatepassNo: true, status: true },
-    });
+    const [receipts, heldTrucks] = await Promise.all([
+      prisma.inboundReceipt.findMany({
+        where: { gatepassNo: { in: buyGatepassRefs } },
+        select: { gatepassNo: true, status: true, paidAmountPkr: true },
+      }),
+      prisma.pendingTruck.findMany({
+        where: {
+          gatepassNo: { in: buyGatepassRefs },
+          gateInvoiceStage: { in: ["PARTIAL_PAYMENT", "HOLD_OLD_DUES"] },
+        },
+        select: { gatepassNo: true },
+      }),
+    ]);
+    for (const t of heldTrucks) heldGatepasses.add(t.gatepassNo);
     const byGp = new Map<string, string[]>();
     for (const r of receipts) {
       if (!r.gatepassNo) continue;
       const list = byGp.get(r.gatepassNo) ?? [];
       list.push(r.status);
       byGp.set(r.gatepassNo, list);
+      paidByGatepass.set(r.gatepassNo, (paidByGatepass.get(r.gatepassNo) ?? 0) + num(r.paidAmountPkr));
     }
     for (const [gp, statuses] of byGp) {
       if (statuses.length > 0 && statuses.every((s) => s === "PAID")) paidGatepasses.add(gp);
@@ -524,6 +543,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     // no credit row to wait for; on the sell side it is the truck being paid,
     // or a settlement invoice fully collected.
     const invStatus = (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) ?? null;
+    const amountPkr = num(e.amountPkr);
     const settled =
       e.entryType === "DEBIT" &&
       (e.sourceType === "INVOICE"
@@ -531,6 +551,19 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
         : e.side === "BUY"
           ? e.sourceRef != null && paidGatepasses.has(e.sourceRef)
           : stage != null && settledStages.has(stage));
+    // How much of this debit the money has actually covered. On the buy side
+    // that is the amount paid against the gatepass, so a part-released truck
+    // shows its paid share rather than all-or-nothing.
+    const paidPkr =
+      e.entryType !== "DEBIT"
+        ? 0
+        : e.side === "BUY" && e.sourceType === "GATEPASS"
+          ? Math.min(amountPkr, e.sourceRef ? (paidByGatepass.get(e.sourceRef) ?? 0) : 0)
+          : settled
+            ? amountPkr
+            : 0;
+    // A deliberate hold is a decision, not an overdue payable — it never ages.
+    const held = e.side === "BUY" && e.sourceRef != null && heldGatepasses.has(e.sourceRef);
 
     const view: LedgerEntryView = {
       id: e.id,
@@ -547,6 +580,8 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       saleStage: stage,
       settlementStatus: invStatus,
       settled,
+      paidPkr,
+      held,
       note: e.note,
     };
     const key = `${e.counterpartyId}:${e.side}`;
@@ -575,9 +610,13 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
           if (side === "SELL" && ((stage && earmarkStages.has(stage)) || e.sourceType === "INVOICE")) {
             earmarked += e.amountPkr;
           }
-          // Settled debits are done — they neither age nor count as owed.
-          if (e.settled) settledDebit += e.amountPkr;
-          else if (e.agingBucket) aging[e.agingBucket] += e.amountPkr;
+          // Paid money is not owed; what is left ages unless it is being held
+          // deliberately, and a fully settled debit never ages.
+          settledDebit += e.paidPkr;
+          const openPkr = Math.max(0, e.amountPkr - e.paidPkr);
+          if (!e.settled && !e.held && openPkr > 0 && e.agingBucket) {
+            aging[e.agingBucket] += openPkr;
+          }
         } else {
           totalCredit += e.amountPkr;
         }
@@ -646,12 +685,24 @@ export async function getOverdueLedgerAlerts(): Promise<OverdueLedgerAlert[]> {
   const buyRefs = [
     ...new Set(entries.filter((e) => e.side === "BUY" && e.sourceRef).map((e) => e.sourceRef!)),
   ];
+  // Paid payables stop alerting — and so do deliberate holds, which are a
+  // decision the trader has already made rather than a missed payment.
   const paidGatepasses = new Set<string>();
   if (buyRefs.length) {
-    const receipts = await prisma.inboundReceipt.findMany({
-      where: { gatepassNo: { in: buyRefs } },
-      select: { gatepassNo: true, status: true },
-    });
+    const [receipts, heldTrucks] = await Promise.all([
+      prisma.inboundReceipt.findMany({
+        where: { gatepassNo: { in: buyRefs } },
+        select: { gatepassNo: true, status: true },
+      }),
+      prisma.pendingTruck.findMany({
+        where: {
+          gatepassNo: { in: buyRefs },
+          gateInvoiceStage: { in: ["PARTIAL_PAYMENT", "HOLD_OLD_DUES"] },
+        },
+        select: { gatepassNo: true },
+      }),
+    ]);
+    for (const t of heldTrucks) paidGatepasses.add(t.gatepassNo);
     const byGp = new Map<string, string[]>();
     for (const r of receipts) {
       if (!r.gatepassNo) continue;
