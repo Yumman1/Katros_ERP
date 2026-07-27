@@ -1405,8 +1405,12 @@ model Voucher {
   voucherNo      String        @unique
   counterpartyId String
   counterparty   Counterparty  @relation(fields: [counterpartyId], references: [id], onDelete: Cascade)
-  /// Sell trade this payment is against; null = direct advance (usable for
-  /// any of the buyer's trades). Shown on every ledger entry.
+  /// Which ledger account this voucher credits — SELL for money received on a
+  /// sale, BUY for money on a purchase (a settled purchase collects here, so
+  /// the two sides never mix).
+  side           CounterpartySide @default(SELL)
+  /// Trade this payment is against; null = direct advance (usable for any of
+  /// the counterparty's trades). Shown on every ledger entry.
   tradeRef       String?
   amountPkr      Decimal       @db.Decimal(20, 2)
   /// Payment method (bank transfer, cheque, cash, …).

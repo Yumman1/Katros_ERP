@@ -869,15 +869,26 @@ export const executionRouter = router({
    * ever reaches the ledger.
    */
   sellTradesForCounterparty: roleProcedure([...execRoles, Role.FINANCE])
-    .input(z.object({ counterpartyId: z.string().min(1) }))
+    .input(
+      z.object({
+        counterpartyId: z.string().min(1),
+        /** SELL lists sale trades; BUY lists settled purchases. */
+        side: z.enum(["BUY", "SELL"]).optional(),
+      }),
+    )
     .query(async ({ input }) => {
       const trades = await prisma.trade.findMany({
         where: {
           counterpartyId: input.counterpartyId,
-          OR: [
-            { direction: "SELL", tradeStatus: { in: ["LOCKED", "CONFIRMED", "PENDING"] } },
-            { directSettled: true, settlementClosedAt: null },
-          ],
+          ...(input.side === "BUY"
+            ? // Money on a purchase only arrives through settlement.
+              { direction: "BUY", directSettled: true, settlementClosedAt: null }
+            : {
+                OR: [
+                  { direction: "SELL", tradeStatus: { in: ["LOCKED", "CONFIRMED", "PENDING"] } },
+                  { direction: "SELL", directSettled: true, settlementClosedAt: null },
+                ],
+              }),
         },
         orderBy: { tradeDate: "desc" },
         select: {
@@ -903,7 +914,9 @@ export const executionRouter = router({
     .input(
       z.object({
         counterpartyId: z.string().min(1),
-        /** Sell trade the payment is against; omit for a direct advance. */
+        /** Ledger account to credit — SELL (sale) or BUY (purchase settlement). */
+        side: z.enum(["BUY", "SELL"]).optional(),
+        /** Trade the payment is against; omit for a direct advance. */
         tradeRef: z.string().optional(),
         amountPkr: z.number().positive(),
         method: z.string().optional(),

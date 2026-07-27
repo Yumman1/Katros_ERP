@@ -96,14 +96,19 @@ export async function removeSaleDebitForTruck(truckId: string, db: Db = prisma):
   await db.counterpartyLedgerEntry.deleteMany({ where: { truckId } });
 }
 
-/** Post the SELL-side CREDIT for a finance-approved voucher (idempotent on voucherId). */
+/**
+ * Post the CREDIT for a finance-approved voucher (idempotent on voucherId) on
+ * the voucher's own side — SELL for a sale, BUY for a purchase settlement.
+ */
 export async function postCreditForVoucher(
   input: {
     voucherId: string;
     voucherNo: string;
     counterpartyId: string;
     amountPkr: number;
-    /** Sell trade the payment is against; null = direct advance. */
+    /** Ledger account to credit; defaults to the sell account. */
+    side?: CounterpartySide;
+    /** Trade the payment is against; null = direct advance. */
     tradeRef?: string | null;
     note?: string | null;
   },
@@ -117,7 +122,7 @@ export async function postCreditForVoucher(
   await db.counterpartyLedgerEntry.create({
     data: {
       counterpartyId: input.counterpartyId,
-      side: "SELL",
+      side: input.side ?? "SELL",
       entryType: "CREDIT",
       amountPkr: input.amountPkr,
       sourceType: "VOUCHER",
@@ -518,13 +523,14 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     // that is the receipt reaching PAID through the payment process — there is
     // no credit row to wait for; on the sell side it is the truck being paid,
     // or a settlement invoice fully collected.
+    const invStatus = (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) ?? null;
     const settled =
       e.entryType === "DEBIT" &&
-      (e.side === "BUY"
-        ? e.sourceRef != null && paidGatepasses.has(e.sourceRef)
-        : (stage != null && settledStages.has(stage)) ||
-          (e.sourceType === "INVOICE" &&
-            (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) === "PAID"));
+      (e.sourceType === "INVOICE"
+        ? invStatus === "PAID"
+        : e.side === "BUY"
+          ? e.sourceRef != null && paidGatepasses.has(e.sourceRef)
+          : stage != null && settledStages.has(stage));
 
     const view: LedgerEntryView = {
       id: e.id,
@@ -539,7 +545,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       dueDate: e.dueDate,
       agingBucket: e.entryType === "DEBIT" ? agingBucketFor(e.dueDate) : null,
       saleStage: stage,
-      settlementStatus: (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) ?? null,
+      settlementStatus: invStatus,
       settled,
       note: e.note,
     };
