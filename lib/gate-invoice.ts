@@ -3,6 +3,7 @@ export const GATE_INVOICE_STAGES = [
   "PENDING_TRADE_APPROVAL",
   "HOLD_OLD_DUES",
   "WRONG_INVOICING",
+  "PARTIAL_PAYMENT",
   "PAYMENT_APPROVED",
 ] as const;
 
@@ -12,5 +13,6 @@ export const GATE_INVOICE_STAGE_LABELS: Record<GateInvoiceStage, string> = {
   PENDING_TRADE_APPROVAL: "Pending trade approval",
   HOLD_OLD_DUES: "Hold due to old dues",
   WRONG_INVOICING: "Wrong invoicing",
+  PARTIAL_PAYMENT: "Part paid — remainder held",
   PAYMENT_APPROVED: "Payment approved",
 };

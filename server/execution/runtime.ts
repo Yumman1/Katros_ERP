@@ -174,7 +174,12 @@ export type ExecutionContract = {
   deliveryEnd: Date | null;
 };
 
-export type InboundReceiptStatus = "DRAFT" | "ALLOCATED" | "FINANCE_PENDING" | "PAID";
+export type InboundReceiptStatus =
+  | "DRAFT"
+  | "ALLOCATED"
+  | "FINANCE_PENDING"
+  | "PARTIALLY_PAID"
+  | "PAID";
 export type OutboundDispatchStatus = "AT_GATE" | "WEIGHED" | "FINANCE_PENDING" | "RELEASED";
 export type SpotPurchaseState =
   | "CONTRACT"

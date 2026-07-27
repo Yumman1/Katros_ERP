@@ -115,6 +115,70 @@ async function main() {
   );
   expect("a zero-value trade never auto-closes", !settlementCovered(0, 0), "0/0");
 
+  // ── Partial inbound payment: releasing part and holding the rest ──
+  // Mirrors traderResolveGateInvoice's split across a truck's receipts.
+  const release = (
+    receipts: Array<{ due: number; paid: number }>,
+    amount: number,
+  ): number[] => {
+    let left = amount;
+    return receipts.map((r) => {
+      const owed = Math.max(0, r.due - r.paid);
+      if (left <= 0.005 || owed <= 0.005) return 0;
+      const take = Math.round(Math.min(owed, left) * 100) / 100;
+      left = Math.round((left - take) * 100) / 100;
+      return take;
+    });
+  };
+
+  const oneTruck = release([{ due: 1_000_000, paid: 0 }], 600_000);
+  expect(
+    "a partial release asks finance for only the released amount",
+    oneTruck[0] === 600_000,
+    `requested ${oneTruck[0]?.toLocaleString("en-PK")}`,
+  );
+
+  const second = release([{ due: 1_000_000, paid: 600_000 }], 250_000);
+  expect(
+    "a later release draws against what is still owed",
+    second[0] === 250_000,
+    `requested ${second[0]?.toLocaleString("en-PK")} of 400,000 owed`,
+  );
+
+  const finish = release([{ due: 1_000_000, paid: 850_000 }], 150_000);
+  expect(
+    "the final release clears the remainder exactly",
+    finish[0] === 150_000 && 850_000 + finish[0]! === 1_000_000,
+    `850,000 + ${finish[0]?.toLocaleString("en-PK")} = 1,000,000`,
+  );
+
+  const spread = release(
+    [
+      { due: 400_000, paid: 0 },
+      { due: 600_000, paid: 0 },
+    ],
+    500_000,
+  );
+  expect(
+    "a release spanning two receipts fills the oldest first",
+    spread[0] === 400_000 && spread[1] === 100_000,
+    `${spread[0]?.toLocaleString("en-PK")} + ${spread[1]?.toLocaleString("en-PK")}`,
+  );
+
+  const capped = release([{ due: 1_000_000, paid: 900_000 }], 500_000);
+  expect(
+    "a release never draws more than a receipt still owes",
+    capped[0] === 100_000,
+    `capped at ${capped[0]?.toLocaleString("en-PK")}`,
+  );
+
+  const settledAlready = release([{ due: 1_000_000, paid: 1_000_000 }], 50_000);
+  expect(
+    "a fully paid receipt takes nothing further",
+    settledAlready[0] === 0,
+    `took ${settledAlready[0]}`,
+  );
+
   console.log("");
   for (const [label, ok, detail] of checks) {
     console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}\n        ${detail}`);

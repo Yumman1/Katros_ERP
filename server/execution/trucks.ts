@@ -1240,10 +1240,29 @@ export async function getGateInvoiceSummary(tradeRef: string): Promise<GateInvoi
     stage: r.gateInvoiceStage ?? "PENDING_TRADE_APPROVAL",
     truckNo: r.truckNo,
   }));
-  const approvedPkr = invoices.reduce(
-    (sum, inv) => (inv.stage === "PAYMENT_APPROVED" ? sum + inv.amount : sum),
-    0,
-  );
+  // Money actually released, not whole invoices — a partly-released truck
+  // must contribute only the part the trader let through.
+  const gatepassNos = rows.map((r) => r.gatepassNo);
+  const paidByGatepass = new Map<string, number>();
+  if (gatepassNos.length) {
+    const receipts = await prisma.inboundReceipt.findMany({
+      where: { gatepassNo: { in: gatepassNos } },
+      select: { gatepassNo: true, paidAmountPkr: true },
+    });
+    for (const r of receipts) {
+      if (!r.gatepassNo) continue;
+      paidByGatepass.set(r.gatepassNo, (paidByGatepass.get(r.gatepassNo) ?? 0) + num(r.paidAmountPkr));
+    }
+  }
+  const approvedPkr =
+    Math.round(
+      invoices.reduce((sum, inv) => {
+        const paid = paidByGatepass.get(inv.gatepassNo);
+        if (paid != null) return sum + Math.min(inv.amount, paid);
+        // No receipt yet — an approved invoice still counts at face value.
+        return inv.stage === "PAYMENT_APPROVED" ? sum + inv.amount : sum;
+      }, 0) * 100,
+    ) / 100;
 
   return { approvedPkr, totalTradeValuePkr, invoices };
 }
@@ -1253,12 +1272,15 @@ export async function getGateInvoiceSummary(tradeRef: string): Promise<GateInvoi
 /** Gate-invoice stages a trader can act on from the Invoice approvals page. */
 export type TraderApprovableStage = Extract<
   GateInvoiceStage,
-  "PENDING_TRADE_APPROVAL" | "HOLD_OLD_DUES"
+  "PENDING_TRADE_APPROVAL" | "HOLD_OLD_DUES" | "PARTIAL_PAYMENT"
 >;
 
+// A partly-released invoice stays in the trader's queue so the held remainder
+// can be released later, in as many steps as it takes.
 const TRADER_APPROVABLE_STAGES: TraderApprovableStage[] = [
   "PENDING_TRADE_APPROVAL",
   "HOLD_OLD_DUES",
+  "PARTIAL_PAYMENT",
 ];
 
 /** Thrown when an invoice does not belong to the acting trader's trade (maps to FORBIDDEN). */
@@ -1281,6 +1303,12 @@ export type TraderInvoiceApprovalRow = {
   commodityName: string;
   /** trade.quantity × (pricePerCanonicalQty ?? price) + commission. */
   totalTradePricePkr: number;
+  /** Already paid to the seller against this truck. */
+  paidPkr: number;
+  /** Still unpaid — the ceiling on the next release. */
+  remainingPkr: number;
+  /** Why the trader is holding the remainder back. */
+  holdNote: string | null;
 };
 
 /**
@@ -1323,6 +1351,23 @@ export async function getTraderInvoiceApprovals(
   });
   const tradeByRef = new Map(trades.map((t) => [t.tradeRef, t]));
 
+  // Paid / still-owed per truck, so the trader sees what is left to release.
+  const money = new Map<string, { paid: number; due: number }>();
+  const gpNos = rows.map((r) => r.gatepassNo);
+  if (gpNos.length) {
+    const receipts = await prisma.inboundReceipt.findMany({
+      where: { gatepassNo: { in: gpNos } },
+      select: { gatepassNo: true, amountDue: true, paidAmountPkr: true },
+    });
+    for (const rec of receipts) {
+      if (!rec.gatepassNo) continue;
+      const m = money.get(rec.gatepassNo) ?? { paid: 0, due: 0 };
+      m.paid += num(rec.paidAmountPkr);
+      m.due += num(rec.amountDue);
+      money.set(rec.gatepassNo, m);
+    }
+  }
+
   const result: TraderInvoiceApprovalRow[] = [];
   for (const r of rows) {
     const tradeRef = r.assignedTradeRef ?? r.gateInvoiceTradeRef;
@@ -1345,6 +1390,14 @@ export async function getTraderInvoiceApprovals(
       totalTradePricePkr:
         num(trade.quantity) * (numOrNull(trade.pricePerCanonicalQty) ?? num(trade.price)) +
         (numOrNull(trade.commissionAmount) ?? 0),
+      paidPkr: Math.round((money.get(r.gatepassNo)?.paid ?? 0) * 100) / 100,
+      // Before a receipt exists the invoice amount is all there is to release.
+      remainingPkr: (() => {
+        const m = money.get(r.gatepassNo);
+        const due = m?.due ?? (numOrNull(r.gateInvoiceAmount) ?? 0);
+        return Math.round(Math.max(0, due - (m?.paid ?? 0)) * 100) / 100;
+      })(),
+      holdNote: r.gateInvoiceHoldNote,
     });
   }
   return result;
@@ -1359,17 +1412,15 @@ export async function getTraderInvoiceApprovals(
 export async function traderResolveGateInvoice(
   traderName: string,
   truckId: string,
-  decision: "APPROVE" | "HOLD",
+  decision: "APPROVE" | "HOLD" | "PARTIAL",
+  opts?: { amountPkr?: number; note?: string | null },
 ): Promise<PendingTruck> {
   const row = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
   if (!row) throw new Error("Gate entry not found");
   if (!row.gateInvoiceNo) {
     throw new Error("This gate entry has no invoice yet");
   }
-  if (
-    row.gateInvoiceStage !== "PENDING_TRADE_APPROVAL" &&
-    row.gateInvoiceStage !== "HOLD_OLD_DUES"
-  ) {
+  if (!TRADER_APPROVABLE_STAGES.includes(row.gateInvoiceStage as TraderApprovableStage)) {
     throw new Error("This invoice is not awaiting trade approval");
   }
 
@@ -1383,7 +1434,36 @@ export async function traderResolveGateInvoice(
     );
   }
 
-  const stage: GateInvoiceStage = decision === "APPROVE" ? "PAYMENT_APPROVED" : "HOLD_OLD_DUES";
+  // What is still unpaid across this truck's receipts — the ceiling on any
+  // release, and what stays held when the trader pays only part of it.
+  const receipts = await prisma.inboundReceipt.findMany({
+    where: { gatepassNo: row.gatepassNo, status: { not: "PAID" } },
+    orderBy: { receiveDate: "asc" },
+    select: { id: true, amountDue: true, paidAmountPkr: true },
+  });
+  const remainingPkr =
+    Math.round(
+      receipts.reduce((s, r) => s + Math.max(0, num(r.amountDue) - num(r.paidAmountPkr)), 0) * 100,
+    ) / 100;
+
+  let releasePkr = remainingPkr;
+  if (decision === "PARTIAL") {
+    const want = Math.round((opts?.amountPkr ?? 0) * 100) / 100;
+    if (!Number.isFinite(want) || want <= 0) {
+      throw new Error("Enter the amount to pay now");
+    }
+    if (want > remainingPkr + 0.005) {
+      throw new Error(
+        `Only ${remainingPkr.toLocaleString("en-PK")} PKR is still unpaid on this invoice`,
+      );
+    }
+    releasePkr = want;
+  }
+  // Paying the whole remainder is a full approval, not a partial one.
+  const fullRelease = decision === "APPROVE" || releasePkr + 0.005 >= remainingPkr;
+  const stage: GateInvoiceStage =
+    decision === "HOLD" ? "HOLD_OLD_DUES" : fullRelease ? "PAYMENT_APPROVED" : "PARTIAL_PAYMENT";
+
   // Guarded update — only flips the stage if the invoice is still approvable.
   const updated = await prisma.pendingTruck.updateMany({
     where: {
@@ -1391,24 +1471,31 @@ export async function traderResolveGateInvoice(
       gateInvoiceNo: { not: null },
       gateInvoiceStage: { in: TRADER_APPROVABLE_STAGES },
     },
-    data: { gateInvoiceStage: stage },
+    data: {
+      gateInvoiceStage: stage,
+      gateInvoiceHoldNote:
+        decision === "APPROVE" ? null : (opts?.note?.trim() || row.gateInvoiceHoldNote) ?? null,
+    },
   });
   if (updated.count === 0) {
     throw new Error("Invoice stage changed in the meantime — refresh and try again");
   }
 
-  // Connected flow: trader approval automatically raises the finance payment
-  // request for every allocated receipt of this truck — finance approval then
-  // pays it, posts the buy-ledger credit and puts it in the gate register.
-  if (decision === "APPROVE") {
-    const receipts = await prisma.inboundReceipt.findMany({
-      where: { gatepassNo: row.gatepassNo, status: "ALLOCATED" },
-      select: { id: true },
-    });
+  // Connected flow: a release raises the finance payment request for this
+  // truck's receipts — finance approval then pays it, posts the buy-ledger
+  // credit and puts it in the gate register. A partial release asks finance
+  // only for the amount the trader let through, oldest receipt first.
+  if (decision !== "HOLD") {
     const { submitInboundForFinance } = await import("./movements");
+    let left = releasePkr;
     for (const receipt of receipts) {
+      if (left <= 0.005) break;
+      const owed = Math.max(0, num(receipt.amountDue) - num(receipt.paidAmountPkr));
+      if (owed <= 0.005) continue;
+      const take = Math.round(Math.min(owed, left) * 100) / 100;
+      left = Math.round((left - take) * 100) / 100;
       try {
-        await submitInboundForFinance(receipt.id);
+        await submitInboundForFinance(receipt.id, take);
       } catch {
         // Duplicate-pending or already-paid guards are fine to skip here.
       }

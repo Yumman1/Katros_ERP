@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, PauseCircle } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, PauseCircle, Scissors } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { formatCurrency } from "@/lib/formatters/numbers";
 import { trpc } from "@/lib/trpc/client";
@@ -14,13 +15,16 @@ type ApprovalRow = {
   invoiceNo: string;
   amountPkr: number;
   expectedPkr: number | null;
-  stage: "PENDING_TRADE_APPROVAL" | "HOLD_OLD_DUES";
+  stage: "PENDING_TRADE_APPROVAL" | "HOLD_OLD_DUES" | "PARTIAL_PAYMENT";
   warehouseName: string;
   arrivalDate: Date | string;
   tradeRef: string;
   counterpartyName: string;
   commodityName: string;
   totalTradePricePkr: number;
+  paidPkr: number;
+  remainingPkr: number;
+  holdNote: string | null;
 };
 
 export default function TraderInvoiceApprovalsPage() {
@@ -37,6 +41,7 @@ export default function TraderInvoiceApprovalsPage() {
   });
 
   const pending = (rows ?? []).filter((r) => r.stage === "PENDING_TRADE_APPROVAL");
+  const partial = (rows ?? []).filter((r) => r.stage === "PARTIAL_PAYMENT");
   const held = (rows ?? []).filter((r) => r.stage === "HOLD_OLD_DUES");
 
   return (
@@ -62,6 +67,14 @@ export default function TraderInvoiceApprovalsPage() {
               accent="warning"
               emptyMessage="Nothing waiting for approval."
               rows={pending}
+              resolve={resolve}
+            />
+            <ApprovalGroup
+              title="Part paid — remainder held"
+              count={partial.length}
+              accent="warning"
+              emptyMessage="No part-paid invoices."
+              rows={partial}
               resolve={resolve}
             />
             <ApprovalGroup
@@ -130,8 +143,17 @@ function InvoiceCard({
   resolve: ReturnType<typeof trpc.trader.resolveInvoiceApproval.useMutation>;
 }) {
   const isPending = row.stage === "PENDING_TRADE_APPROVAL";
+  const isPartial = row.stage === "PARTIAL_PAYMENT";
   const busy = resolve.isPending && resolve.variables?.truckId === row.truckId;
   const errorHere = resolve.error && resolve.variables?.truckId === row.truckId;
+
+  const [payAmount, setPayAmount] = useState("");
+  const [note, setNote] = useState("");
+  const wanted = Number(payAmount);
+  const overRemaining = wanted > row.remainingPkr + 0.005;
+  const canPartPay = wanted > 0 && !overRemaining && !busy;
+  const paidPct =
+    row.amountPkr > 0 ? Math.min(100, Math.round((row.paidPkr / row.amountPkr) * 100)) : 0;
 
   return (
     <article className="rounded-xl border border-border bg-card p-5">
@@ -141,10 +163,12 @@ function InvoiceCard({
           <span
             className={cn(
               "rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase",
-              isPending ? "bg-warning/15 text-warning" : "bg-foreground/[0.08] text-subtle",
+              isPending || isPartial
+                ? "bg-warning/15 text-warning"
+                : "bg-foreground/[0.08] text-subtle",
             )}
           >
-            {isPending ? "Pending approval" : "Hold — old dues"}
+            {isPending ? "Pending approval" : isPartial ? "Part paid" : "Hold — old dues"}
           </span>
         </div>
         <div className="text-right">
@@ -154,6 +178,33 @@ function InvoiceCard({
           </div>
         </div>
       </div>
+
+      {/* Paid out of the total, so a held remainder is never invisible. */}
+      {row.paidPkr > 0 && (
+        <div className="mt-3 rounded-lg border border-border bg-background/40 px-4 py-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
+            <span className="text-subtle">
+              Paid{" "}
+              <span className="font-mono font-semibold text-success">
+                {formatCurrency(row.paidPkr, "PKR")}
+              </span>{" "}
+              of {formatCurrency(row.amountPkr, "PKR")}
+            </span>
+            <span className="text-subtle">
+              Held{" "}
+              <span className="font-mono font-semibold text-warning">
+                {formatCurrency(row.remainingPkr, "PKR")}
+              </span>
+            </span>
+          </div>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-foreground/10">
+            <div className="h-full rounded-full bg-success" style={{ width: `${paidPct}%` }} />
+          </div>
+          {row.holdNote && (
+            <p className="mt-2 text-[11px] text-subtle">Hold reason: {row.holdNote}</p>
+          )}
+        </div>
+      )}
 
       <div className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-3">
         <Detail label="Trade ref">
@@ -192,7 +243,11 @@ function InvoiceCard({
           className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-xs font-bold text-white hover:bg-success/90 disabled:opacity-50"
         >
           <CheckCircle2 className="h-3.5 w-3.5" />
-          {busy && resolve.variables?.decision === "APPROVE" ? "Approving…" : "Approve payment"}
+          {busy && resolve.variables?.decision === "APPROVE"
+            ? "Approving…"
+            : row.paidPkr > 0
+              ? `Pay remaining ${formatCurrency(row.remainingPkr, "PKR")}`
+              : "Approve payment"}
         </button>
         {isPending && (
           <button
@@ -205,6 +260,65 @@ function InvoiceCard({
             {busy && resolve.variables?.decision === "HOLD" ? "Holding…" : "Hold — old dues"}
           </button>
         )}
+      </div>
+
+      {/* Pay part of the invoice and hold the rest. Repeatable — the truck
+          stays here until the whole amount has been released. */}
+      <div className="mt-3 rounded-lg border border-dashed border-border px-4 py-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+          <Scissors className="h-3.5 w-3.5 text-warning" />
+          Pay part, hold the rest
+        </div>
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wider text-subtle">
+            Pay now (PKR)
+            <input
+              type="number"
+              min={0}
+              max={row.remainingPkr}
+              value={payAmount}
+              onChange={(e) => setPayAmount(e.target.value)}
+              placeholder="0"
+              className="kastros-input kastros-input-sm w-40"
+            />
+          </label>
+          <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-[10px] uppercase tracking-wider text-subtle">
+            Reason for the hold
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. 1M held against old dues"
+              className="kastros-input kastros-input-sm w-full"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!canPartPay}
+            onClick={() =>
+              resolve.mutate({
+                truckId: row.truckId,
+                decision: "PARTIAL",
+                amountPkr: wanted,
+                note: note.trim() || undefined,
+              })
+            }
+            className="rounded-lg bg-warning px-4 py-2 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {busy && resolve.variables?.decision === "PARTIAL" ? "Releasing…" : "Release this much"}
+          </button>
+        </div>
+        <p className="mt-2 text-[11px] text-subtle">
+          {overRemaining ? (
+            <span className="text-destructive">
+              Only {formatCurrency(row.remainingPkr, "PKR")} is still unpaid on this invoice.
+            </span>
+          ) : (
+            <>
+              {formatCurrency(row.remainingPkr, "PKR")} still unpaid. The held amount stays
+              outstanding against this truck and never ages — release it here whenever you are ready.
+            </>
+          )}
+        </p>
       </div>
       {errorHere && <p className="mt-2 text-xs text-destructive">{resolve.error?.message}</p>}
     </article>

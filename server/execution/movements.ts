@@ -159,7 +159,11 @@ export async function getInboundReceipts(tradeRef?: string): Promise<InboundRece
   return rows.map(inboundRowToRuntime);
 }
 
-export async function submitInboundForFinance(receiptId: string) {
+/**
+ * Ask finance to pay a receipt. `amountPkr` pays only part of what is still
+ * owed — the rest stays held on the truck until the trader releases it.
+ */
+export async function submitInboundForFinance(receiptId: string, amountPkr?: number) {
   return prisma.$transaction(async (tx) => {
     const r = await tx.inboundReceipt.findUnique({ where: { id: receiptId } });
     if (!r) throw new Error("Receipt not found");
@@ -171,11 +175,23 @@ export async function submitInboundForFinance(receiptId: string) {
         where: { gatepassNo: r.gatepassNo },
         select: { gateInvoiceStage: true },
       });
-      if (truck && truck.gateInvoiceStage !== "PAYMENT_APPROVED") {
+      if (
+        truck &&
+        truck.gateInvoiceStage !== "PAYMENT_APPROVED" &&
+        truck.gateInvoiceStage !== "PARTIAL_PAYMENT"
+      ) {
         throw new Error(
           "The trade's trader has not approved this gate invoice yet — finance payment comes after trader approval",
         );
       }
+    }
+    const owed = Math.max(0, num(r.amountDue) - num(r.paidAmountPkr));
+    const requested = amountPkr == null ? owed : Math.round(amountPkr * 100) / 100;
+    if (requested <= 0.005) throw new Error("Nothing left to pay on this receipt");
+    if (requested > owed + 0.005) {
+      throw new Error(
+        `Only ${owed.toLocaleString("en-PK")} PKR is still owed on this receipt`,
+      );
     }
     // One pending request per receipt.
     const dupe = await tx.paymentRequest.findFirst({
@@ -195,7 +211,7 @@ export async function submitInboundForFinance(receiptId: string) {
         sourceId: r.id,
         tradeRef: r.tradeRef,
         counterpartyName: r.sellerName,
-        amount: r.amountDue,
+        amount: requested,
         currency: contract?.currency ?? "PKR",
         status: "PENDING",
       },

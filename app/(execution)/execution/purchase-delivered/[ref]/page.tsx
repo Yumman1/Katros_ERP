@@ -406,6 +406,7 @@ function StageBadge({ stage }: { stage: GateInvoiceStage }) {
     PENDING_TRADE_APPROVAL: ["rgba(96,165,250,0.1)", "#60a5fa"],
     HOLD_OLD_DUES: ["rgba(245,158,11,0.1)", "#f59e0b"],
     WRONG_INVOICING: ["rgba(248,113,113,0.1)", "#f87171"],
+    PARTIAL_PAYMENT: ["rgba(245,158,11,0.1)", "#f59e0b"],
     PAYMENT_APPROVED: ["rgba(52,211,153,0.1)", "#34d399"],
   };
   const [bg, color] = map[stage];

@@ -828,13 +828,29 @@ export const traderRouter = router({
     return rows.filter((r) => r.stage === "PENDING_TRADE_APPROVAL").length;
   }),
 
-  /** Approve payment (→ PAYMENT_APPROVED) or hold (→ HOLD_OLD_DUES) a gate invoice on this trader's trade. */
+  /**
+   * Trader decision on a gate invoice of their own trade: APPROVE pays it in
+   * full, PARTIAL pays `amountPkr` and holds the rest, HOLD parks the whole
+   * invoice. A part-paid invoice stays here so the remainder can be released
+   * later, in as many steps as needed.
+   */
   resolveInvoiceApproval: protectedProcedure
-    .input(z.object({ truckId: z.string(), decision: z.enum(["APPROVE", "HOLD"]) }))
+    .input(
+      z.object({
+        truckId: z.string(),
+        decision: z.enum(["APPROVE", "HOLD", "PARTIAL"]),
+        /** PARTIAL only — how much to pay now. */
+        amountPkr: z.number().positive().optional(),
+        note: z.string().trim().max(300).optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const name = traderNameFromSession(ctx.session.user);
       try {
-        const truck = await traderResolveGateInvoice(name, input.truckId, input.decision);
+        const truck = await traderResolveGateInvoice(name, input.truckId, input.decision, {
+          amountPkr: input.amountPkr,
+          note: input.note ?? null,
+        });
         return { ok: true as const, truck };
       } catch (e) {
         if (e instanceof TraderInvoiceOwnershipError) {
