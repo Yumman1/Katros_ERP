@@ -8,7 +8,9 @@ import { TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useState } from "react";
-import { Send, X } from "lucide-react";
+import { FileMinus2, Send, X } from "lucide-react";
+
+const fmtNum = (n: number) => n.toLocaleString("en-PK", { maximumFractionDigits: 2 });
 
 export default function TraderFulfillmentPage() {
   const utils = trpc.useUtils();
@@ -19,11 +21,26 @@ export default function TraderFulfillmentPage() {
 
   const [closeRef, setCloseRef] = useState<string | null>(null);
   const [closeComment, setCloseComment] = useState("");
+  const [settlementPrice, setSettlementPrice] = useState("");
+
+  const settlementNum = Number(settlementPrice);
+  const settlementValid = Number.isFinite(settlementNum) && settlementNum > 0;
+
+  // The note the CEO will be asked to approve: trade rate and open qty on
+  // open, live amount once a settlement price is entered.
+  const { data: note } = trpc.trader.settlementNotePreview.useQuery(
+    {
+      tradeRef: closeRef ?? "",
+      settlementPricePerMaund: settlementValid ? settlementNum : undefined,
+    },
+    { enabled: !!closeRef },
+  );
 
   const submitClose = trpc.team.submitChangeRequest.useMutation({
     onSuccess: () => {
       setCloseRef(null);
       setCloseComment("");
+      setSettlementPrice("");
       void utils.team.myChangeRequests.invalidate();
       void utils.trader.tradeFulfillment.invalidate();
     },
@@ -135,6 +152,8 @@ export default function TraderFulfillmentPage() {
                           onClick={() => {
                             setCloseRef(t.tradeRef);
                             setCloseComment("");
+                            setSettlementPrice("");
+                            submitClose.reset();
                           }}
                           className="text-[10px] font-medium text-brand hover:underline"
                         >
@@ -277,9 +296,69 @@ export default function TraderFulfillmentPage() {
               </button>
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
-              Manual close requires CEO approval. The system only auto-closes when physical quantity exceeds
-              contract quantity plus the tolerance set at booking.
+              Closing below the tolerance floor writes off the undelivered quantity, so it settles in
+              money: price it here and the CEO approves the note along with the close.
             </p>
+
+            {/* The debit note travels with the request — the CEO sees the same
+                figures the trader entered, and approving posts them. */}
+            <div className="mt-4 rounded-lg border border-dashed border-border px-4 py-3">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                <FileMinus2 className="h-3.5 w-3.5 text-warning" />
+                Debit note
+              </div>
+              <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                <div>
+                  <dt className="text-subtle">Trade rate (incl. commission)</dt>
+                  <dd className="font-mono text-foreground">
+                    {note ? `${fmtNum(note.ratePerMaund)} ₨/maund` : "…"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-subtle">Open quantity</dt>
+                  <dd className="font-mono text-foreground">
+                    {note
+                      ? `${fmtNum(note.openQtyMt)} MT (${fmtNum(note.openMaunds)} maund)`
+                      : "…"}
+                  </dd>
+                </div>
+              </dl>
+              <label className="mt-3 block">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Settlement price (₨/maund) <span className="text-destructive">*</span>
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  value={settlementPrice}
+                  onChange={(e) => setSettlementPrice(e.target.value)}
+                  placeholder={note ? fmtNum(note.ratePerMaund) : "0"}
+                  className="kastros-input mt-1 w-full text-sm"
+                />
+              </label>
+              {note && settlementValid && (
+                <p className="mt-2 text-xs">
+                  {note.amountPkr <= 0.005 ? (
+                    <span className="text-subtle">
+                      Settlement equals the trade rate — the trade closes with{" "}
+                      <span className="text-foreground">no ledger entry</span>.
+                    </span>
+                  ) : note.direction === "SELLER_OWES_US" ? (
+                    <span className="text-success">
+                      Seller owes you {fmtNum(note.amountPkr)} PKR ({fmtNum(note.openMaunds)} maund ×{" "}
+                      {fmtNum(note.diffPerMaund)}) — posts as a debit note on their receivable ledger.
+                    </span>
+                  ) : (
+                    <span className="text-warning">
+                      You owe the seller {fmtNum(note.amountPkr)} PKR ({fmtNum(note.openMaunds)} maund
+                      × {fmtNum(Math.abs(note.diffPerMaund))}) — posts as a credit note on their
+                      payable ledger.
+                    </span>
+                  )}
+                </p>
+              )}
+            </div>
+
             <label className="mt-4 block text-xs text-subtle">
               Reason for closing *
               <textarea
@@ -299,7 +378,7 @@ export default function TraderFulfillmentPage() {
               </button>
               <button
                 type="button"
-                disabled={!closeComment.trim() || submitClose.isPending}
+                disabled={!closeComment.trim() || !settlementValid || !note || submitClose.isPending}
                 onClick={() =>
                   submitClose.mutate({
                     department: "TRADING",
@@ -308,6 +387,15 @@ export default function TraderFulfillmentPage() {
                     entityLabel: `Close trade ${closeRef}`,
                     action: "CLOSE",
                     comment: closeComment.trim(),
+                    payload: {
+                      ratePerMaund: note!.ratePerMaund,
+                      settlementPricePerMaund: note!.settlementPricePerMaund,
+                      diffPerMaund: note!.diffPerMaund,
+                      openQtyMt: note!.openQtyMt,
+                      openMaunds: note!.openMaunds,
+                      amountPkr: note!.amountPkr,
+                      direction: note!.direction,
+                    },
                   })
                 }
                 className="kastros-btn-primary inline-flex items-center gap-2 text-xs disabled:opacity-50"

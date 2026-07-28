@@ -8,7 +8,6 @@ import {
   updateInboundReceipt,
   updateOutboundDispatch,
   allocateContractWarehousesSplit,
-  closeLockedContract,
 } from "@/server/execution-store";
 import { deleteBookedTrade } from "@/server/dummy-data";
 import {
@@ -84,6 +83,17 @@ export async function applyChangeRequestEdit(
   editedBy: string,
 ): Promise<boolean> {
   try {
+    // Action-specific trade outcomes come first: a close/cancel request carries
+    // a debit-note payload, which the generic "TRADING + TRADE + payload" edit
+    // branch below would otherwise swallow and apply as a trade edit.
+    if (req.entityType === "TRADE" && req.action === "CLOSE") {
+      const { applyCloseChangeRequest } = await import("@/server/trade-closure");
+      return applyCloseChangeRequest(req.entityRef, req.payload, editedBy);
+    }
+    if (req.entityType === "TRADE" && req.action === "CANCEL" && req.payload) {
+      const { applyCancellationChangeRequest } = await import("@/server/trade-closure");
+      return applyCancellationChangeRequest(req.entityRef, req.payload, editedBy);
+    }
     if (req.department === "EXECUTION" && req.entityType === "WAREHOUSE" && req.payload) {
       await updateWarehouseLocation(
         req.entityRef,
@@ -129,14 +139,6 @@ export async function applyChangeRequestEdit(
     if (req.department === "TRADING" && req.entityType === "TRADE" && req.payload) {
       await applyTraderTradeEditFromPayload(req.entityRef, req.payload, editedBy);
       return true;
-    }
-    if (req.entityType === "TRADE" && req.action === "CLOSE") {
-      await closeLockedContract(req.entityRef, editedBy);
-      return true;
-    }
-    if (req.entityType === "TRADE" && req.action === "CANCEL" && req.payload) {
-      const { applyCancellationChangeRequest } = await import("@/server/trade-closure");
-      return applyCancellationChangeRequest(req.entityRef, req.payload, editedBy);
     }
   } catch {
     return false;

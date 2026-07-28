@@ -32,8 +32,8 @@ const round2 = (v: number): number => Math.round(v * 100) / 100;
  * Nothing posts until the CEO approves; a rejection leaves the trade open.
  */
 
-/** Payload carried by a TRADE/CANCEL change request. */
-export type CancellationPayload = {
+/** Payload carried by a TRADE/CLOSE or TRADE/CANCEL change request. */
+export type SettlementNotePayload = {
   ratePerMaund: number;
   settlementPricePerMaund: number;
   diffPerMaund: number;
@@ -68,14 +68,15 @@ export function ratePerMaundInclCommission(trade: {
 }
 
 /**
- * Build the CANCEL payload for a locked trade at a given settlement price.
- * With no price yet (form just opened) it previews at settlement = rate:
- * diff 0, no ledger entry.
+ * Price the note for a locked trade's undelivered quantity at a given
+ * settlement price — the same arithmetic whether the open quantity is being
+ * written off by a short close or abandoned by a cancellation. With no price
+ * yet (form just opened) it previews at settlement = rate: diff 0, no entry.
  */
-export async function buildCancellationPayload(
+export async function buildSettlementNotePayload(
   tradeRef: string,
   settlementPricePerMaund?: number | null,
-): Promise<CancellationPayload & { counterpartyName: string; traderName: string }> {
+): Promise<SettlementNotePayload & { counterpartyName: string; traderName: string }> {
   const trade = await prisma.trade.findUnique({
     where: { tradeRef },
     select: {
@@ -153,10 +154,82 @@ export async function closeTradeWithinTolerance(
   });
 }
 
+/** Recompute the note from the payload's own figures — never trust a total. */
+function priceNoteFromPayload(payload: Record<string, unknown>) {
+  const settlement = num(payload.settlementPricePerMaund);
+  const rate = num(payload.ratePerMaund);
+  const openMaunds = num(payload.openMaunds);
+  const diffPerMaund = round2(settlement - rate);
+  return {
+    settlement,
+    rate,
+    openMaunds,
+    diffPerMaund,
+    amountPkr: round2(Math.abs(diffPerMaund) * openMaunds),
+  };
+}
+
+/**
+ * Post the debit/credit note for an abandoned open quantity inside a running
+ * transaction. Returns the note ref, or null when settlement equals the rate
+ * and there is nothing to post.
+ */
+async function postSettlementNote(
+  tx: Prisma.TransactionClient,
+  input: {
+    counterpartyId: string;
+    tradeRef: string;
+    priced: ReturnType<typeof priceNoteFromPayload>;
+    /** What abandoned the quantity — reads on the ledger line. */
+    reason: "cancellation" | "short close";
+  },
+): Promise<string | null> {
+  const { priced } = input;
+  if (priced.amountPkr <= 0.005) return null;
+  const isDebit = priced.diffPerMaund > 0;
+  const seq = await nextRef(COUNTER.CANCELLATION_NOTE, tx);
+  const noteRef = `${isDebit ? "DN" : "CN"}-${String(seq).padStart(5, "0")}`;
+  await tx.counterpartyLedgerEntry.create({
+    data: {
+      counterpartyId: input.counterpartyId,
+      // Seller owes us → receivable (SELL). We owe seller → payable (BUY).
+      side: isDebit ? "SELL" : "BUY",
+      entryType: "DEBIT",
+      amountPkr: priced.amountPkr,
+      sourceType: "ADJUSTMENT",
+      sourceRef: noteRef,
+      tradeRef: input.tradeRef,
+      note:
+        `${isDebit ? "Debit" : "Credit"} note ${noteRef} — ${input.reason} of ${input.tradeRef}: ` +
+        `${priced.openMaunds.toLocaleString("en-PK")} maund open × ` +
+        `(settlement ${priced.settlement.toLocaleString("en-PK")} − rate ${priced.rate.toLocaleString("en-PK")}) ` +
+        `= ${(isDebit ? priced.amountPkr : -priced.amountPkr).toLocaleString("en-PK")} PKR ` +
+        `(${isDebit ? "seller owes us" : "we owe seller"})`,
+    },
+  });
+  return noteRef;
+}
+
+function noteSummary(
+  verb: string,
+  priced: ReturnType<typeof priceNoteFromPayload>,
+  noteRef: string | null,
+  openQtyMt: number,
+): string {
+  if (!noteRef) {
+    return `${verb} by CEO — settlement price equals the trade rate (${priced.rate.toLocaleString("en-PK")}/maund), no ledger entry`;
+  }
+  return (
+    `${verb} by CEO — ${noteRef} for ${priced.amountPkr.toLocaleString("en-PK")} PKR ` +
+    `(${priced.diffPerMaund > 0 ? "seller owes us" : "we owe seller"}; settlement ` +
+    `${priced.settlement.toLocaleString("en-PK")} vs rate ${priced.rate.toLocaleString("en-PK")}/maund ` +
+    `on ${openQtyMt.toLocaleString("en-PK")} MT open)`
+  );
+}
+
 /**
  * Apply a CEO-approved TRADE/CANCEL change request: cancel the trade + contract
- * and post the debit/credit note the payload priced. Recomputes the amount from
- * the payload figures — never trusts a pre-computed total blindly.
+ * and post the note the payload priced.
  */
 export async function applyCancellationChangeRequest(
   tradeRef: string,
@@ -168,51 +241,26 @@ export async function applyCancellationChangeRequest(
   if (!trade) return false;
   if (trade.tradeStatus === TradeStatus.CANCELLED) return true; // already done
 
-  const settlement = num(payload.settlementPricePerMaund);
-  const rate = num(payload.ratePerMaund);
-  const openMaunds = num(payload.openMaunds);
-  const diffPerMaund = round2(settlement - rate);
-  const amountPkr = round2(Math.abs(diffPerMaund) * openMaunds);
-
+  const priced = priceNoteFromPayload(payload);
   const row = await prisma.trade.findUnique({
     where: { tradeRef: ref },
-    select: { counterpartyId: true, counterparty: { select: { name: true } } },
+    select: { counterpartyId: true },
   });
   if (!row) return false;
 
   let noteRef: string | null = null;
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.trade.updateMany({
-      where: { tradeRef: ref },
-      data: { tradeStatus: "CANCELLED" },
-    });
+    await tx.trade.updateMany({ where: { tradeRef: ref }, data: { tradeStatus: "CANCELLED" } });
     await tx.executionContract.updateMany({
       where: { tradeRef: ref },
       data: { contractStatus: "Close" },
     });
-    if (amountPkr > 0.005) {
-      const seq = await nextRef(COUNTER.CANCELLATION_NOTE, tx);
-      const isDebit = diffPerMaund > 0;
-      noteRef = `${isDebit ? "DN" : "CN"}-${String(seq).padStart(5, "0")}`;
-      await tx.counterpartyLedgerEntry.create({
-        data: {
-          counterpartyId: row.counterpartyId,
-          // Seller owes us → receivable (SELL). We owe seller → payable (BUY).
-          side: isDebit ? "SELL" : "BUY",
-          entryType: "DEBIT",
-          amountPkr,
-          sourceType: "ADJUSTMENT",
-          sourceRef: noteRef,
-          tradeRef: ref,
-          note:
-            `${isDebit ? "Debit" : "Credit"} note ${noteRef} — cancellation of ${ref}: ` +
-            `${openMaunds.toLocaleString("en-PK")} maund open × ` +
-            `(settlement ${settlement.toLocaleString("en-PK")} − rate ${rate.toLocaleString("en-PK")}) ` +
-            `= ${(isDebit ? amountPkr : -amountPkr).toLocaleString("en-PK")} PKR ` +
-            `(${isDebit ? "seller owes us" : "we owe seller"})`,
-        },
-      });
-    }
+    noteRef = await postSettlementNote(tx, {
+      counterpartyId: row.counterpartyId,
+      tradeRef: ref,
+      priced,
+      reason: "cancellation",
+    });
   });
 
   await appendTradeActivity(ref, {
@@ -220,10 +268,60 @@ export async function applyCancellationChangeRequest(
     actorSide: "CEO",
     kind: "CANCELLED",
     requiresApproval: false,
-    summary:
-      amountPkr > 0.005
-        ? `Trade cancelled by CEO — ${noteRef} for ${amountPkr.toLocaleString("en-PK")} PKR (${diffPerMaund > 0 ? "seller owes us" : "we owe seller"}; settlement ${settlement.toLocaleString("en-PK")} vs rate ${rate.toLocaleString("en-PK")}/maund on ${num(payload.openQtyMt).toLocaleString("en-PK")} MT open)`
-        : `Trade cancelled by CEO — settlement price equals the trade rate (${rate.toLocaleString("en-PK")}/maund), no ledger entry`,
+    summary: noteSummary("Trade cancelled", priced, noteRef, num(payload.openQtyMt)),
+  });
+  return true;
+}
+
+/**
+ * Apply a CEO-approved TRADE/CLOSE change request. Closing short writes off the
+ * undelivered quantity, which settles in money exactly as a cancellation does,
+ * so the request carries the same note and posts it here. A close request with
+ * no note payload (settlement not priced) just closes the contract.
+ */
+export async function applyCloseChangeRequest(
+  tradeRef: string,
+  payload: Record<string, unknown> | null | undefined,
+  approvedBy: string,
+): Promise<boolean> {
+  const ref = tradeRef.trim();
+  await closeLockedContract(ref, approvedBy);
+
+  if (!payload || payload.settlementPricePerMaund == null) return true;
+  const priced = priceNoteFromPayload(payload);
+  if (priced.amountPkr <= 0.005) {
+    await appendTradeActivity(ref, {
+      actorName: approvedBy,
+      actorSide: "CEO",
+      kind: "CLOSED",
+      requiresApproval: false,
+      summary: noteSummary("Trade closed short", priced, null, num(payload.openQtyMt)),
+    });
+    return true;
+  }
+
+  const row = await prisma.trade.findUnique({
+    where: { tradeRef: ref },
+    select: { counterpartyId: true },
+  });
+  if (!row) return true; // contract is closed either way
+
+  let noteRef: string | null = null;
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    noteRef = await postSettlementNote(tx, {
+      counterpartyId: row.counterpartyId,
+      tradeRef: ref,
+      priced,
+      reason: "short close",
+    });
+  });
+
+  await appendTradeActivity(ref, {
+    actorName: approvedBy,
+    actorSide: "CEO",
+    kind: "CLOSED",
+    requiresApproval: false,
+    summary: noteSummary("Trade closed short", priced, noteRef, num(payload.openQtyMt)),
   });
   return true;
 }
