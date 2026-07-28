@@ -50,16 +50,6 @@ export function CeoApprovalsInbox() {
   const pagination = useListPagination(items);
 
   return (
-    <div className="kastros-desk-page">
-      <div className="kastros-desk-toolbar">
-        <h1 className="text-2xl font-semibold text-foreground">Approvals</h1>
-        <p className="mt-1 text-sm text-subtle">
-          Final sign-off on warehouse creation, commodity registration, trader trade edits and deletions, and manual
-          trade closures requested by traders or execution.
-        </p>
-      </div>
-
-      <div className="kastros-desk-scroll flex flex-col gap-6 pb-6">
       <section className="rounded-xl border border-kastros-border bg-kastros-card">
         <div className="flex items-center justify-between border-b border-kastros-border px-5 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -72,7 +62,17 @@ export function CeoApprovalsInbox() {
         </div>
 
         <div className="divide-y divide-kastros-border">
-          {items.length === 0 && (
+          {/* A failed query must not read as an empty queue — pending approvals
+              going quiet is exactly the failure nobody notices. */}
+          {queue.isError && (
+            <div className="px-5 py-8 text-sm text-destructive">
+              Could not load the approval queue: {queue.error.message}
+            </div>
+          )}
+          {!queue.isError && queue.isLoading && (
+            <div className="px-5 py-8 text-sm text-subtle">Loading approvals…</div>
+          )}
+          {!queue.isError && !queue.isLoading && items.length === 0 && (
             <div className="flex items-center gap-2 px-5 py-8 text-sm text-subtle">
               <Inbox className="h-4 w-4" /> Nothing awaiting your approval.
             </div>
@@ -173,7 +173,5 @@ export function CeoApprovalsInbox() {
           onPageChange={pagination.setPage}
         />
       </section>
-      </div>
-    </div>
   );
 }

@@ -8,13 +8,27 @@ import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
 export default function CeoApprovalsPage() {
+  // One page, one scroll region. The queues used to sit as siblings, each
+  // capped at 45dvh and unable to shrink, which squeezed the CEO queue to zero
+  // height — pending approvals existed but were invisible.
   return (
-    <>
-      <CeoApprovalsInbox />
-      <OverDeliverySection />
-      <ClearWithoutPaymentSection />
-      <TradeSettlementSection />
-    </>
+    <div className="kastros-desk-page">
+      <div className="kastros-desk-toolbar">
+        <h1 className="text-2xl font-semibold text-foreground">Approvals</h1>
+        <p className="mt-1 text-sm text-subtle">
+          Final sign-off on trade closes and cancellations, warehouse and commodity registration,
+          trader trade edits and deletions, over-deliveries, releases without payment, and direct
+          settlements.
+        </p>
+      </div>
+
+      <div className="kastros-desk-scroll flex flex-col gap-6 pb-6">
+        <CeoApprovalsInbox />
+        <OverDeliverySection />
+        <ClearWithoutPaymentSection />
+        <TradeSettlementSection />
+      </div>
+    </div>
   );
 }
 
@@ -43,7 +57,7 @@ function OverDeliverySection() {
   const items = rows ?? [];
 
   return (
-    <section className="mb-6 mt-2 max-h-[45dvh] shrink-0 overflow-auto rounded-xl border border-kastros-border bg-kastros-card">
+    <section className="rounded-xl border border-kastros-border bg-kastros-card">
       <div className="flex items-center justify-between border-b border-kastros-border px-5 py-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Package className="h-4 w-4 text-brand" />
@@ -172,7 +186,7 @@ function TradeSettlementSection() {
   const items = rows ?? [];
 
   return (
-    <section className="mb-6 mt-2 max-h-[45dvh] shrink-0 overflow-auto rounded-xl border border-kastros-border bg-kastros-card">
+    <section className="rounded-xl border border-kastros-border bg-kastros-card">
       <div className="flex items-center justify-between border-b border-kastros-border px-5 py-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Handshake className="h-4 w-4 text-brand" />
@@ -307,7 +321,7 @@ function ClearWithoutPaymentSection() {
   const items = rows ?? [];
 
   return (
-    <section className="mb-6 mt-2 max-h-[45dvh] shrink-0 overflow-auto rounded-xl border border-kastros-border bg-kastros-card">
+    <section className="rounded-xl border border-kastros-border bg-kastros-card">
       <div className="flex items-center justify-between border-b border-kastros-border px-5 py-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Truck className="h-4 w-4 text-brand" />
