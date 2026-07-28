@@ -48,7 +48,7 @@ export function canActOnDepartment(role: Role, isHead: boolean, dept: Department
   return isHead && departmentForRole(role) === dept;
 }
 
-export const CHANGE_REQUEST_ACTIONS = ["CREATE", "EDIT", "DELETE", "CLOSE"] as const;
+export const CHANGE_REQUEST_ACTIONS = ["CREATE", "EDIT", "DELETE", "CLOSE", "CANCEL"] as const;
 export type ChangeRequestAction = (typeof CHANGE_REQUEST_ACTIONS)[number];
 
 export const CHANGE_REQUEST_STATUSES = ["PENDING", "PENDING_CEO", "APPROVED", "REJECTED"] as const;
@@ -66,6 +66,8 @@ export function requiresCeoApproval(
 ): boolean {
   if (entityType === "WAREHOUSE" && action === "CREATE") return true;
   if (entityType === "TRADE" && action === "CLOSE") return true;
+  // Cancelling a locked trade posts a debit/credit note — always the CEO's call.
+  if (entityType === "TRADE" && action === "CANCEL") return true;
   if (entityType === "COMMODITY" && action === "CREATE") return true;
   if (
     department === "TRADING" &&

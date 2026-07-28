@@ -134,6 +134,10 @@ export async function applyChangeRequestEdit(
       await closeLockedContract(req.entityRef, editedBy);
       return true;
     }
+    if (req.entityType === "TRADE" && req.action === "CANCEL" && req.payload) {
+      const { applyCancellationChangeRequest } = await import("@/server/trade-closure");
+      return applyCancellationChangeRequest(req.entityRef, req.payload, editedBy);
+    }
   } catch {
     return false;
   }
@@ -156,5 +160,6 @@ export async function applyApprovedChangeRequest(
   }
   if (req.action === "EDIT") return applyChangeRequestEdit(req, actor);
   if (req.action === "CLOSE") return applyChangeRequestEdit(req, actor);
+  if (req.action === "CANCEL") return applyChangeRequestEdit(req, actor);
   return false;
 }

@@ -27,6 +27,7 @@ function fmt(d: Date | string) {
 
 function actionLabel(action: string, entityType: string): string {
   if (action === "CLOSE") return "Approve & close trade";
+  if (action === "CANCEL") return "Approve & cancel trade";
   if (action === "CREATE" && entityType === "WAREHOUSE") return "Approve & register warehouse";
   if (action === "CREATE" && entityType === "COMMODITY") return "Approve & register commodity";
   if (action === "CREATE") return "Approve & create";
@@ -92,7 +93,9 @@ export function CeoApprovalsInbox() {
                               ? "bg-emerald-500/15 text-emerald-300"
                               : r.action === "CLOSE"
                                 ? "bg-violet-500/15 text-violet-300"
-                                : "bg-sky-500/15 text-sky-300"
+                                : r.action === "CANCEL"
+                                  ? "bg-orange-500/15 text-orange-300"
+                                  : "bg-sky-500/15 text-sky-300"
                         }`}
                       >
                         {r.action}

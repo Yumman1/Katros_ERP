@@ -42,4 +42,5 @@ export const COUNTER = {
   SETTLEMENT_INVOICE: "settlement-invoice",
   GATE_OUT_SLIP: "gate-out-slip",
   DELIVERY_ORDER: "delivery-order",
+  CANCELLATION_NOTE: "cancellation-note",
 } as const;

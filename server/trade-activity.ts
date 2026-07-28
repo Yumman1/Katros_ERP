@@ -13,6 +13,7 @@ export type TradeActivityKind =
   | "EDIT_APPROVED"
   | "EDIT_REJECTED"
   | "DELETE_REQUESTED"
+  | "CLOSED"
   | "CANCELLED"
   | "SETTLEMENT_INVOICED"
   | "SETTLEMENT_CLOSED";
