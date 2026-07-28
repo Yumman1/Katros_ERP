@@ -35,7 +35,7 @@ export function TradeCancelModal({
   const settlementValid = Number.isFinite(settlementNum) && settlementNum > 0;
 
   // Debit-note preview: rate + open qty on load, live amount once a price is in.
-  const { data: preview } = trpc.trader.cancellationPreview.useQuery(
+  const { data: preview } = trpc.trader.settlementNotePreview.useQuery(
     {
       tradeRef: tradeRef ?? "",
       settlementPricePerMaund: settlementValid ? settlementNum : undefined,

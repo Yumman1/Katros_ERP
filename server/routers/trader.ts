@@ -65,7 +65,7 @@ import {
   type KycStatus,
   type PaymentType,
 } from "@/server/dummy-data";
-import { buildCancellationPayload, closeTradeWithinTolerance } from "@/server/trade-closure";
+import { buildSettlementNotePayload, closeTradeWithinTolerance } from "@/server/trade-closure";
 import { createChangeRequest, hasOpenChangeRequest } from "@/server/change-requests-store";
 import {
   assertPriceReadyForLock,
@@ -330,7 +330,7 @@ export const traderRouter = router({
           throw new Error("A cancellation request for this trade is already awaiting the CEO");
         }
 
-        const payload = await buildCancellationPayload(ref, input.settlementPricePerMaund);
+        const payload = await buildSettlementNotePayload(ref, input.settlementPricePerMaund);
         const req = await createChangeRequest({
           department: "TRADING",
           entityType: "TRADE",
@@ -364,12 +364,12 @@ export const traderRouter = router({
    * Debit-note preview for the cancellation form — trade rate incl commission,
    * open qty, and the ledger amount a given settlement price would post.
    */
-  cancellationPreview: protectedProcedure
+  settlementNotePreview: protectedProcedure
     .input(
       z.object({ tradeRef: z.string(), settlementPricePerMaund: z.number().positive().optional() }),
     )
     .query(async ({ input }) => {
-      const p = await buildCancellationPayload(input.tradeRef.trim(), input.settlementPricePerMaund);
+      const p = await buildSettlementNotePayload(input.tradeRef.trim(), input.settlementPricePerMaund);
       return p;
     }),
 

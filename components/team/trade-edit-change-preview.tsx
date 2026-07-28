@@ -219,8 +219,13 @@ export function ChangeRequestPayloadPreview({
 }) {
   if (action === "DELETE" || !payload || !Object.keys(payload).length) return null;
 
-  // Cancellation of a locked trade — the debit note the CEO is signing off on.
-  if (entityType === "TRADE" && action === "CANCEL") {
+  // Closing short or cancelling a locked trade — both abandon the open quantity
+  // and settle it in money, so both carry the note the CEO is signing off on.
+  if (
+    entityType === "TRADE" &&
+    (action === "CANCEL" || action === "CLOSE") &&
+    payload.settlementPricePerMaund != null
+  ) {
     const n = (v: unknown) => (v == null ? 0 : Number(v));
     const fmtN = (v: number) => v.toLocaleString("en-PK", { maximumFractionDigits: 2 });
     const rate = n(payload.ratePerMaund);
@@ -231,7 +236,9 @@ export function ChangeRequestPayloadPreview({
     const openMaunds = n(payload.openMaunds);
     return (
       <div className="mt-3 space-y-2 rounded-lg border border-kastros-border/70 bg-black/15 p-3">
-        <div className="text-xs font-semibold text-foreground">Cancellation debit note</div>
+        <div className="text-xs font-semibold text-foreground">
+          {action === "CANCEL" ? "Cancellation debit note" : "Short-close debit note"}
+        </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] sm:grid-cols-3">
           <div>
             <div className="text-subtle">Trade rate (incl. comm.)</div>
