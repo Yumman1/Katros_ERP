@@ -61,9 +61,12 @@ import {
   mockTraderExposure,
   mockTraderTradeByRef,
   mockTraderTrades,
+  mockTradeByRefGlobal,
   type KycStatus,
   type PaymentType,
 } from "@/server/dummy-data";
+import { buildCancellationPayload, closeTradeWithinTolerance } from "@/server/trade-closure";
+import { createChangeRequest, hasOpenChangeRequest } from "@/server/change-requests-store";
 import {
   assertPriceReadyForLock,
   assertWarehouseReadyForLock,
@@ -288,23 +291,104 @@ export const traderRouter = router({
       z.object({
         tradeRef: z.string(),
         reason: z.string().trim().min(3, "Give a short reason for cancelling"),
+        /** Locked trades only: prices the debit note. Ignored before lock. */
+        settlementPricePerMaund: z.number().positive().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       try {
         const traderName = traderNameFromSession(ctx.session.user);
         const cancelledBy = ctx.session.user.name ?? ctx.session.user.email ?? traderName;
-        const trade = await cancelTraderTrade(
-          traderName,
-          input.tradeRef.trim(),
-          input.reason,
-          cancelledBy,
-        );
-        return { ok: true as const, trade };
+        const ref = input.tradeRef.trim();
+        const existing = await mockTradeByRefGlobal(ref);
+        if (!existing) throw new Error("Trade not found");
+
+        // Before lock: simple cancel, no money involved.
+        if (existing.tradeStatus === TradeStatus.PENDING) {
+          const trade = await cancelTraderTrade(traderName, ref, input.reason, cancelledBy);
+          return { ok: true as const, pendingCeo: false as const, trade };
+        }
+
+        // Locked: cancellation settles in money — debit-note form + CEO approval.
+        if (
+          existing.tradeStatus !== TradeStatus.LOCKED &&
+          existing.tradeStatus !== TradeStatus.CONFIRMED
+        ) {
+          throw new Error(`This trade cannot be cancelled (current: ${existing.tradeStatus})`);
+        }
+        if (!traderNamesMatch(existing.traderName, canonicalTraderName(traderName))) {
+          throw new Error("You can only cancel your own trades");
+        }
+        if (input.settlementPricePerMaund == null) {
+          throw new Error(
+            "Cancelling a locked trade needs a settlement price per maund for the debit note",
+          );
+        }
+        if (
+          await hasOpenChangeRequest({ entityRef: ref, entityType: "TRADE", action: "CANCEL" })
+        ) {
+          throw new Error("A cancellation request for this trade is already awaiting the CEO");
+        }
+
+        const payload = await buildCancellationPayload(ref, input.settlementPricePerMaund);
+        const req = await createChangeRequest({
+          department: "TRADING",
+          entityType: "TRADE",
+          entityRef: ref,
+          entityLabel: `${ref} — cancel (${payload.counterpartyName})`,
+          action: "CANCEL",
+          comment: input.reason,
+          requestedById: ctx.session.user.id,
+          requestedByName: cancelledBy,
+          payload: {
+            ratePerMaund: payload.ratePerMaund,
+            settlementPricePerMaund: payload.settlementPricePerMaund,
+            diffPerMaund: payload.diffPerMaund,
+            openQtyMt: payload.openQtyMt,
+            openMaunds: payload.openMaunds,
+            amountPkr: payload.amountPkr,
+            direction: payload.direction,
+          },
+          status: "PENDING_CEO",
+        });
+        return { ok: true as const, pendingCeo: true as const, requestId: req.id };
       } catch (e) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not cancel trade",
+        });
+      }
+    }),
+
+  /**
+   * Debit-note preview for the cancellation form — trade rate incl commission,
+   * open qty, and the ledger amount a given settlement price would post.
+   */
+  cancellationPreview: protectedProcedure
+    .input(
+      z.object({ tradeRef: z.string(), settlementPricePerMaund: z.number().positive().optional() }),
+    )
+    .query(async ({ input }) => {
+      const p = await buildCancellationPayload(input.tradeRef.trim(), input.settlementPricePerMaund);
+      return p;
+    }),
+
+  /**
+   * Close a locked purchase received within tolerance — no CEO involved.
+   * Below the floor the client falls back to the CLOSE change request.
+   */
+  closeTrade: roleProcedure(["TRADER", "ADMIN"])
+    .input(z.object({ tradeRef: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const traderName = traderNameFromSession(ctx.session.user);
+        const closedBy = ctx.session.user.name ?? ctx.session.user.email ?? traderName;
+        await closeTradeWithinTolerance(traderName, input.tradeRef.trim(), closedBy);
+        return { ok: true as const };
+      } catch (e) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: e instanceof Error ? e.message : "Could not close trade",
         });
       }
     }),

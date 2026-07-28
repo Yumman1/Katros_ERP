@@ -219,6 +219,57 @@ export function ChangeRequestPayloadPreview({
 }) {
   if (action === "DELETE" || !payload || !Object.keys(payload).length) return null;
 
+  // Cancellation of a locked trade — the debit note the CEO is signing off on.
+  if (entityType === "TRADE" && action === "CANCEL") {
+    const n = (v: unknown) => (v == null ? 0 : Number(v));
+    const fmtN = (v: number) => v.toLocaleString("en-PK", { maximumFractionDigits: 2 });
+    const rate = n(payload.ratePerMaund);
+    const settlement = n(payload.settlementPricePerMaund);
+    const diff = n(payload.diffPerMaund);
+    const amount = n(payload.amountPkr);
+    const openQty = n(payload.openQtyMt);
+    const openMaunds = n(payload.openMaunds);
+    return (
+      <div className="mt-3 space-y-2 rounded-lg border border-kastros-border/70 bg-black/15 p-3">
+        <div className="text-xs font-semibold text-foreground">Cancellation debit note</div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] sm:grid-cols-3">
+          <div>
+            <div className="text-subtle">Trade rate (incl. comm.)</div>
+            <div className="font-mono text-muted-foreground">{fmtN(rate)} ₨/maund</div>
+          </div>
+          <div>
+            <div className="text-subtle">Settlement price</div>
+            <div className="font-mono text-muted-foreground">{fmtN(settlement)} ₨/maund</div>
+          </div>
+          <div>
+            <div className="text-subtle">Open quantity</div>
+            <div className="font-mono text-muted-foreground">
+              {fmtN(openQty)} MT ({fmtN(openMaunds)} maund)
+            </div>
+          </div>
+        </div>
+        <p className="text-[11px]">
+          {amount <= 0.005 ? (
+            <span className="text-subtle">
+              Settlement equals the trade rate — cancelling posts{" "}
+              <span className="text-foreground">no ledger entry</span>.
+            </span>
+          ) : diff > 0 ? (
+            <span className="text-success">
+              Seller owes {fmtN(amount)} PKR ({fmtN(openMaunds)} maund × {fmtN(diff)}) — approving
+              posts a debit note on their receivable ledger.
+            </span>
+          ) : (
+            <span className="text-warning">
+              We owe the seller {fmtN(amount)} PKR ({fmtN(openMaunds)} maund × {fmtN(Math.abs(diff))})
+              — approving posts a credit note on their payable ledger.
+            </span>
+          )}
+        </p>
+      </div>
+    );
+  }
+
   if (entityType === "TRADE") {
     return (
       <TradeEditChangePreview

@@ -166,7 +166,7 @@ export const teamRouter = router({
 
       let initialStatus: "PENDING" | "PENDING_CEO" | undefined;
       if (requiresCeoApproval(input.entityType, input.action, department)) {
-        if (input.action === "CLOSE") {
+        if (input.action === "CLOSE" || input.action === "CANCEL") {
           initialStatus = "PENDING_CEO";
         } else if (input.action === "CREATE" && input.entityType === "COMMODITY") {
           initialStatus = "PENDING_CEO";

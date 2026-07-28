@@ -18,14 +18,12 @@ import { Ban, PenLine } from "lucide-react";
 import { useState } from "react";
 import { TradeEditModal } from "@/components/trader/trade-edit-modal";
 import { TradeCancelModal } from "@/components/trader/trade-cancel-modal";
-import { SettledTradesSection } from "@/components/trader/settled-trades-section";
 
 type TradeFilter =
   | "UNFINISHED"
   | "ALL"
   | "DRAFTS"
   | "LOCKED"
-  | "SETTLED"
   | "CLOSED"
   | "CANCELLED";
 
@@ -34,7 +32,6 @@ const FILTERS: TradeFilter[] = [
   "ALL",
   "DRAFTS",
   "LOCKED",
-  "SETTLED",
   "CLOSED",
   "CANCELLED",
 ];
@@ -62,7 +59,6 @@ export default function MyTradesPage() {
   const [cancelRef, setCancelRef] = useState<string | null>(null);
   const utils = trpc.useUtils();
   const { data: cancelledCount } = trpc.trader.myCancelledCount.useQuery();
-  const { data: settledCount } = trpc.trader.mySettledCount.useQuery();
   const { data: drafts, isLoading: draftsLoading } = trpc.trader.bookingDrafts.useQuery();
   const deleteDraft = trpc.trader.deleteBookingDraft.useMutation({
     onSuccess: () => void utils.trader.bookingDrafts.invalidate(),
@@ -94,7 +90,8 @@ export default function MyTradesPage() {
           <h1 className="text-2xl font-semibold text-foreground">My Trades</h1>
           <p className="text-sm text-subtle">
             Use <span className="text-foreground">Edit</span> on draft or unreviewed trades only — locked
-            contracts cannot change price, quantity, or commission.
+            contracts cannot change price, quantity, or commission. Cancelling a locked trade raises a
+            debit note and goes to the CEO.
           </p>
         </div>
         <div className="flex gap-2">
@@ -137,20 +134,16 @@ export default function MyTradesPage() {
                 ? "Drafts"
                 : f === "CLOSED"
                   ? "Closed"
-                  : f === "SETTLED"
-                    ? `Settled (${settledCount ?? 0})`
-                    : f === "CANCELLED"
-                      ? `Cancelled (${cancelledCount ?? 0})`
-                      : f === "ALL"
-                        ? "All"
-                        : "Locked"}
+                  : f === "CANCELLED"
+                    ? `Cancelled (${cancelledCount ?? 0})`
+                    : f === "ALL"
+                      ? "All"
+                      : "Locked"}
           </button>
         ))}
       </div>
 
-      {filter === "SETTLED" ? (
-        <SettledTradesSection />
-      ) : filter === "UNFINISHED" ? (
+      {filter === "UNFINISHED" ? (
         draftsLoading ? (
           <div className="text-subtle">Loading unfinished bookings…</div>
         ) : !drafts?.length ? (
@@ -266,7 +259,7 @@ export default function MyTradesPage() {
                             type="button"
                             onClick={() => setCancelRef(t.tradeRef)}
                             className="inline-flex items-center gap-1 rounded-md border border-kastros-red/40 bg-kastros-red/10 px-2 py-1 text-[11px] font-semibold text-kastros-red hover:bg-kastros-red/20"
-                            title="Cancel this trade (only possible before it is locked)"
+                            title="Cancel this trade — locked trades go to the CEO with a debit note"
                           >
                             <Ban className="h-3 w-3" />
                             Cancel

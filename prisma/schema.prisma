@@ -1059,6 +1059,8 @@ enum ChangeRequestAction {
   EDIT
   DELETE
   CLOSE
+  /// Cancel a LOCKED trade — carries the debit-note payload; CEO approval posts it.
+  CANCEL
 }
 
 enum ChangeRequestStatus {

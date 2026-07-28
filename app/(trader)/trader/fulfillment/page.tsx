@@ -29,6 +29,14 @@ export default function TraderFulfillmentPage() {
     },
   });
 
+  // Within tolerance the trader closes alone — no CEO round-trip.
+  const freeClose = trpc.trader.closeTrade.useMutation({
+    onSuccess: () => {
+      void utils.trader.tradeFulfillment.invalidate();
+      void utils.trader.myTrades.invalidate();
+    },
+  });
+
   const pendingCloseRefs = new Set(
     (myRequests ?? [])
       .filter(
@@ -50,7 +58,7 @@ export default function TraderFulfillmentPage() {
     <div className="kastros-desk-page">
       <PageHeader
         title="Trade fulfillment"
-        subtitle="Physical progress on locked trades. Request manual close here (CEO approval). Trades auto-close only when received qty exceeds contract + booked tolerance."
+        subtitle="Physical progress on locked trades. Within tolerance you close a trade yourself; short of the tolerance floor a close goes to the CEO. Trades auto-close above contract + tolerance."
       />
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -72,6 +80,9 @@ export default function TraderFulfillmentPage() {
             const pct = t.fulfillmentPct;
             const isBuy = t.direction === "BUY";
             const closePending = pendingCloseRefs.has(t.tradeRef);
+            // Received within tolerance → the trader closes without the CEO.
+            const closeFloorQty = Math.max(0, t.contractualQtyMt - t.quantityToleranceMt);
+            const withinTolerance = t.receivedQtyMt + 1e-9 >= closeFloorQty;
             return (
               <article key={t.tradeRef} className="rounded-xl border border-border bg-card p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -107,6 +118,17 @@ export default function TraderFulfillmentPage() {
                     {t.contractStatus === "Open" && (
                       closePending ? (
                         <span className="text-[10px] font-medium text-accent-secondary">Close pending CEO</span>
+                      ) : withinTolerance ? (
+                        <button
+                          type="button"
+                          disabled={freeClose.isPending && freeClose.variables?.tradeRef === t.tradeRef}
+                          onClick={() => freeClose.mutate({ tradeRef: t.tradeRef })}
+                          className="rounded-md bg-success px-2.5 py-1 text-[10px] font-bold text-white hover:bg-success/90 disabled:opacity-50"
+                        >
+                          {freeClose.isPending && freeClose.variables?.tradeRef === t.tradeRef
+                            ? "Closing…"
+                            : "Close trade"}
+                        </button>
                       ) : (
                         <button
                           type="button"
@@ -116,9 +138,14 @@ export default function TraderFulfillmentPage() {
                           }}
                           className="text-[10px] font-medium text-brand hover:underline"
                         >
-                          Request close
+                          Request close (CEO)
                         </button>
                       )
+                    )}
+                    {freeClose.error && freeClose.variables?.tradeRef === t.tradeRef && (
+                      <span className="max-w-[220px] text-right text-[10px] text-destructive">
+                        {freeClose.error.message}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -154,12 +181,25 @@ export default function TraderFulfillmentPage() {
 
                 {t.contractStatus === "Open" && (
                   <p className="mt-3 text-[11px] text-subtle">
-                    Auto-closes only if{" "}
-                    {isBuy ? "received" : "dispatched"} qty exceeds{" "}
-                    <span className="font-medium text-foreground">
-                      {formatQtyWithUnit(t.autoCloseAboveQtyMt, t.quantityUnit, 2)}
-                    </span>{" "}
-                    (contract + tolerance). Otherwise use Request close.
+                    {withinTolerance ? (
+                      <>
+                        {isBuy ? "Received" : "Dispatched"} qty is at or above the tolerance floor of{" "}
+                        <span className="font-medium text-foreground">
+                          {formatQtyWithUnit(closeFloorQty, t.quantityUnit, 2)}
+                        </span>{" "}
+                        — you can close this trade yourself. Auto-closes above{" "}
+                        {formatQtyWithUnit(t.autoCloseAboveQtyMt, t.quantityUnit, 2)}.
+                      </>
+                    ) : (
+                      <>
+                        {isBuy ? "Received" : "Dispatched"} qty is below the tolerance floor of{" "}
+                        <span className="font-medium text-foreground">
+                          {formatQtyWithUnit(closeFloorQty, t.quantityUnit, 2)}
+                        </span>{" "}
+                        — closing short needs CEO approval. Auto-closes above{" "}
+                        {formatQtyWithUnit(t.autoCloseAboveQtyMt, t.quantityUnit, 2)}.
+                      </>
+                    )}
                   </p>
                 )}
 

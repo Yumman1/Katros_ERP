@@ -29,15 +29,30 @@ export function traderCanEditFromList(trade: TradeLike): boolean {
 }
 
 /**
- * Trader may cancel only *before* execution locks the trade — i.e. while still
- * PENDING (draft or submitted-but-unreviewed). Once locked, a contract exists
- * and deliveries can be allocated against it, so cancellation is closed off.
+ * Trader may cancel at any stage before the trade finishes. Before lock the
+ * cancel is simple; once LOCKED it settles in money — a debit note priced
+ * against the settlement market goes to the CEO, and the trade only cancels
+ * on approval.
  */
 export function traderCanCancelTrade(trade: TradeLike): boolean {
-  if (trade.tradeStatus !== TradeStatus.PENDING) return false;
+  if (
+    trade.tradeStatus !== TradeStatus.PENDING &&
+    trade.tradeStatus !== TradeStatus.LOCKED &&
+    trade.tradeStatus !== TradeStatus.CONFIRMED
+  ) {
+    return false;
+  }
   // Trades in direct settlement are frozen — settle or cancel the settlement first.
   if (trade.settlementRequested === true || trade.directSettled === true) return false;
   return true;
+}
+
+/** Locked cancellation goes through the debit note + CEO approval. */
+export function traderCancelNeedsDebitNote(trade: TradeLike): boolean {
+  return (
+    traderCanCancelTrade(trade) &&
+    (trade.tradeStatus === TradeStatus.LOCKED || trade.tradeStatus === TradeStatus.CONFIRMED)
+  );
 }
 
 /** Why cancellation is unavailable — surfaced as a tooltip in the trades list. */
@@ -47,7 +62,7 @@ export function traderCancelBlockedReason(trade: TradeLike): string | null {
   if (trade.settlementRequested === true || trade.directSettled === true) {
     return "Trade is in direct settlement — cancel the settlement request first";
   }
-  return "Locked trades cannot be cancelled — cancellation is only possible before execution locks the trade";
+  return "This trade has finished executing and can no longer be cancelled";
 }
 
 export function traderEditRequiresCeoApproval(trade: TradeLike): boolean {

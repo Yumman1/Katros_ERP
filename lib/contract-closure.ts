@@ -47,6 +47,15 @@ export function autoCloseThresholdQty(contractualQtyMt: number, toleranceMt: num
 }
 
 /**
+ * Contract qty − booked tolerance — the free-close floor. At or above it the
+ * delivery is within tolerance and the trader closes without CEO approval;
+ * below it a close is short and goes to the CEO.
+ */
+export function freeCloseFloorQty(contractualQtyMt: number, toleranceMt: number): number {
+  return Math.max(0, contractualQtyMt - toleranceMt);
+}
+
+/**
  * Auto-close only when received qty exceeds contract + booked tolerance (e.g. 300 MT + 10 MT → closes above 310 MT).
  * All other cases require manual close from the trader fulfillment page (CEO approval).
  */
