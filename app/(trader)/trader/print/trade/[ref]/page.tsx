@@ -116,9 +116,11 @@ export default function TradeConfirmationPrintPage() {
         <div className="print-doc mx-auto my-6 w-full max-w-[720px] border border-black bg-white p-8">
           {/* ── Company header ── */}
           <div className="border-b-2 border-black pb-3 text-center">
+            {/* logo-print, not logo: the app's logo is composited on black for
+                the dark shell and prints as a black box on white paper. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/branding/logo.png"
+              src="/branding/logo-print.png"
               alt="Kastros"
               className="print-logo mx-auto block h-12 w-auto object-contain"
             />
