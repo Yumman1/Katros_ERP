@@ -115,6 +115,15 @@ export const ceoRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "This item is not awaiting CEO approval" });
       }
 
+      // Every rejection carries a reason — the Rejections page is only useful
+      // if it can say why, and the other CEO reject buttons already demand one.
+      if (input.decision === "REJECTED" && !input.note?.trim()) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Add a reason before rejecting — it is shown to the requester",
+        });
+      }
+
       let applied = false;
       if (input.decision === "APPROVED") {
         applied = await applyApprovedChangeRequest(req, actorName(ctx.session.user));
@@ -128,6 +137,26 @@ export const ceoRouter = router({
       );
       if (req.entityType === "TRADE" && (input.decision === "REJECTED" || req.action === "DELETE")) {
         await recordTradeChangeResolved(resolved, input.decision, actorName(ctx.session.user));
+      }
+
+      // A rejected trade change lands on the trader's Rejections page with the
+      // CEO's reason, the same way over-delivery and release rejections do.
+      if (input.decision === "REJECTED" && req.entityType === "TRADE") {
+        const trade = await prisma.trade.findUnique({
+          where: { tradeRef: req.entityRef.trim() },
+          select: { traderName: true, counterparty: { select: { name: true } } },
+        });
+        const { recordRejection } = await import("@/server/rejections");
+        await recordRejection({
+          kind: "TRADE_CHANGE_CEO",
+          refLabel: `${req.entityRef} · ${req.action.toLowerCase()}`,
+          tradeRef: req.entityRef,
+          counterpartyName: trade?.counterparty.name ?? null,
+          traderName: trade?.traderName ?? null,
+          rejectedBy: actorName(ctx.session.user),
+          rejectedRole: "CEO",
+          reason: input.note!.trim(),
+        });
       }
       return resolved;
     }),

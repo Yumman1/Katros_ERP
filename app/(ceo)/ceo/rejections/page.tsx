@@ -13,6 +13,7 @@ const KIND_LABELS: Record<string, string> = {
   SELL_RELEASE_CEO: "Sell release — CEO",
   INBOUND_OVER_TRADER: "Over-delivery — trader",
   INBOUND_OVER_CEO: "Over-delivery — CEO",
+  TRADE_CHANGE_CEO: "Trade change — CEO",
   TRADE_SETTLEMENT: "Direct settlement",
   VOUCHER: "Voucher",
   PAYMENT: "Payment",
