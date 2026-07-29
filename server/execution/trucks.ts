@@ -15,7 +15,7 @@ import {
 } from "@/lib/warehouse-allocation";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { COUNTER, nextInboundReceiptSeq, nextRef } from "@/server/db/counters";
 import {
   CONTRACT_INCLUDE,
   TRUCK_INCLUDE,
@@ -742,7 +742,12 @@ export async function assignTruckToTrade(
         });
       }
 
-      const seq = await nextRef(COUNTER.INBOUND, tx);
+      // The counter must sit above every KCS number already in the table —
+      // a bulk load carries its own refs, so a counter left at the row count
+      // re-issues one that exists and the insert dies on the unique index.
+      // Self-healing beats failing an operator's assignment: take the counter
+      // past the highest ref in use, then draw from it.
+      const seq = await nextInboundReceiptSeq(tx);
       const netKg = allocateKg;
       const invoiceWeightKg = truck.gateInvoiceWeightKg ?? netKg;
       const allocatedQtyMt =
