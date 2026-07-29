@@ -66,10 +66,6 @@ export default function TraderFulfillmentPage() {
   );
 
   const openCount = trades?.filter((t) => t.contractStatus === "Open").length ?? 0;
-  const avgPct =
-    trades && trades.length
-      ? trades.reduce((s, t) => s + t.fulfillmentPct, 0) / trades.length
-      : 0;
 
   return (
     <div className="kastros-desk-page">
@@ -78,10 +74,9 @@ export default function TraderFulfillmentPage() {
         subtitle="Physical progress on locked trades. Within tolerance you close a trade yourself; short of the tolerance floor a close goes to the CEO. Trades auto-close above contract + tolerance."
       />
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         <Stat label="Locked trades" value={String(trades?.length ?? 0)} />
         <Stat label="Open" value={String(openCount)} accent="warning" />
-        <Stat label="Avg progress" value={`${(avgPct * 100).toFixed(0)}%`} accent="success" />
       </div>
 
       <div className="kastros-desk-scroll space-y-4 pb-6">
