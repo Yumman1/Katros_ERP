@@ -369,25 +369,6 @@ function BookTradeForm() {
   }, [counterpartyId]);
   const filerStatus = filerOverride ?? selectedCounterparty?.taxFilerStatus ?? "FILER";
 
-  // Prefill contact person/number from the counterparty when the fields are empty.
-  useEffect(() => {
-    if (!selectedCounterparty) return;
-    const { contactPerson, contactPhone } = selectedCounterparty;
-    setTradeParams((p) => {
-      const next = { ...p };
-      let changed = false;
-      if (!next.contactPerson && contactPerson) {
-        next.contactPerson = contactPerson;
-        changed = true;
-      }
-      if (!next.contactNumber && contactPhone) {
-        next.contactNumber = contactPhone;
-        changed = true;
-      }
-      return changed ? next : p;
-    });
-  }, [selectedCounterparty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const sellInflow = trpc.policy.sellInflowStatus.useQuery(undefined, {
     enabled: direction === TradeDirection.SELL,
   });
@@ -660,12 +641,11 @@ function BookTradeForm() {
         if (isCorn && tradeScope === "LOCAL" && tradeParams.dealStatus) {
           cleanedParams.dealStatus = tradeParams.dealStatus;
         }
-        if (tradeParams.contactPerson) {
-          cleanedParams.contactPerson = tradeParams.contactPerson;
-        }
-        if (tradeParams.contactNumber) {
-          cleanedParams.contactNumber = tradeParams.contactNumber;
-        }
+        // Contact person/number are not trade terms — they live on the
+        // counterparty record and are shown from there, so a booking never
+        // copies them onto the trade.
+        delete cleanedParams.contactPerson;
+        delete cleanedParams.contactNumber;
         if (data.paymentType === "CREDIT" && data.creditDays) {
           cleanedParams.creditDays = data.creditDays;
         }
@@ -832,6 +812,30 @@ function BookTradeForm() {
                   </option>
                 ))}
               </select>
+              {/* Registered details, read-only — they belong to the counterparty
+                  record, so the booking form shows them rather than asking again. */}
+              {selectedCounterparty && (
+                <dl className="mt-2 grid grid-cols-3 gap-x-3 gap-y-1 rounded-lg border border-kastros-border bg-kastros-card px-3 py-2 text-xs">
+                  <div className="min-w-0">
+                    <dt className="text-[10px] uppercase tracking-wider text-subtle">NTN</dt>
+                    <dd className="truncate font-mono text-foreground">
+                      {selectedCounterparty.ntn || "—"}
+                    </dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-[10px] uppercase tracking-wider text-subtle">Contact</dt>
+                    <dd className="truncate text-foreground">
+                      {selectedCounterparty.contactPerson || "—"}
+                    </dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-[10px] uppercase tracking-wider text-subtle">Phone</dt>
+                    <dd className="truncate font-mono text-foreground">
+                      {selectedCounterparty.contactPhone || "—"}
+                    </dd>
+                  </div>
+                </dl>
+              )}
               {selectedCounterparty && sellInflow.data && isOverInflowLimit(selectedCounterparty.id) && (
                 <p className="mt-1 text-xs text-warning">
                   Caution: payments received from {selectedCounterparty.name} this fiscal year (
@@ -900,25 +904,6 @@ function BookTradeForm() {
                   )}
                 </div>
               )}
-            </Field>
-
-            <Field label="Contact person (optional)">
-              <input
-                value={String(tradeParams.contactPerson ?? "")}
-                onChange={(e) =>
-                  setTradeParams((p) => ({ ...p, contactPerson: e.target.value || undefined }))
-                }
-                className="kastros-select w-full"
-              />
-            </Field>
-            <Field label="Contact number (optional)">
-              <input
-                value={String(tradeParams.contactNumber ?? "")}
-                onChange={(e) =>
-                  setTradeParams((p) => ({ ...p, contactNumber: e.target.value || undefined }))
-                }
-                className="kastros-select w-full"
-              />
             </Field>
 
             <Field label="Trade date" error={errors.tradeDate?.message}>
