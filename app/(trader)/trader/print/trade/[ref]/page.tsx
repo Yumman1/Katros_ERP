@@ -17,6 +17,9 @@ const fmtDate = (d: Date | string) =>
 
 /** Print CSS: hide the app shell and the toolbar, print only the document. */
 const PRINT_CSS = `
+/* Browsers drop background graphics by default — the logo must survive. */
+.print-logo { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
 @media print {
   .no-print { display: none !important; }
   body * { visibility: hidden !important; }
@@ -113,8 +116,13 @@ export default function TradeConfirmationPrintPage() {
         <div className="print-doc mx-auto my-6 w-full max-w-[720px] border border-black bg-white p-8">
           {/* ── Company header ── */}
           <div className="border-b-2 border-black pb-3 text-center">
-            <div className="text-2xl font-bold uppercase tracking-[0.3em]">Kastros</div>
-            <div className="mt-0.5 text-[11px] uppercase tracking-wider text-neutral-600">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/branding/logo.png"
+              alt="Kastros"
+              className="print-logo mx-auto block h-12 w-auto object-contain"
+            />
+            <div className="mt-1.5 text-[11px] uppercase tracking-wider text-neutral-600">
               Agri-commodity trading · Pakistan
             </div>
             <div className="mt-3 text-lg font-bold uppercase tracking-[0.2em]">
@@ -221,11 +229,16 @@ export default function TradeConfirmationPrintPage() {
             <SignatureLine label={`For ${trade.counterparty.name}`} />
           </div>
 
-          <p className="mt-6 border-t border-black/20 pt-2 text-center text-[10px] text-neutral-500">
-            Printed {new Date().toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" })}
-            {" · "}
-            This document is generated from contract {trade.tradeRef} and is valid without
-            signature only as an internal record.
+          {/* Deemed acceptance — a trade confirmation binds unless disputed,
+              so the paper says so rather than waiting on a countersignature. */}
+          <p className="mt-6 border-t border-black/20 pt-2 text-center text-[10px] leading-relaxed text-neutral-600">
+            This contract note is issued against contract{" "}
+            <span className="font-mono font-semibold">{trade.tradeRef}</span>. If it is not signed
+            and returned, and no written objection is received, within 24 hours of issue, it shall
+            be deemed accepted and remains valid and binding on both parties without signature.
+          </p>
+          <p className="mt-1 text-center text-[10px] text-neutral-500">
+            Issued {new Date().toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" })}
           </p>
         </div>
       )}
