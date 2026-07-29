@@ -17,7 +17,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
-import { PenLine, X } from "lucide-react";
+import { PenLine, Printer, X } from "lucide-react";
 import { TradeChangeForm, TRADE_EDIT_SECTION_ID } from "@/components/trader/trade-change-form";
 import { TradeActivityPanel } from "@/components/trade/trade-activity-panel";
 import { isTraderDraft, traderCanEditTrade } from "@/lib/trade-lifecycle";
@@ -171,6 +171,13 @@ export default function TradeDetailPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/trader/print/trade/${encodeURIComponent(trade.tradeRef)}`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-kastros-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-foreground/5"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              Print
+            </Link>
             {canEdit && (
               <button
                 type="button"
