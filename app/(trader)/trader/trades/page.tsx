@@ -14,7 +14,7 @@ import {
 import Link from "next/link";
 import { TradeStatus } from "@prisma/client";
 import { endOfMonth, format, startOfMonth } from "date-fns";
-import { Ban, PenLine } from "lucide-react";
+import { Ban, PenLine, Printer } from "lucide-react";
 import { useState } from "react";
 import { TradeEditModal } from "@/components/trader/trade-edit-modal";
 import { TradeCancelModal } from "@/components/trader/trade-cancel-modal";
@@ -265,12 +265,22 @@ export default function MyTradesPage() {
                             Cancel
                           </button>
                         ) : null}
+                        {/* Always available — a booked trade can be reprinted
+                            at any point in its life, including once closed. */}
+                        <Link
+                          href={`/trader/print/trade/${encodeURIComponent(t.tradeRef)}`}
+                          className="inline-flex items-center gap-1 rounded-md border border-kastros-border px-2 py-1 text-[11px] font-semibold text-muted-foreground hover:bg-foreground/5"
+                          title="Print the contract note for this trade"
+                        >
+                          <Printer className="h-3 w-3" />
+                          Print
+                        </Link>
                         {!traderCanEditTrade(t) && !traderCanCancelTrade(t) && (
                           <span
-                            className="text-[11px] text-subtle"
+                            className="sr-only"
                             title={traderCancelBlockedReason(t) ?? undefined}
                           >
-                            —
+                            {traderCancelBlockedReason(t) ?? ""}
                           </span>
                         )}
                       </div>
