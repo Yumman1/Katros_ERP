@@ -138,7 +138,7 @@ export function CeoApprovalsInbox() {
                   <input
                     value={notes[r.id] ?? ""}
                     onChange={(e) => setNotes((n) => ({ ...n, [r.id]: e.target.value }))}
-                    placeholder="Optional note…"
+                    placeholder="Note — required to reject, optional to approve"
                     className="min-w-0 flex-1 rounded-md border border-kastros-border bg-black/20 px-3 py-1.5 text-xs text-foreground placeholder:text-subtle focus:border-brand focus:outline-none"
                   />
                   <button
@@ -152,7 +152,14 @@ export function CeoApprovalsInbox() {
                   </button>
                   <button
                     type="button"
-                    disabled={resolve.isPending}
+                    // A rejection reaches the requester's Rejections page, so it
+                    // must say why — the note is required to reject.
+                    disabled={resolve.isPending || !(notes[r.id] ?? "").trim()}
+                    title={
+                      (notes[r.id] ?? "").trim()
+                        ? undefined
+                        : "Add a reason before rejecting"
+                    }
                     onClick={() => resolve.mutate({ id: r.id, decision: "REJECTED", note: notes[r.id] })}
                     className="inline-flex items-center gap-1 rounded-md border border-kastros-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
                   >

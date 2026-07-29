@@ -9,6 +9,8 @@ export type RejectionKind =
   | "PAYMENT"
   | "INBOUND_OVER_TRADER"
   | "INBOUND_OVER_CEO"
+  /** CEO turned down a change request on a trade — edit, delete, close, cancel. */
+  | "TRADE_CHANGE_CEO"
   | "TRADE_SETTLEMENT";
 
 export type RejectionView = {
