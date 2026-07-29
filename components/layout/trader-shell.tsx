@@ -16,7 +16,6 @@ const nav = [
   { href: "/trader/trades", label: "My Trades", icon: <ListOrdered className="h-4 w-4" /> },
   { href: "/trader/fulfillment", label: "Fulfillment", icon: <Truck className="h-4 w-4" /> },
   { href: "/trader/invoice-approvals", label: "Invoice approvals", icon: <Receipt className="h-4 w-4" /> },
-  { href: "/trader/over-delivery-approvals", label: "Over-delivery", icon: <Truck className="h-4 w-4" /> },
   { href: "/trader/approvals", label: "Approvals", icon: <PenLine className="h-4 w-4" /> },
   { href: "/trader/rejections", label: "Rejections", icon: <XCircle className="h-4 w-4" /> },
   { href: "/trader/positions", label: "Positions", icon: <LineChart className="h-4 w-4" /> },
@@ -56,14 +55,12 @@ export function TraderShell({ children }: { children: ReactNode }) {
   const appNav = nav.map((item) => ({
     ...item,
     badge:
-      // Invoice approvals covers both tabs, so its badge is the combined count.
+      // Both destinations are tabbed, so each badge is the sum of its tabs.
       item.href === "/trader/invoice-approvals"
         ? navBadge((buyApprovals.data ?? 0) + (sellApprovals.data ?? 0))
-        : item.href === "/trader/over-delivery-approvals"
-          ? navBadge(overDeliveryApprovals.data)
-          : item.href === "/trader/approvals"
-            ? navBadge(editApprovals.data)
-            : undefined,
+        : item.href === "/trader/approvals"
+          ? navBadge((editApprovals.data ?? 0) + (overDeliveryApprovals.data ?? 0))
+          : undefined,
   }));
 
   return (
