@@ -124,6 +124,9 @@ enum CounterpartyType {
   SELLER
   BROKER
   BANK
+  /// Us. Carries the gatepasses for warehouse-to-warehouse stock shifting;
+  /// never appears in trade booking or on a ledger.
+  INTERNAL
 }
 
 /// Ledger side. A counterparty is ONE record (one CP id — inventory, trades
@@ -969,6 +972,76 @@ model OutboundDispatch {
 
   @@index([tradeRef, status])
   @@index([warehouseName])
+}
+
+enum StockTransferStatus {
+  /// Booked, nothing has physically moved yet.
+  DRAFT
+  /// Gated out of the source — off the source's books, not yet on the destination's.
+  IN_TRANSIT
+  /// Weighed in at the destination — the destination now carries it.
+  RECEIVED
+  CANCELLED
+}
+
+/// Internal warehouse-to-warehouse stock movement.
+///
+/// No trade, no counterparty money, no ledger entry — grain we already own
+/// changing shelf. It carries its own commodity because there is no contract to
+/// read one from, which is exactly why it cannot ride on InboundReceipt /
+/// OutboundDispatch (both require a tradeRef).
+///
+/// A transfer has two legs and its own gatepass at each end, booked against the
+/// internal counterparty so the gate register reads the same as any other truck:
+///   DRAFT ──gate out──▶ IN_TRANSIT ──weigh in──▶ RECEIVED
+/// Source stock drops at gate-out and destination stock rises at weigh-in, so
+/// grain in transit belongs to neither warehouse and is never double-counted.
+///
+/// `fromWarehouseName` is null when stock arrives from a yard we do not manage
+/// (`externalOrigin` names it) — the "shifted in from Kisan Godam" case.
+model StockTransfer {
+  id          String @id @default(cuid())
+  transferRef String @unique
+
+  commodityCode String
+  commodityName String
+
+  fromWarehouseName String?
+  toWarehouseName   String
+  /// Names the yard when stock comes from outside the managed warehouses.
+  externalOrigin    String?
+
+  dispatchedQtyMt Decimal  @db.Decimal(20, 6)
+  /// Weighed at the destination; null until received. Shortfall vs dispatched
+  /// is transit loss and is reported, never silently absorbed.
+  receivedQtyMt   Decimal? @db.Decimal(20, 6)
+
+  truckNo     String
+  driverName  String?
+  driverPhone String?
+  biltyNo     String?
+  bags        Int?
+
+  /// Gatepasses raised for each leg (counterparty = the internal party).
+  outGatepassNo String? @unique
+  inGatepassNo  String? @unique
+
+  status StockTransferStatus @default(DRAFT)
+  reason String?
+  remarks String?
+
+  createdByName  String?
+  dispatchedAt   DateTime?
+  receivedAt     DateTime?
+  cancelledAt    DateTime?
+  cancelReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([toWarehouseName, commodityCode])
+  @@index([fromWarehouseName, commodityCode])
+  @@index([status])
 }
 
 enum SpotPurchaseState {

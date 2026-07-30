@@ -33,6 +33,7 @@ export default function ExecutionInventoryPage() {
   const { data: valuation } = trpc.execution.inventoryValuation.useQuery(undefined, {
     refetchInterval: DESK_REFETCH_MS,
   });
+  const { data: stockTransfers } = trpc.execution.stockTransfers.useQuery({});
 
   const contractByRef = useMemo(
     () => new Map((contracts ?? []).map((c) => [c.tradeRef, c])),
@@ -59,9 +60,10 @@ export default function ExecutionInventoryPage() {
         inbound: inbound ?? [],
         outbound: outbound ?? [],
         pendingTrucks: pendingTrucks ?? [],
+        transfers: stockTransfers ?? [],
         commodityForTradeRef,
       }),
-    [inbound, outbound, pendingTrucks, commodityForTradeRef],
+    [inbound, outbound, pendingTrucks, stockTransfers, commodityForTradeRef],
   );
 
   const warehouses = useMemo(() => {

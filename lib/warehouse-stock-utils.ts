@@ -1,5 +1,10 @@
 import { aggregateWarehouseStock } from "@/lib/warehouse-utilization";
-import { inboundStockDelta, outboundStockDelta } from "@/lib/inventory-stock";
+import {
+  inboundStockDelta,
+  outboundStockDelta,
+  stockTransferDelta,
+  type StockTransferStockInput,
+} from "@/lib/inventory-stock";
 
 export function stockAsOf(
   warehouseName: string,
@@ -19,6 +24,7 @@ export function stockAsOf(
   }[],
   contractByRef: Map<string, { commodityCode: string; quantityUnit: string }>,
   asOf: Date | null,
+  transfers: (StockTransferStockInput & { movedAt: Date | string | null })[] = [],
 ) {
   const rows: { commodityCode: string; quantityUnit: string; netQty: number }[] = [];
   for (const r of inbound) {
@@ -45,7 +51,29 @@ export function stockAsOf(
       netQty: delta,
     });
   }
-  return aggregateWarehouseStock(rows);
+  for (const t of transfers) {
+    if (asOf && t.movedAt && new Date(t.movedAt) > asOf) continue;
+    const delta = stockTransferDelta(warehouseName, t);
+    if (delta === 0) continue;
+    rows.push({ commodityCode: t.commodityCode, quantityUnit: "MT", netQty: delta });
+  }
+  // aggregateWarehouseStock floors each row at zero, so a movement out has to be
+  // netted against the movements in before it gets there — otherwise dispatches
+  // and shifts out are dropped and the warehouse reads permanently full.
+  return aggregateWarehouseStock(netByCommodity(rows));
+}
+
+function netByCommodity(
+  rows: { commodityCode: string; quantityUnit: string; netQty: number }[],
+): { commodityCode: string; quantityUnit: string; netQty: number }[] {
+  const net = new Map<string, { commodityCode: string; quantityUnit: string; netQty: number }>();
+  for (const r of rows) {
+    const key = `${r.commodityCode}|${r.quantityUnit}`;
+    const acc = net.get(key);
+    if (acc) acc.netQty += r.netQty;
+    else net.set(key, { ...r });
+  }
+  return Array.from(net.values());
 }
 
 export function hadActivityInRange(
