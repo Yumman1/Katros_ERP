@@ -1,7 +1,7 @@
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
 import { COUNTER, nextRef } from "@/server/db/counters";
-import { postCreditForVoucher } from "./ledger";
+import { listOpenSettlementNotes, markSettlementNotePaid, postCreditForVoucher } from "./ledger";
 
 export type VoucherView = {
   id: string;
@@ -13,6 +13,8 @@ export type VoucherView = {
   side: "BUY" | "SELL";
   /** Trade this payment is against; null = direct advance. */
   tradeRef: string | null;
+  /** Cancellation / short-close note this voucher settles; null otherwise. */
+  noteRef: string | null;
   amountPkr: number;
   method: string | null;
   reference: string | null;
@@ -40,6 +42,7 @@ function voucherRowToView(row: VoucherRow): VoucherView {
     counterpartyCode: row.counterparty.code,
     side: row.side,
     tradeRef: row.tradeRef,
+    noteRef: row.noteRef,
     amountPkr: num(row.amountPkr),
     method: row.method,
     reference: row.reference,
@@ -60,6 +63,8 @@ export async function createVoucher(input: {
   side?: "BUY" | "SELL";
   /** Trade the payment is against; null/undefined = direct advance. */
   tradeRef?: string | null;
+  /** Cancellation / short-close note being settled — takes over from tradeRef. */
+  noteRef?: string | null;
   amountPkr: number;
   method?: string | null;
   reference?: string | null;
@@ -74,9 +79,27 @@ export async function createVoucher(input: {
     select: { id: true },
   });
   if (!cp) throw new Error("Counterparty not found");
-  const side = input.side ?? "SELL";
-  const tradeRef = input.tradeRef?.trim() || null;
-  if (tradeRef) {
+  let side = input.side ?? "SELL";
+  let tradeRef = input.tradeRef?.trim() || null;
+  const noteRef = input.noteRef?.trim() || null;
+
+  if (noteRef) {
+    // A note voucher pays a cancellation claim, not a delivery. The note itself
+    // dictates the account and the trade — the operator only confirms the money
+    // moved — and it settles in one go, so the amount must match what is due.
+    const open = await listOpenSettlementNotes(input.counterpartyId);
+    const note = open.find((n) => n.noteRef === noteRef);
+    if (!note) {
+      throw new Error(`${noteRef} is not an open note on this counterparty`);
+    }
+    if (Math.abs(note.amountPkr - input.amountPkr) > 0.5) {
+      throw new Error(
+        `${noteRef} is due ${note.amountPkr.toLocaleString("en-PK")} PKR — a note is settled in full, not in parts`,
+      );
+    }
+    side = note.side;
+    tradeRef = note.tradeRef;
+  } else if (tradeRef) {
     const trade = await prisma.trade.findUnique({
       where: { tradeRef },
       select: {
@@ -123,6 +146,7 @@ export async function createVoucher(input: {
       counterpartyId: input.counterpartyId,
       side,
       tradeRef,
+      noteRef,
       amountPkr: input.amountPkr,
       method: input.method?.trim() || null,
       reference: input.reference?.trim() || null,
@@ -183,18 +207,33 @@ export async function approveVoucher(
         amountPkr: num(row!.amountPkr),
         side: row!.side,
         tradeRef: row!.tradeRef,
-        note: row!.note,
+        note: row!.noteRef
+          ? `Settles ${row!.noteRef}${row!.note ? ` — ${row!.note}` : ""}`
+          : row!.note,
       },
       tx,
     );
+    // Closing the claim rides in the same transaction as its credit — a note can
+    // never read as paid without the money, nor the money land without closing it.
+    if (row!.noteRef) {
+      await markSettlementNotePaid(
+        {
+          counterpartyId: row!.counterpartyId,
+          noteRef: row!.noteRef,
+          voucherNo: row!.voucherNo,
+        },
+        tx,
+      );
+    }
   });
   const fresh = await prisma.voucher.findUnique({
     where: { id: voucherId },
     include: VOUCHER_INCLUDE,
   });
   // The credit just landed — if it completes a settled trade's amount, that
-  // trade closes now.
-  if (fresh?.tradeRef) {
+  // trade closes now. A note voucher is exempt: its trade is already cancelled
+  // or closed, and its money answers to the note, not to a settlement invoice.
+  if (fresh?.tradeRef && !fresh.noteRef) {
     const { syncSettlementCollection } = await import("@/server/settlement-billing");
     await syncSettlementCollection(fresh.tradeRef, approvedByName);
   }

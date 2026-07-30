@@ -1342,6 +1342,12 @@ enum LedgerSourceType {
   INVOICE
 }
 
+/// Lifecycle of a cancellation / short-close note (DN-xxxxx or CN-xxxxx).
+enum SettlementNoteStatus {
+  UNPAID
+  PAID
+}
+
 /// Running credit/debit ledger for SELL-side counterparties. DEBIT rows are
 /// posted when an outbound gatepass truck is assigned to a sale trade
 /// (receivable incl. 236G); CREDIT rows are posted when finance approves a
@@ -1374,8 +1380,17 @@ model CounterpartyLedgerEntry {
   note           String?
   createdAt      DateTime     @default(now())
 
+  /// Cancellation / short-close notes only. The note is a claim that stays open
+  /// until money moves: UNPAID weighs on the account balance, PAID keeps the row
+  /// visible for audit but stops counting toward what is owed.
+  noteStatus             SettlementNoteStatus?
+  noteSettledAt          DateTime?
+  /// Voucher that settled the note — the audit trail from claim to cash.
+  noteSettledByVoucherNo String?
+
   @@index([counterpartyId, entryDate])
   @@index([counterpartyId, side, entryDate])
+  @@index([counterpartyId, noteStatus])
   @@index([entryType])
 }
 
@@ -1424,6 +1439,9 @@ model Voucher {
   /// Trade this payment is against; null = direct advance (usable for any of
   /// the counterparty's trades). Shown on every ledger entry.
   tradeRef       String?
+  /// Cancellation / short-close note this voucher settles (DN-xxxxx / CN-xxxxx).
+  /// Set only on note vouchers — approving one marks that note PAID.
+  noteRef        String?
   amountPkr      Decimal       @db.Decimal(20, 2)
   /// Payment method (bank transfer, cheque, cash, …).
   method         String?
