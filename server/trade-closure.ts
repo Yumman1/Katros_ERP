@@ -24,11 +24,14 @@ const round2 = (v: number): number => Math.round(v * 100) / 100;
  * settlement price is entered — and the CEO approves. On approval:
  *   settlement = rate  → the trade cancels with no ledger entry;
  *   settlement > rate  → the seller owes the difference on the open quantity
- *                        (they defaulted while the market rose): a DEBIT note
- *                        posts on their receivable (SELL) account;
+ *                        (they defaulted while the market rose): a DEBIT note;
  *   settlement < rate  → we owe the seller (we walked away while the market
- *                        fell): a credit note posts as a DEBIT on their
- *                        payable (BUY) account — more money we owe them.
+ *                        fell): a CREDIT note.
+ * Either way the note posts on the ledger account the trade itself lives on —
+ * a purchase settles on the purchase account — because that is where anyone
+ * reconciling the trade will look for it. It posts UNPAID and weighs on the
+ * balance until an execution voucher settles it.
+ *
  * Nothing posts until the CEO approves; a rejection leaves the trade open.
  */
 
@@ -182,6 +185,8 @@ async function postSettlementNote(
     priced: ReturnType<typeof priceNoteFromPayload>;
     /** What abandoned the quantity — reads on the ledger line. */
     reason: "cancellation" | "short close";
+    /** Ledger account the trade lives on: BUY for a purchase, SELL for a sale. */
+    side: "BUY" | "SELL";
   },
 ): Promise<string | null> {
   const { priced } = input;
@@ -192,13 +197,17 @@ async function postSettlementNote(
   await tx.counterpartyLedgerEntry.create({
     data: {
       counterpartyId: input.counterpartyId,
-      // Seller owes us → receivable (SELL). We owe seller → payable (BUY).
-      side: isDebit ? "SELL" : "BUY",
+      // A note against a purchase belongs on the purchase account, whichever
+      // way the money runs — the seller's buy ledger is where that trade lives,
+      // and splitting the two would hide the claim from the account it settles.
+      side: input.side,
       entryType: "DEBIT",
       amountPkr: priced.amountPkr,
       sourceType: "ADJUSTMENT",
       sourceRef: noteRef,
       tradeRef: input.tradeRef,
+      // The claim is open until a voucher settles it.
+      noteStatus: "UNPAID",
       note:
         `${isDebit ? "Debit" : "Credit"} note ${noteRef} — ${input.reason} of ${input.tradeRef}: ` +
         `${priced.openMaunds.toLocaleString("en-PK")} maund open × ` +
@@ -244,7 +253,7 @@ export async function applyCancellationChangeRequest(
   const priced = priceNoteFromPayload(payload);
   const row = await prisma.trade.findUnique({
     where: { tradeRef: ref },
-    select: { counterpartyId: true },
+    select: { counterpartyId: true, direction: true },
   });
   if (!row) return false;
 
@@ -260,6 +269,7 @@ export async function applyCancellationChangeRequest(
       tradeRef: ref,
       priced,
       reason: "cancellation",
+      side: row.direction === "BUY" ? "BUY" : "SELL",
     });
   });
 
@@ -302,7 +312,7 @@ export async function applyCloseChangeRequest(
 
   const row = await prisma.trade.findUnique({
     where: { tradeRef: ref },
-    select: { counterpartyId: true },
+    select: { counterpartyId: true, direction: true },
   });
   if (!row) return true; // contract is closed either way
 
@@ -313,6 +323,7 @@ export async function applyCloseChangeRequest(
       tradeRef: ref,
       priced,
       reason: "short close",
+      side: row.direction === "BUY" ? "BUY" : "SELL",
     });
   });
 

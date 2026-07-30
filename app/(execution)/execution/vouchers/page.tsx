@@ -45,6 +45,8 @@ export default function ExecutionVouchersPage() {
   const [side, setSide] = useState<"SELL" | "BUY">("SELL");
   const [counterpartyId, setCounterpartyId] = useState("");
   const [tradeRef, setTradeRef] = useState("");
+  /** Set instead of tradeRef when the voucher settles a DN/CN. */
+  const [noteRef, setNoteRef] = useState("");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<string>(VOUCHER_METHODS[0]);
   const [reference, setReference] = useState("");
@@ -55,11 +57,22 @@ export default function ExecutionVouchersPage() {
     { counterpartyId, side },
     { enabled: counterpartyId !== "" },
   );
+  // Cancellation / short-close notes still owed on this account — the same
+  // select lists them, and picking one fills in the amount that is due.
+  const { data: openNotes } = trpc.execution.openSettlementNotes.useQuery(
+    { counterpartyId, side },
+    { enabled: counterpartyId !== "" },
+  );
+
+  const clearAgainst = () => {
+    setTradeRef("");
+    setNoteRef("");
+  };
 
   const create = trpc.execution.createVoucher.useMutation({
     onSuccess: () => {
       setCounterpartyId("");
-      setTradeRef("");
+      clearAgainst();
       setAmount("");
       setMethod(VOUCHER_METHODS[0]);
       setReference("");
@@ -76,12 +89,12 @@ export default function ExecutionVouchersPage() {
 
   const pagination = useListPagination(vouchers ?? []);
 
-  // A purchase voucher must name the settled trade it pays — there is no
-  // direct-advance pool on the buy side.
+  // A purchase voucher must name the settled trade or the note it pays — there
+  // is no direct-advance pool on the buy side.
   const canSubmit =
     counterpartyId !== "" &&
     Number(amount) > 0 &&
-    (side === "SELL" || tradeRef !== "") &&
+    (side === "SELL" || tradeRef !== "" || noteRef !== "") &&
     !create.isPending;
 
   if (isLoading && !vouchers) {
@@ -126,7 +139,7 @@ export default function ExecutionVouchersPage() {
                   type="button"
                   onClick={() => {
                     setSide(s);
-                    setTradeRef("");
+                    clearAgainst();
                   }}
                   className={cn(
                     "exec-segment-item px-3 py-1 text-xs",
@@ -151,7 +164,7 @@ export default function ExecutionVouchersPage() {
                 value={counterpartyId}
                 onChange={(e) => {
                   setCounterpartyId(e.target.value);
-                  setTradeRef("");
+                  clearAgainst();
                 }}
                 className="kastros-select kastros-select-sm w-full"
               >
@@ -166,18 +179,31 @@ export default function ExecutionVouchersPage() {
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Against trade
               <select
-                value={tradeRef}
-                onChange={(e) => setTradeRef(e.target.value)}
+                value={noteRef ? `note:${noteRef}` : tradeRef ? `trade:${tradeRef}` : ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v.startsWith("note:")) {
+                    const ref = v.slice(5);
+                    setNoteRef(ref);
+                    setTradeRef("");
+                    // A note settles in full — the due amount is the amount.
+                    const n = (openNotes ?? []).find((x) => x.noteRef === ref);
+                    if (n) setAmount(String(n.amountPkr));
+                  } else {
+                    setNoteRef("");
+                    setTradeRef(v.startsWith("trade:") ? v.slice(6) : "");
+                  }
+                }}
                 disabled={counterpartyId === ""}
                 className="kastros-select kastros-select-sm w-full disabled:opacity-50"
               >
                 {side === "SELL" ? (
                   <option value="">Direct advance (any trade)</option>
                 ) : (
-                  <option value="">Select settled purchase…</option>
+                  <option value="">Select settled purchase or note…</option>
                 )}
                 {(sellTrades ?? []).map((t) => (
-                  <option key={t.tradeRef} value={t.tradeRef}>
+                  <option key={t.tradeRef} value={`trade:${t.tradeRef}`}>
                     {t.tradeRef} ·{" "}
                     {t.isSettlement
                       ? "Settlement (no delivery)"
@@ -185,6 +211,16 @@ export default function ExecutionVouchersPage() {
                     · {t.quantity} {t.quantityUnit}
                   </option>
                 ))}
+                {(openNotes ?? []).length > 0 && (
+                  <optgroup label="Cancellation / short-close notes">
+                    {(openNotes ?? []).map((n) => (
+                      <option key={n.noteRef} value={`note:${n.noteRef}`}>
+                        {n.noteRef} · {fmtPkr(n.amountPkr)} due
+                        {n.tradeRef ? ` · ${n.tradeRef}` : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </label>
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
@@ -194,8 +230,10 @@ export default function ExecutionVouchersPage() {
                 min={0}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
+                readOnly={noteRef !== ""}
+                title={noteRef ? `${noteRef} is settled in full — the amount is fixed` : undefined}
                 placeholder="0"
-                className="kastros-input kastros-input-sm w-full"
+                className="kastros-input kastros-input-sm w-full read-only:opacity-70"
               />
             </label>
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
@@ -240,6 +278,7 @@ export default function ExecutionVouchersPage() {
                   counterpartyId,
                   side,
                   tradeRef: tradeRef || undefined,
+                  noteRef: noteRef || undefined,
                   amountPkr: Number(amount),
                   method,
                   reference: reference.trim() || undefined,
@@ -303,11 +342,16 @@ export default function ExecutionVouchersPage() {
                       >
                         {v.side === "BUY" ? "Purchase" : "Sale"}
                       </span>
+                      {v.noteRef && (
+                        <span className="rounded-full bg-warning/15 px-2 py-1 font-mono text-[10px] font-bold text-warning">
+                          Settles {v.noteRef}
+                        </span>
+                      )}
                       {v.tradeRef ? (
                         <span className="rounded-full bg-accent-secondary-muted px-2 py-1 font-mono text-[10px] font-bold text-accent-secondary">
                           {v.tradeRef}
                         </span>
-                      ) : (
+                      ) : v.noteRef ? null : (
                         <span className="rounded-full bg-foreground/[0.06] px-2 py-1 text-[10px] font-bold text-muted-foreground">
                           Direct advance
                         </span>

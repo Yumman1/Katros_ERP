@@ -167,6 +167,85 @@ export async function postPaymentOutCredit(
   });
 }
 
+// ─── Settlement notes (cancellation / short close) ───────────────────────────
+
+/**
+ * Ledger filter excluding credits raised by a note voucher. Money that settles
+ * a cancellation note is spoken for the moment it lands, so it can neither fund
+ * a truck nor inflate the account's free credit.
+ */
+const NOT_A_NOTE_VOUCHER = {
+  OR: [{ voucherId: null }, { voucher: { is: { noteRef: null } } }],
+} satisfies Prisma.CounterpartyLedgerEntryWhereInput;
+
+export type OpenSettlementNote = {
+  /** DN-xxxxx (seller owes us) / CN-xxxxx (we owe the seller). */
+  noteRef: string;
+  side: CounterpartySide;
+  /** Amount still due — a note is settled in full or not at all. */
+  amountPkr: number;
+  tradeRef: string | null;
+  entryDate: Date;
+  note: string | null;
+};
+
+/**
+ * Cancellation / short-close notes on a counterparty's account that no voucher
+ * has settled yet — the "against" choices on the voucher form.
+ */
+export async function listOpenSettlementNotes(
+  counterpartyId: string,
+  side?: CounterpartySide,
+  db: Db = prisma,
+): Promise<OpenSettlementNote[]> {
+  const rows = await db.counterpartyLedgerEntry.findMany({
+    where: {
+      counterpartyId,
+      ...(side ? { side } : {}),
+      sourceType: "ADJUSTMENT",
+      noteStatus: "UNPAID",
+      sourceRef: { not: null },
+    },
+    orderBy: { entryDate: "desc" },
+    select: { side: true, sourceRef: true, amountPkr: true, tradeRef: true, entryDate: true, note: true },
+  });
+  return rows.map((r) => ({
+    noteRef: r.sourceRef!,
+    side: r.side,
+    amountPkr: num(r.amountPkr),
+    tradeRef: r.tradeRef,
+    entryDate: r.entryDate,
+    note: r.note,
+  }));
+}
+
+/**
+ * Mark a note settled by an approved voucher. Throws if the note is gone or was
+ * already paid — a voucher must never approve against a claim that no longer
+ * exists.
+ */
+export async function markSettlementNotePaid(
+  input: { counterpartyId: string; noteRef: string; voucherNo: string },
+  db: Db = prisma,
+): Promise<void> {
+  const marked = await db.counterpartyLedgerEntry.updateMany({
+    where: {
+      counterpartyId: input.counterpartyId,
+      sourceType: "ADJUSTMENT",
+      sourceRef: input.noteRef,
+      noteStatus: "UNPAID",
+    },
+    data: {
+      noteStatus: "PAID",
+      noteSettledAt: new Date(),
+      noteSettledByVoucherNo: input.voucherNo,
+    },
+  });
+  if (marked.count === 0) {
+    throw new Error(`${input.noteRef} is no longer an open note on this counterparty`);
+  }
+}
+
 // ─── Balances & gating ───────────────────────────────────────────────────────
 
 /** Trade funding class from its payment terms. */
@@ -197,7 +276,9 @@ export async function getSellFundingState(
 ): Promise<SellFundingState> {
   const [credits, debits, settlementDebits] = await Promise.all([
     db.counterpartyLedgerEntry.findMany({
-      where: { counterpartyId, side: "SELL", entryType: "CREDIT" },
+      // A note voucher pays a cancellation claim, not a delivery — its credit
+      // must never read as funding available for another truck.
+      where: { counterpartyId, side: "SELL", entryType: "CREDIT", ...NOT_A_NOTE_VOUCHER },
       select: { amountPkr: true, tradeRef: true },
     }),
     db.counterpartyLedgerEntry.findMany({
@@ -367,7 +448,8 @@ export async function canFundTruck(
 export async function availableCreditPkr(counterpartyId: string, db: Db = prisma): Promise<number> {
   const [creditAgg, debitEntries, settlementAgg] = await Promise.all([
     db.counterpartyLedgerEntry.aggregate({
-      where: { counterpartyId, side: "SELL", entryType: "CREDIT" },
+      // Note vouchers pay a cancellation claim — never free credit.
+      where: { counterpartyId, side: "SELL", entryType: "CREDIT", ...NOT_A_NOTE_VOUCHER },
       _sum: { amountPkr: true },
     }),
     db.counterpartyLedgerEntry.findMany({
@@ -423,6 +505,12 @@ export type LedgerEntryView = {
   paidPkr: number;
   /** Buy debits the trader is holding back — held money never ages. */
   held: boolean;
+  /** Cancellation / short-close note rows: is the claim still open? */
+  noteStatus: "UNPAID" | "PAID" | null;
+  /** Paid notes: the voucher that settled them. */
+  noteSettledByVoucherNo: string | null;
+  /** Credit rows raised by a note voucher: the note they settled. */
+  settlesNoteRef: string | null;
   note: string | null;
 };
 
@@ -467,7 +555,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     }),
     prisma.counterpartyLedgerEntry.findMany({
       orderBy: { entryDate: "desc" },
-      include: { voucher: { select: { voucherNo: true } } },
+      include: { voucher: { select: { voucherNo: true, noteRef: true } } },
     }),
     prisma.pendingTruck.findMany({
       where: { saleStage: { not: null } },
@@ -544,13 +632,17 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     // or a settlement invoice fully collected.
     const invStatus = (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) ?? null;
     const amountPkr = num(e.amountPkr);
+    // A cancellation note answers to its own status, not to a gatepass or a
+    // truck stage — it is settled the moment a voucher pays it.
     const settled =
       e.entryType === "DEBIT" &&
-      (e.sourceType === "INVOICE"
-        ? invStatus === "PAID"
-        : e.side === "BUY"
-          ? e.sourceRef != null && paidGatepasses.has(e.sourceRef)
-          : stage != null && settledStages.has(stage));
+      (e.noteStatus != null
+        ? e.noteStatus === "PAID"
+        : e.sourceType === "INVOICE"
+          ? invStatus === "PAID"
+          : e.side === "BUY"
+            ? e.sourceRef != null && paidGatepasses.has(e.sourceRef)
+            : stage != null && settledStages.has(stage));
     // How much of this debit the money has actually covered. On the buy side
     // that is the amount paid against the gatepass, so a part-released truck
     // shows its paid share rather than all-or-nothing.
@@ -577,13 +669,20 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       voucherNo: e.voucher?.voucherNo ?? (e.sourceType === "VOUCHER" ? e.sourceRef : null),
       dueDate: e.dueDate,
       // Sell-side debits only — payables are paid outright, so they never age.
+      // A note carries no due date either: it is settled on approval, not on
+      // terms, so ageing it would only ever read as overdue.
       agingBucket:
-        e.entryType === "DEBIT" && e.side === "SELL" ? agingBucketFor(e.dueDate) : null,
+        e.entryType === "DEBIT" && e.side === "SELL" && e.noteStatus == null
+          ? agingBucketFor(e.dueDate)
+          : null,
       saleStage: stage,
       settlementStatus: invStatus,
       settled,
       paidPkr,
       held,
+      noteStatus: e.noteStatus,
+      noteSettledByVoucherNo: e.noteSettledByVoucherNo,
+      settlesNoteRef: e.voucher?.noteRef ?? null,
       note: e.note,
     };
     const key = `${e.counterpartyId}:${e.side}`;
@@ -606,6 +705,10 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       let earmarked = 0;
       const aging = emptyAging();
       for (const e of list) {
+        // A settled note and the voucher that paid it cancel each other out.
+        // Both rows stay visible for the audit trail, but neither weighs on
+        // what the account owes any more — the claim is closed.
+        if (e.noteStatus === "PAID" || e.settlesNoteRef) continue;
         if (e.entryType === "DEBIT") {
           totalDebit += e.amountPkr;
           const stage = e.saleStage;

@@ -170,7 +170,7 @@ export default function ExecutionInventoryPage() {
           label="Total weighted purchase price"
           value={
             valuation
-              ? `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(valuation.weightedPurchasePricePkrPerMt)} PKR/MT`
+              ? `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 2 }).format(valuation.weightedPurchasePricePkrPerMaund)} PKR/maund`
               : "—"
           }
           tone="brand"
