@@ -133,7 +133,7 @@ export default function ExecutionDeskPage() {
       ),
     },
     {
-      label: "Unreviewed Trades",
+      label: "Draft Trades",
       value: filteredOpenTrades.length,
       sub: "Awaiting execution lock",
       href: "/execution/open-trades",
@@ -285,7 +285,7 @@ export default function ExecutionDeskPage() {
             href="/execution/open-trades"
             className="mt-2 inline-block text-xs font-medium text-accent-secondary hover:underline"
           >
-            Unreviewed trades →
+            Draft trades →
           </Link>
         </section>
       )}

@@ -8,7 +8,7 @@ import {
 } from "@/components/trader/corn-specification-fields";
 import { QuantityToleranceField } from "@/components/trader/quantity-tolerance-field";
 import { FormField as Field, FormSection as Section } from "@/components/ui/form-section";
-import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
+import { invalidateApprovalCaches, invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import {
   PRICE_CURRENCIES,
   PRICE_CURRENCY_LABELS,
@@ -238,6 +238,9 @@ export function OpenTradeDetail({
       setRequestComment("");
       setSaved(true);
       setError(null);
+      // The request has to show up in the head's queue (and the sender's own
+      // "My requests") straight away, or it reads as though nothing was sent.
+      invalidateApprovalCaches(utils);
     },
     onError: (e) => setError(e.message),
   });
@@ -265,7 +268,7 @@ export function OpenTradeDetail({
         department: "EXECUTION",
         entityType: "TRADE",
         entityRef: tradeRef,
-        entityLabel: `${tradeRef} ${isLockedMode ? "locked contract" : "unreviewed trade"} edit`,
+        entityLabel: `${tradeRef} ${isLockedMode ? "locked contract" : "draft trade"} edit`,
         action: "EDIT",
         comment: requestComment.trim(),
         payload: executionEditNote != null ? patch : payload,
@@ -278,14 +281,14 @@ export function OpenTradeDetail({
   if (isLoading || !trade) {
     return (
       <div className="animate-pulse text-subtle">
-        Loading {isLockedMode ? "locked contract" : "unreviewed trade"}…
+        Loading {isLockedMode ? "locked contract" : "draft trade"}…
       </div>
     );
   }
 
   const quotedUnit = priceUnitLabel({ currency: priceCurrency, weightUnit: priceWeightUnit });
   const backHref = isLockedMode ? "/execution/contracts" : "/execution/open-trades";
-  const backLabel = isLockedMode ? "Reviewed trades" : "Unreviewed trades";
+  const backLabel = isLockedMode ? "Reviewed trades" : "Draft trades";
 
   return (
     <div className="kastros-desk-page mx-auto w-full max-w-4xl">
@@ -315,7 +318,7 @@ export function OpenTradeDetail({
             </span>
           ) : (
             <span className="rounded-md bg-accent-secondary/20 px-3 py-1 text-sm font-medium text-accent-secondary">
-              Unreviewed — review booking details below
+              Draft — review booking details below
             </span>
           )}
         </div>
@@ -706,19 +709,11 @@ export function OpenTradeDetail({
         isExecutionUser={isExecutionUser}
       />
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {saved && !error && (
-        <p className="text-sm text-success">
-          {isExecutionHead
-            ? isLockedMode
-              ? "Changes saved to locked contract."
-              : "Changes saved — trader will be notified to review."
-            : "Change request submitted."}
-        </p>
-      )}
-
       </div>
 
+      {/* Outcome sits WITH the button in the fixed toolbar, never inside the
+          scrolling form above it — a message rendered off-screen is the same
+          as no message, and the button reads as broken. */}
       <div className="kastros-desk-toolbar flex flex-wrap items-center gap-3 border-t border-kastros-border pt-4">
         {isExecutionHead ? (
           <button
@@ -739,12 +734,24 @@ export function OpenTradeDetail({
             <input
               placeholder="Comment for head of execution…"
               value={requestComment}
-              onChange={(e) => setRequestComment(e.target.value)}
+              onChange={(e) => {
+                setRequestComment(e.target.value);
+                // Typing a fresh comment means a fresh request — drop the
+                // confirmation from the previous one.
+                if (saved) setSaved(false);
+              }}
               className="kastros-input min-w-[200px] flex-1"
             />
             <button
               type="button"
-              disabled={submitRequest.isPending}
+              // A comment is what the head reads to decide — without one the
+              // button would only ever no-op, so it says so instead.
+              disabled={submitRequest.isPending || !requestComment.trim()}
+              title={
+                requestComment.trim()
+                  ? "Send your edits to the head of execution for approval"
+                  : "Add a comment for the head of execution first"
+              }
               onClick={requestEdit}
               className="inline-flex items-center gap-2 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-kastros-bg disabled:opacity-50"
             >
@@ -753,6 +760,26 @@ export function OpenTradeDetail({
             </button>
           </>
         ) : null}
+
+        {error && <p className="w-full text-sm text-destructive">{error}</p>}
+        {saved && !error && (
+          <p className="flex w-full flex-wrap items-center gap-2 text-sm text-success">
+            {isExecutionHead ? (
+              isLockedMode ? (
+                "Changes saved to locked contract."
+              ) : (
+                "Changes saved — trader will be notified to review."
+              )
+            ) : (
+              <>
+                Change request sent to the head of execution.
+                <Link href="/execution/approvals" className="underline hover:text-foreground">
+                  View my requests →
+                </Link>
+              </>
+            )}
+          </p>
+        )}
 
         {!isLockedMode && canLock && (
           <button

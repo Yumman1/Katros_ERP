@@ -32,11 +32,11 @@ export function PendingWarehousePanel({ compact }: Props) {
             />
           </svg>
           <h2 className="text-sm font-semibold text-warning">
-            {pending.length} unreviewed trade{pending.length !== 1 ? "s" : ""} need warehouse allocation
+            {pending.length} draft trade{pending.length !== 1 ? "s" : ""} need warehouse allocation
           </h2>
         </div>
         <p className="ml-6 mt-1 text-xs text-muted-foreground">
-          Allocate quantities per warehouse on Unreviewed Trades and get head approval before locking.
+          Allocate quantities per warehouse on Draft Trades and get head approval before locking.
         </p>
         <ul className="ml-6 mt-2 space-y-1">
           {pending.slice(0, 5).map((t) => (
@@ -56,7 +56,7 @@ export function PendingWarehousePanel({ compact }: Props) {
           href="/execution/open-trades"
           className="ml-6 mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-secondary hover:underline"
         >
-          Unreviewed trades →
+          Draft trades →
         </Link>
       </section>
     );
@@ -74,7 +74,7 @@ export function PendingWarehousePanel({ compact }: Props) {
         Warehouse allocation required ({pending.length})
       </h2>
       <p className="mb-3 text-xs text-subtle">
-        These unreviewed trades need quantities split across warehouses and head approval before they can be locked.
+        These draft trades need quantities split across warehouses and head approval before they can be locked.
       </p>
       <div className="kastros-table-wrap border-0 shadow-none">
         <table className="kastros-table text-xs">

@@ -62,7 +62,7 @@ export function TradeEditChangePreview({
               </Link>
             </>
           ) : (
-            <span>Current trade not in Unreviewed Trades — showing proposed values only</span>
+            <span>Current trade not in Draft Trades — showing proposed values only</span>
           )}
         </div>
       </div>
