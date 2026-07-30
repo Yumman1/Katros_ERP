@@ -22,6 +22,40 @@ export function countsAsReleasedOutbound(status: string): boolean {
   return status === "WEIGHED" || status === "FINANCE_PENDING" || status === "RELEASED";
 }
 
+export type StockTransferStockInput = {
+  commodityCode: string;
+  commodityName?: string | null;
+  fromWarehouseName: string | null;
+  toWarehouseName: string;
+  dispatchedQtyMt: number;
+  receivedQtyMt: number | null;
+  status: string;
+};
+
+/**
+ * How much a transfer adds to (or takes from) one warehouse's stock.
+ *
+ * The source loses the load the moment it gates out; the destination only gains
+ * it once it has been weighed in. Grain in transit therefore sits on neither
+ * warehouse's books, which is what stops a shift being counted twice.
+ */
+export function stockTransferDelta(
+  warehouseName: string,
+  transfer: StockTransferStockInput,
+): number {
+  if (transfer.status === "DRAFT" || transfer.status === "CANCELLED") return 0;
+  const wh = warehouseName.trim().toLowerCase();
+  const from = transfer.fromWarehouseName?.trim().toLowerCase() ?? null;
+  const to = transfer.toWarehouseName.trim().toLowerCase();
+
+  let delta = 0;
+  if (from === wh) delta -= transfer.dispatchedQtyMt;
+  if (to === wh && transfer.status === "RECEIVED") {
+    delta += transfer.receivedQtyMt ?? transfer.dispatchedQtyMt;
+  }
+  return delta;
+}
+
 export type PendingTruckStockInput = {
   movementType: "INBOUND" | "OUTBOUND";
   status: string;
@@ -70,6 +104,7 @@ export function buildLocationCommodityInventory(input: {
     status: string;
   }[];
   pendingTrucks: PendingTruckStockInput[];
+  transfers?: StockTransferStockInput[];
   commodityForTradeRef: (tradeRef: string) => TradeCommodity | null;
 }): LocationCommodityInventoryRow[] {
   const map = new Map<string, LocationCommodityInventoryRow>();
@@ -128,6 +163,23 @@ export function buildLocationCommodityInventory(input: {
     else row.unallocatedOutbound += qty;
   }
 
+  // Internal shifts belong to no trade, so they land on the allocated side as
+  // stock we already own: off the source at gate-out, onto the destination at
+  // weigh-in.
+  for (const t of input.transfers ?? []) {
+    const code = t.commodityCode.trim();
+    if (!code) continue;
+    const name = t.commodityName?.trim() || code;
+    for (const wh of [t.fromWarehouseName, t.toWarehouseName]) {
+      if (!wh?.trim()) continue;
+      const delta = stockTransferDelta(wh, t);
+      if (delta === 0) continue;
+      const row = ensure(wh, code, name, "MT");
+      if (delta > 0) row.allocatedInbound += delta;
+      else row.allocatedOutbound += -delta;
+    }
+  }
+
   for (const row of map.values()) {
     row.unallocatedQty = row.unallocatedInbound - row.unallocatedOutbound;
     row.allocatedQty = row.allocatedInbound - row.allocatedOutbound;
@@ -161,6 +213,7 @@ export function netCommodityStockMt(
   }[],
   commodityForTradeRef: (tradeRef: string) => string | null,
   exclude?: { inboundId?: string; outboundId?: string },
+  transfers?: StockTransferStockInput[],
 ): number {
   const wh = warehouseName.trim().toLowerCase();
   const code = commodityCode.trim();
@@ -176,6 +229,10 @@ export function netCommodityStockMt(
     if (d.warehouseName.trim().toLowerCase() !== wh) continue;
     if (commodityForTradeRef(d.tradeRef) !== code) continue;
     net += outboundStockDelta(d.status, d.allocatedQtyMt);
+  }
+  for (const t of transfers ?? []) {
+    if (t.commodityCode.trim() !== code) continue;
+    net += stockTransferDelta(warehouseName, t);
   }
   return net;
 }

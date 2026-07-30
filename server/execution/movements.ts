@@ -10,6 +10,7 @@ import { normWarehouseName } from "@/lib/warehouse-allocation";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
 import { COUNTER, nextRef } from "@/server/db/counters";
+import { loadStockTransfersForStock } from "@/server/execution/stock-transfer-load";
 import {
   INBOUND_INCLUDE,
   OUTBOUND_INCLUDE,
@@ -694,9 +695,10 @@ export async function getWarehouseCommodityStockMt(
   commodityCode: string,
   exclude?: { inboundId?: string; outboundId?: string },
 ): Promise<number> {
-  const [{ inbound, outbound }, codeByRef] = await Promise.all([
+  const [{ inbound, outbound }, codeByRef, transfers] = await Promise.all([
     loadStockMovements(),
     commodityCodeByTradeRef(),
+    loadStockTransfersForStock(),
   ]);
   return netCommodityStockMt(
     warehouseName,
@@ -705,6 +707,7 @@ export async function getWarehouseCommodityStockMt(
     outbound,
     (tradeRef) => codeByRef.get(tradeRef) ?? null,
     exclude,
+    transfers,
   );
 }
 

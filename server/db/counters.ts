@@ -73,4 +73,5 @@ export const COUNTER = {
   GATE_OUT_SLIP: "gate-out-slip",
   DELIVERY_ORDER: "delivery-order",
   CANCELLATION_NOTE: "cancellation-note",
+  STOCK_TRANSFER: "stock-transfer",
 } as const;

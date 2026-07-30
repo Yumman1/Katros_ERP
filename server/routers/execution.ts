@@ -71,6 +71,15 @@ import {
 import { getTradeTimeline } from "@/server/trade-activity";
 import { PRICE_CURRENCIES } from "@/lib/price-units";
 import { GATE_INVOICE_STAGES } from "@/lib/gate-invoice";
+import {
+  cancelStockTransfer,
+  createStockTransfer,
+  dispatchStockTransfer,
+  listStockTransfers,
+  receiveStockTransfer,
+} from "@/server/execution/stock-transfers";
+
+const STOCK_TRANSFER_STATUSES = ["DRAFT", "IN_TRANSIT", "RECEIVED", "CANCELLED"] as const;
 
 const warehouseLaborLineSchema = z.object({
   role: z.string().trim().min(1),
@@ -168,6 +177,86 @@ const tradeFileFilterSchema = z.object({
 
 export const executionRouter = router({
   deskSummary: roleProcedure([...execRoles]).query(() => getDeskSummary()),
+
+  // ── Internal stock shifting (warehouse → warehouse, no trade) ────────────
+  stockTransfers: roleProcedure([...execRoles])
+    .input(
+      z
+        .object({
+          warehouseName: z.string().optional(),
+          commodityCode: z.string().optional(),
+          status: z.enum(STOCK_TRANSFER_STATUSES).optional(),
+        })
+        .optional(),
+    )
+    .query(({ input }) => listStockTransfers(input)),
+
+  createStockTransfer: roleProcedure([...execRoles])
+    .input(
+      z.object({
+        commodityCode: z.string().min(1),
+        commodityName: z.string().min(1),
+        fromWarehouseName: z.string().nullish(),
+        externalOrigin: z.string().nullish(),
+        toWarehouseName: z.string().min(1),
+        dispatchedQtyMt: z.number().positive(),
+        truckNo: z.string().min(1),
+        driverName: z.string().nullish(),
+        driverPhone: z.string().nullish(),
+        biltyNo: z.string().nullish(),
+        bags: z.number().int().nonnegative().nullish(),
+        reason: z.string().nullish(),
+        remarks: z.string().nullish(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await createStockTransfer({
+          ...input,
+          createdByName: ctx.session.user.name ?? ctx.session.user.email ?? "execution",
+        });
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  dispatchStockTransfer: roleProcedure([...execRoles])
+    .input(z.object({ id: z.string(), dispatchedQtyMt: z.number().positive().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await dispatchStockTransfer(
+          input.id,
+          ctx.session.user.name ?? ctx.session.user.email ?? "execution",
+          input.dispatchedQtyMt,
+        );
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  receiveStockTransfer: roleProcedure([...execRoles])
+    .input(z.object({ id: z.string(), receivedQtyMt: z.number().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await receiveStockTransfer(
+          input.id,
+          ctx.session.user.name ?? ctx.session.user.email ?? "execution",
+          input.receivedQtyMt,
+        );
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  cancelStockTransfer: headProcedure("EXECUTION")
+    .input(z.object({ id: z.string(), reason: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      try {
+        return await cancelStockTransfer(input.id, input.reason);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
 
   // ── Head-of-execution direct deletions ──────────────────────────────────
   deleteGateEntry: headProcedure("EXECUTION")
