@@ -2,7 +2,6 @@
 
 import { CommodityFilterBar } from "@/components/execution/commodity-filter-bar";
 import { NetPositionPanel } from "@/components/position/net-position-panel";
-import { PositionLegend, PositionLedgerTable } from "@/components/position/position-ledger-table";
 import { collectCommodityOptions } from "@/lib/execution-commodity-filter";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
@@ -55,16 +54,13 @@ export default function TraderPositionsPage() {
   const activeTrades =
     trades?.filter((t) => ["CONFIRMED", "EXECUTED", "PENDING", "LOCKED"].includes(t.tradeStatus)) ?? [];
 
-  const paperNet = filteredLedger.reduce((a, r) => a + r.paperNet, 0);
-  const physicalNet = filteredLedger.reduce((a, r) => a + r.physicalNet, 0);
-
   return (
     <DeskPage>
       <DeskScroll className="space-y-5 pb-6">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Positions</h1>
         <p className="text-sm text-muted-foreground">
-          Paper exposure from your locked trades vs physical warehouse movements (daily in/out).
+          Net position by commodity and crop season, with mark-to-market exposure on your book.
         </p>
       </div>
 
@@ -74,7 +70,7 @@ export default function TraderPositionsPage() {
 
       <NetPositionPanel canEdit commodityFilter={commodityFilter} />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-border bg-card px-4 py-3">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Active legs</div>
           <div className="mt-1 text-2xl font-medium text-foreground">{activeTrades.length}</div>
@@ -84,26 +80,11 @@ export default function TraderPositionsPage() {
           <div className="mt-1 text-2xl font-medium text-foreground">{filteredLedger.length || filteredExposure.length}</div>
         </div>
         <div className="rounded-lg border border-border bg-card px-4 py-3">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Paper net (MT)</div>
-          <div className="mt-1 text-2xl font-medium tabular-nums text-foreground">{formatQty(paperNet)}</div>
-        </div>
-        <div className="rounded-lg border border-border bg-card px-4 py-3">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Physical net (MT)</div>
-          <div className="mt-1 text-2xl font-medium tabular-nums text-foreground">{formatQty(physicalNet)}</div>
-        </div>
-        <div className="rounded-lg border border-border bg-card px-4 py-3">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Open MTM</div>
           <div className={`mt-1 text-2xl font-medium data-grid ${totalMtm >= 0 ? "text-success" : "text-destructive"}`}>
             {formatCurrency(totalMtm)}
           </div>
         </div>
-      </div>
-
-      <PositionLegend />
-
-      <div>
-        <h2 className="mb-2 text-sm font-semibold text-foreground">Paper vs physical</h2>
-        <PositionLedgerTable rows={ledger ?? []} commodityFilter={commodityFilter} />
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border bg-card">
