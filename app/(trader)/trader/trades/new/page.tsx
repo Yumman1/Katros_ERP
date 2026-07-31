@@ -698,12 +698,11 @@ function BookTradeForm() {
           ← Back to desk
         </Link>
         <h1 className="mt-2 text-2xl font-semibold text-foreground">Book a Trade</h1>
-        <p className="text-sm text-subtle">
-          {formTraderName || loggedInTraderName
-            ? `Trader: ${formTraderName || loggedInTraderName} · `
-            : ""}
-          Capture contract, delivery, pricing, and commodity specs in one flow.
-        </p>
+        {(formTraderName || loggedInTraderName) && (
+          <p className="text-sm text-subtle">
+            Trader: {formTraderName || loggedInTraderName}
+          </p>
+        )}
       </div>
 
       {/* Enter must not book anything — booking happens only via the explicit buttons below. */}

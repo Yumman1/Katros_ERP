@@ -32,6 +32,8 @@ export default function ExecutionDailyPricesPage() {
     onSuccess: () => {
       void utils.market.dailyPrices.invalidate();
       void utils.market.snapshot.invalidate();
+      // The net position values itself at today's rate — republish it too.
+      void utils.trader.seasonNetPositions.invalidate();
     },
   });
 

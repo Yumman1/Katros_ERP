@@ -66,8 +66,7 @@ export function NetPositionPanel({
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-5 py-3">
         <h2 className="text-sm font-semibold text-foreground">Net Position</h2>
         <span className="text-[11px] text-subtle">
-          Net = open purchases + inventory − open sales · valued at market − entry over the net
-          position
+          Net = open purchases + inventory − open sales · market rate comes from Daily Prices
         </span>
       </div>
 
@@ -100,6 +99,13 @@ export function NetPositionPanel({
               label="Market Rate (₨/maund)"
               values={cols.map((c) =>
                 c.marketRatePkrPerMaund != null ? fmtMoney(c.marketRatePkrPerMaund) : "—",
+              )}
+              hint={cols.map((c) =>
+                c.marketRateSource === "DAILY_PRICES"
+                  ? `Daily Prices · ${c.marketRateDate ?? ""}`
+                  : c.marketRateSource === "FALLBACK"
+                    ? "desk fallback"
+                    : "",
               )}
             />
             <Row
@@ -148,7 +154,8 @@ export function NetPositionPanel({
                       type="number"
                       value={marketDraft}
                       onChange={(e) => setMarketDraft(e.target.value)}
-                      placeholder="Market ₨/maund"
+                      placeholder="Fallback ₨/maund"
+                      title="Used only until Daily Prices carries this commodity — a published price always wins"
                       className="kastros-input kastros-input-sm w-32"
                     />
                     <input
@@ -194,7 +201,7 @@ export function NetPositionPanel({
                     className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-foreground/5"
                   >
                     <Pencil className="h-3 w-3" />
-                    {c.label} market / FX
+                    {c.label} fallback / FX
                   </button>
                 )}
               </div>
@@ -217,11 +224,13 @@ function Row({
   values,
   bold,
   tone,
+  hint,
 }: {
   label: string;
   values: string[];
   bold?: boolean;
   tone?: (colIndex: number) => string;
+  hint?: string[];
 }) {
   return (
     <tr>
@@ -238,6 +247,9 @@ function Row({
           )}
         >
           {v}
+          {hint?.[i] ? (
+            <div className="text-[10px] font-normal text-subtle">{hint[i]}</div>
+          ) : null}
         </td>
       ))}
     </tr>

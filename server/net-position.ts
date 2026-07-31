@@ -2,6 +2,7 @@ import type { TradeSeason } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
 import { KG_PER_MAUND_40 } from "@/lib/trade-constants";
+import { defaultKgPerUnit } from "@/lib/price-units";
 import { ratePerMaundInclCommission } from "@/server/trade-closure";
 
 const MAUNDS_PER_MT = 1000 / KG_PER_MAUND_40;
@@ -32,6 +33,10 @@ export type SeasonNetPosition = {
   netPositionMt: number;
   tradeEntryRatePkrPerMaund: number | null;
   marketRatePkrPerMaund: number | null;
+  /** Where the market rate came from — Daily Prices, or the desk's fallback. */
+  marketRateSource: "DAILY_PRICES" | "FALLBACK" | null;
+  /** Daily Prices only: the date that price was published for. */
+  marketRateDate: string | null;
   fxRate: number | null;
   inOutPerMaund: number | null;
   inOutValuePkr: number | null;
@@ -45,7 +50,7 @@ function titleCase(s: string): string {
 }
 
 export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
-  const [trades, contracts, receipts, outbound, transfers, inputs] = await Promise.all([
+  const [trades, contracts, receipts, outbound, transfers, inputs, deskPrices] = await Promise.all([
     prisma.trade.findMany({
       where: { tradeStatus: { not: "CANCELLED" } },
       select: {
@@ -77,6 +82,16 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
       select: { commodityCode: true, season: true, receivedQtyMt: true, dispatchedQtyMt: true, externalOrigin: true },
     }),
     prisma.positionMarketInput.findMany(),
+    // Today's market rate as the desk publishes it on Daily Prices.
+    prisma.deskMarketPrice.findMany({
+      select: {
+        commodityCode: true,
+        cnfAmount: true,
+        cnfCurrency: true,
+        cnfUnit: true,
+        priceDate: true,
+      },
+    }),
   ]);
 
   const contractByRef = new Map(contracts.map((c) => [c.tradeRef, c]));
@@ -148,12 +163,30 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
 
   const inputByKey = new Map(inputs.map((i) => [`${i.commodityCode}::${i.season}`, i]));
 
+  // Daily Prices is quoted in whatever unit the desk chose — normalise to
+  // ₨/maund, which is how the position sheet reads.
+  const deskRateByCommodity = new Map<string, { rate: number; date: string }>();
+  for (const p of deskPrices) {
+    const amount = numOrNull(p.cnfAmount);
+    if (amount == null || amount <= 0) continue;
+    if ((p.cnfCurrency ?? "PKR").toUpperCase() !== "PKR") continue;
+    const kgPerQuoted = defaultKgPerUnit(p.cnfUnit ?? "MAUND_40");
+    const perMaund = (amount / kgPerQuoted) * KG_PER_MAUND_40;
+    deskRateByCommodity.set(p.commodityCode, { rate: round2(perMaund), date: p.priceDate });
+  }
+
   return [...buckets.values()]
     .filter((b) => b.openPurchasesMt || b.openSalesMt || b.inventoryMt)
     .sort((a, z) => a.commodityCode.localeCompare(z.commodityCode) || a.season.localeCompare(z.season))
     .map((b) => {
       const input = inputByKey.get(`${b.commodityCode}::${b.season}`);
-      const market = input?.marketRatePkrPerMaund != null ? num(input.marketRatePkrPerMaund) : null;
+      // Daily Prices is the live market rate and always wins — a stale desk
+      // fallback must never mask a price someone published this morning.
+      const desk = deskRateByCommodity.get(b.commodityCode);
+      const fallback = input?.marketRatePkrPerMaund != null ? num(input.marketRatePkrPerMaund) : null;
+      const market = desk?.rate ?? fallback;
+      const marketRateSource: SeasonNetPosition["marketRateSource"] =
+        desk ? "DAILY_PRICES" : fallback != null ? "FALLBACK" : null;
       const fx = input?.fxRate != null ? num(input.fxRate) : null;
       const entry = b.entryWeightMt > 0 ? round2(b.entryWeightedValue / b.entryWeightMt) : null;
       const netMt = round2(b.openPurchasesMt + b.inventoryMt - b.openSalesMt);
@@ -171,6 +204,8 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
         netPositionMt: netMt,
         tradeEntryRatePkrPerMaund: entry,
         marketRatePkrPerMaund: market,
+        marketRateSource,
+        marketRateDate: desk?.date ?? null,
         fxRate: fx,
         inOutPerMaund: perMaund,
         inOutValuePkr: valuePkr,
