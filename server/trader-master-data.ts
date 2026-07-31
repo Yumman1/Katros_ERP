@@ -500,7 +500,64 @@ export async function updateCustomCounterparty(
   if (patch.taxFilerStatus != null) data.taxFilerStatus = patch.taxFilerStatus;
   if (patch.address !== undefined) data.address = patch.address?.trim() || null;
   if (patch.bankDetails !== undefined) data.bankDetails = patch.bankDetails?.trim() || null;
-  const row = await prisma.counterparty.update({ where: { id }, data });
+
+  const renamedTo = typeof data.name === "string" ? data.name : null;
+  const oldName = existing.name;
+
+  const row = await prisma.$transaction(async (tx) => {
+    const updated = await tx.counterparty.update({ where: { id }, data });
+
+    // Contracts, trucks and receipts each keep their own copy of the
+    // counterparty's name — snapshots taken when they were created. A rename
+    // that stops at the counterparty row leaves every one of them showing the
+    // old name, and matching a truck to its contract is done BY that name, so a
+    // stale copy does not just look wrong, it breaks the link.
+    if (renamedTo && renamedTo !== oldName) {
+      const refs = (
+        await tx.trade.findMany({ where: { counterpartyId: id }, select: { tradeRef: true } })
+      ).map((t) => t.tradeRef);
+
+      if (refs.length) {
+        await tx.executionContract.updateMany({
+          where: { tradeRef: { in: refs } },
+          data: {
+            counterpartyName: renamedTo,
+            ...(patch.ntn !== undefined ? { counterpartyNtn: updated.ntn } : {}),
+          },
+        });
+      }
+      // These carry no counterparty id, only the name they were stamped with.
+      await tx.pendingTruck.updateMany({
+        where: { counterpartyName: oldName },
+        data: { counterpartyName: renamedTo },
+      });
+      await tx.inboundReceipt.updateMany({
+        where: { sellerName: oldName },
+        data: { sellerName: renamedTo },
+      });
+      await tx.outboundDispatch.updateMany({
+        where: { buyerName: oldName },
+        data: { buyerName: renamedTo },
+      });
+      await tx.paymentRequest.updateMany({
+        where: { counterpartyName: oldName },
+        data: { counterpartyName: renamedTo },
+      });
+    } else if (patch.ntn !== undefined) {
+      const refs = (
+        await tx.trade.findMany({ where: { counterpartyId: id }, select: { tradeRef: true } })
+      ).map((t) => t.tradeRef);
+      if (refs.length) {
+        await tx.executionContract.updateMany({
+          where: { tradeRef: { in: refs } },
+          data: { counterpartyNtn: updated.ntn },
+        });
+      }
+    }
+
+    return updated;
+  });
+
   return counterpartyRowToOption(row);
 }
 
