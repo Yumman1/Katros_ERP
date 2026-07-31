@@ -1,6 +1,7 @@
 "use client";
 
 import { CommodityFilterBar } from "@/components/execution/commodity-filter-bar";
+import { NetPositionPanel } from "@/components/position/net-position-panel";
 import { PositionLegend, PositionLedgerTable } from "@/components/position/position-ledger-table";
 import { collectCommodityOptions } from "@/lib/execution-commodity-filter";
 import { trpc } from "@/lib/trpc/client";
@@ -61,6 +62,8 @@ export default function TraderPositionsPage() {
           Paper exposure from your locked trades vs physical warehouse movements (daily in/out).
         </p>
       </div>
+
+      <NetPositionPanel canEdit />
 
       {commodityOptions.length > 0 && (
         <CommodityFilterBar commodities={commodityOptions} value={commodityFilter} onChange={setCommodityFilter} />

@@ -207,6 +207,7 @@ export const executionRouter = router({
         bags: z.number().int().nonnegative().nullish(),
         reason: z.string().nullish(),
         remarks: z.string().nullish(),
+        season: z.enum(["WINTER", "SUMMER"]).optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {

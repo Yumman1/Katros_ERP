@@ -1,6 +1,7 @@
 "use client";
 
 import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
+import { NetPositionPanel } from "@/components/position/net-position-panel";
 import { CommodityFilterBar } from "@/components/execution/commodity-filter-bar";
 import { PositionLegend, PositionLedgerTable } from "@/components/position/position-ledger-table";
 import { collectCommodityOptions } from "@/lib/execution-commodity-filter";
@@ -59,6 +60,8 @@ export default function ExecutionPositionsPage() {
           Paper vs physical balance by commodity. Execution head can apply manual stock corrections.
         </p>
       </div>
+
+      <NetPositionPanel canEdit />
 
       {commodityOptions.length > 0 && (
         <CommodityFilterBar commodities={commodityOptions} value={commodityFilter} onChange={setCommodityFilter} />

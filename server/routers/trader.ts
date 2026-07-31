@@ -38,6 +38,7 @@ import {
 } from "@/server/execution-store";
 import { exportTradeFileCsv } from "@/server/trade-file-export";
 import { computePositionLedger } from "@/server/position-ledger";
+import { getSeasonNetPositions, setPositionMarketInput } from "@/server/net-position";
 import {
   addCustomCommodity,
   addCustomCounterparty,
@@ -191,6 +192,8 @@ const bookTradeInputSchema = z
     tradeParams: tradeParamValuesSchema.optional(),
     notes: z.string().optional(),
     tradeScope: z.enum(TRADE_SCOPES),
+    /** Crop season the trade books into — one position book per season. */
+    season: z.enum(["WINTER", "SUMMER"]).optional(),
     ratePerMaund: z.number().positive().optional(),
     commissionPerMaund: z.number().min(0).optional(),
     /** When true, submit to execution Open Trades instead of a trader-only draft. */
@@ -864,6 +867,7 @@ export const traderRouter = router({
           notes: input.notes,
           buyingCategory: buyingCategoryFromIncoterms(input.incoterms, input.direction) ?? undefined,
           tradeScope: input.tradeScope,
+          season: input.season,
           ratePerMaund: input.ratePerMaund,
           submitToExecution: input.submitToExecution === true || input.lockNow === true,
         });
@@ -1016,6 +1020,27 @@ export const traderRouter = router({
     const name = traderNameFromSession(ctx.session.user);
     return computePositionLedger({ traderName: name });
   }),
+
+  /** The daily "Net Position" mail, computed live — one column per commodity + season. */
+  seasonNetPositions: protectedProcedure.query(() => getSeasonNetPositions()),
+
+  /** Desk sets the day's market rate / FX behind a net-position column. */
+  setPositionMarketInput: roleProcedure(["TRADER", "EXECUTION", "CEO", "ADMIN"])
+    .input(
+      z.object({
+        commodityCode: z.string().min(1),
+        season: z.enum(["WINTER", "SUMMER"]),
+        marketRatePkrPerMaund: z.number().positive().nullable().optional(),
+        fxRate: z.number().positive().nullable().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await setPositionMarketInput({
+        ...input,
+        updatedBy: ctx.session.user.name ?? ctx.session.user.email ?? "desk",
+      });
+      return { ok: true };
+    }),
 
   /** Locked trades with fulfillment progress for the signed-in trader. */
   tradeFulfillment: protectedProcedure.query(async ({ ctx }) => {

@@ -540,6 +540,7 @@ export type MockTraderTrade = {
   notes?: string;
   buyingCategory?: "Delivered" | "Spot" | null;
   tradeScope?: "LOCAL" | "INTERNATIONAL";
+  season?: "WINTER" | "SUMMER";
   executionProfile?: string | null;
   ratePerMaund?: number | null;
   ratePerKg?: number | null;
@@ -891,6 +892,7 @@ export async function mockBookTrade(input: {
   creditDays?: number;
   buyingCategory?: "Delivered" | "Spot";
   tradeScope?: "LOCAL" | "INTERNATIONAL";
+  season?: "WINTER" | "SUMMER";
   ratePerMaund?: number;
   commissionPerMaund?: number;
   /** Flat broker commission in the quoted price currency. */
@@ -971,6 +973,7 @@ export async function mockBookTrade(input: {
       desk: "AGRI_DESK",
       direction: input.direction,
       tradeScope: input.tradeScope ?? "LOCAL",
+      season: input.season ?? "SUMMER",
       commodityId: input.commodityId,
       counterpartyId: input.counterpartyId,
       counterpartyKycStatus: input.counterpartyKycStatus,

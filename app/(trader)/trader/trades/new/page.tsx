@@ -107,6 +107,7 @@ const schema = z
     productOrigin: z.string().optional(),
     notes: z.string().optional(),
     tradeScope: z.enum(TRADE_SCOPES),
+    season: z.enum(["WINTER", "SUMMER"]),
   })
   .superRefine((data, ctx) => {
     if (new Date(data.deliveryEnd) < new Date(data.deliveryStart)) {
@@ -281,6 +282,7 @@ function BookTradeForm() {
       commodityId: "",
       counterpartyId: "",
       tradeScope: "LOCAL",
+      season: "SUMMER",
     },
   });
 
@@ -930,6 +932,16 @@ function BookTradeForm() {
                     {TRADE_SCOPE_LABELS[s]}
                   </option>
                 ))}
+              </select>
+            </Field>
+
+            {/* One position book per crop season — the daily net-position mail
+                splits Corn Winter from Corn Summer, so the trade must say
+                which book it belongs to at booking time. */}
+            <Field label="Season" error={errors.season?.message}>
+              <select {...register("season")} className="kastros-select w-full">
+                <option value="SUMMER">Summer</option>
+                <option value="WINTER">Winter</option>
               </select>
             </Field>
 

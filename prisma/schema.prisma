@@ -279,6 +279,13 @@ enum PaymentType {
   AFTER_DELIVERY_100
 }
 
+/// Crop season a trade (or shifted stock) belongs to — the desk runs one
+/// position book per commodity per season (Corn Winter vs Corn Summer).
+enum TradeSeason {
+  WINTER
+  SUMMER
+}
+
 model Trade {
   id        String         @id @default(cuid())
   tradeRef  String         @unique
@@ -287,6 +294,7 @@ model Trade {
   traderName String
   direction TradeDirection
   tradeScope TradeScope    @default(LOCAL)
+  season    TradeSeason    @default(SUMMER)
 
   commodityId    String
   commodity      Commodity    @relation(fields: [commodityId], references: [id])
@@ -465,6 +473,20 @@ model MarketPrice {
   createdBy   User      @relation("MarketPriceCreatedBy", fields: [createdById], references: [id])
 
   @@index([commodityId, priceDate])
+}
+
+/// Desk-entered figures the net-position panel cannot derive on its own: the
+/// day's market rate per maund and the FX rate, per commodity + season.
+model PositionMarketInput {
+  id                    String      @id @default(cuid())
+  commodityCode         String
+  season                TradeSeason
+  marketRatePkrPerMaund Decimal?    @db.Decimal(20, 6)
+  fxRate                Decimal?    @db.Decimal(20, 6)
+  updatedAt             DateTime    @updatedAt
+  updatedBy             String?
+
+  @@unique([commodityCode, season])
 }
 
 /// Execution-desk CNF market price (one live row per commodity).
@@ -1027,6 +1049,7 @@ model StockTransfer {
   inGatepassNo  String? @unique
 
   status StockTransferStatus @default(DRAFT)
+  season TradeSeason @default(SUMMER)
   reason String?
   remarks String?
 
