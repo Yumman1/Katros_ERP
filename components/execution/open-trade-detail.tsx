@@ -268,7 +268,7 @@ export function OpenTradeDetail({
         department: "EXECUTION",
         entityType: "TRADE",
         entityRef: tradeRef,
-        entityLabel: `${tradeRef} ${isLockedMode ? "locked contract" : "draft trade"} edit`,
+        entityLabel: `${tradeRef} ${isLockedMode ? "locked contract" : "unreviewed trade"} edit`,
         action: "EDIT",
         comment: requestComment.trim(),
         payload: executionEditNote != null ? patch : payload,
@@ -281,14 +281,14 @@ export function OpenTradeDetail({
   if (isLoading || !trade) {
     return (
       <div className="animate-pulse text-subtle">
-        Loading {isLockedMode ? "locked contract" : "draft trade"}…
+        Loading {isLockedMode ? "locked contract" : "unreviewed trade"}…
       </div>
     );
   }
 
   const quotedUnit = priceUnitLabel({ currency: priceCurrency, weightUnit: priceWeightUnit });
   const backHref = isLockedMode ? "/execution/contracts" : "/execution/open-trades";
-  const backLabel = isLockedMode ? "Reviewed trades" : "Draft trades";
+  const backLabel = isLockedMode ? "Reviewed trades" : "Unreviewed trades";
 
   return (
     <div className="kastros-desk-page mx-auto w-full max-w-4xl">
@@ -318,7 +318,7 @@ export function OpenTradeDetail({
             </span>
           ) : (
             <span className="rounded-md bg-accent-secondary/20 px-3 py-1 text-sm font-medium text-accent-secondary">
-              Draft — review booking details below
+              Unreviewed — review booking details below
             </span>
           )}
         </div>

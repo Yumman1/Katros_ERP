@@ -145,7 +145,7 @@ function isOpenTrade(t: MockTraderTrade): boolean {
 function assertOpenTrade(t: MockTraderTrade, tradeRef: string): void {
   if (!t) throw new Error("Trade not found: " + tradeRef);
   if (!isOpenTrade(t)) {
-    throw new Error("Trade is not in Draft Trades (must be PENDING and submitted to execution)");
+    throw new Error("Trade is not in Unreviewed Trades (must be PENDING and submitted to execution)");
   }
 }
 
@@ -215,7 +215,7 @@ export async function submitTradeToExecution(
     );
   }
   if (t.tradeStatus !== TradeStatus.PENDING) {
-    throw new Error("Only draft trades can be submitted to execution");
+    throw new Error("Only unreviewed trades can be submitted to execution");
   }
   if (t.submittedToExecution) return t;
   t.submittedToExecution = true;
@@ -511,7 +511,7 @@ export async function applyTraderTradeEditFromPayload(
   if (!trade) throw new Error("Trade not found");
   if (trade.tradeStatus !== TradeStatus.PENDING) {
     throw new Error(
-      "Only draft or draft trades can be edited — locked contracts cannot change price or quantity",
+      "Only unreviewed trades can be edited — locked contracts cannot change price or quantity",
     );
   }
   const patch = normalizeOpenTradePatch(payload);
@@ -640,7 +640,7 @@ export async function lockOpenTradeAfterTraderReview(
   const trade = await mockTradeByRefGlobal(tradeRef.trim());
   if (!trade) throw new Error("Trade not found");
   if (!isOpenTrade(trade)) {
-    throw new Error("Trade is not in Draft Trades");
+    throw new Error("Trade is not in Unreviewed Trades");
   }
   if (!trade.pendingTraderReview) {
     throw new Error("No execution edits to acknowledge — execution can lock this trade directly");

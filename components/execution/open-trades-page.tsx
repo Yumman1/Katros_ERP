@@ -54,15 +54,15 @@ export function OpenTradesPage() {
               Desk
             </Link>
             <span>/</span>
-            <span className="text-muted-foreground">Draft Trades</span>
+            <span className="text-muted-foreground">Unreviewed Trades</span>
           </>
         }
-        title="Draft Trades"
-        subtitle="Draft contracts submitted by traders — edit fields, allocate warehouses, then lock when ready"
+        title="Unreviewed Trades"
+        subtitle="Unreviewed contracts submitted by traders — edit fields, allocate warehouses, then lock when ready"
       />
 
       <div className="flex flex-wrap gap-3">
-        <StatChip label="Drafts" value={filtered.length} variant="accent" />
+        <StatChip label="Unreviewed" value={filtered.length} variant="accent" />
         <StatChip label="Awaiting trader review" value={awaitingTrader} variant="danger" />
       </div>
 
@@ -173,7 +173,7 @@ export function OpenTradesPage() {
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={12} className="py-12 text-center text-sm text-subtle">
-                  No draft trades match your search.
+                  No unreviewed trades match your search.
                 </td>
               </tr>
             )}

@@ -144,7 +144,7 @@ export const teamRouter = router({
         if (!trade.submittedToExecution && trade.tradeStatus === TradeStatus.PENDING) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "Draft trades can be edited directly from My Trades — CEO approval is not required until you submit to execution",
+            message: "Unreviewed trades not yet sent to execution can be edited directly from My Trades — CEO approval is not required until you submit to execution",
           });
         }
         if (input.action === "EDIT" && (!input.payload || !Object.keys(input.payload).length)) {

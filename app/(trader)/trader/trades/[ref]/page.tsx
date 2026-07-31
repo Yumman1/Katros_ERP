@@ -206,7 +206,7 @@ export default function TradeDetailPage() {
                   : trade.pendingTraderReview
                     ? "Execution edits — review"
                     : "With execution"
-                : "Draft"
+                : "Unreviewed — not sent"
               : trade.tradeStatus === "EXECUTED" || trade.tradeStatus === "SETTLED"
                 ? "Closed"
                 : trade.tradeStatus}
@@ -564,7 +564,7 @@ export default function TradeDetailPage() {
         <div className="rounded-lg border border-accent-secondary/30 bg-accent-secondary/10 p-4 text-sm text-accent-secondary">
           <div className="font-medium">With execution team</div>
           <p className="mt-1 text-xs text-subtle">
-            This trade is in Draft Trades. Execution will allocate warehouse and lock it, or edit fields and
+            This trade is in Unreviewed Trades. Execution will allocate warehouse and lock it, or edit fields and
             send back for your review.
           </p>
         </div>
@@ -574,7 +574,7 @@ export default function TradeDetailPage() {
         <div className="rounded-lg border border-kastros-border bg-kastros-card p-4">
           <h2 className="text-sm font-medium text-muted-foreground">Submit to execution</h2>
           <p className="mt-1 text-xs text-subtle">
-            This draft is only visible to you. Submit it to the execution desk Draft Trades queue when ready.
+            This draft is only visible to you. Submit it to the execution desk Unreviewed Trades queue when ready.
           </p>
           <button
             type="button"
@@ -590,7 +590,7 @@ export default function TradeDetailPage() {
         </div>
       )}
 
-      {/* Drafts and draft trades alike — anything execution has not yet
+      {/* Unreviewed trades — anything execution has not yet — anything execution has not yet
           locked can be settled directly, matching the server's own gate. */}
       {trade.tradeStatus === "PENDING" &&
         !trade.lockedAt &&

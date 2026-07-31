@@ -62,7 +62,7 @@ export function TradeEditChangePreview({
               </Link>
             </>
           ) : (
-            <span>Current trade not in Draft Trades — showing proposed values only</span>
+            <span>Current trade not in Unreviewed Trades — showing proposed values only</span>
           )}
         </div>
       </div>
@@ -86,8 +86,9 @@ export function TradeEditChangePreview({
 
       {compact && changedCount > 0 && changedCount < rows.length && (
         <p className="text-[10px] text-subtle">
-          Showing {changedCount} changed field{changedCount !== 1 ? "s" : ""} only. Approve applies the full
-          proposed trade snapshot above.
+          Showing {changedCount} changed field{changedCount !== 1 ? "s" : ""} only — the request also
+          carries {rows.length - changedCount} field{rows.length - changedCount !== 1 ? "s" : ""} it
+          leaves as they are. Fields not listed here are untouched by this request.
         </p>
       )}
     </div>

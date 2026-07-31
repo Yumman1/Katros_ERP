@@ -1484,7 +1484,7 @@ function BookTradeForm() {
           </Link>
           <span className="text-xs text-subtle">
             Drafts stay in My Trades · Unfinished forms are autosaved under My Trades → Unfinished ·
-            Submitting sends the trade to execution Draft Trades for review and lock.
+            Submitting sends the trade to execution Unreviewed Trades for review and lock.
           </span>
           {lastDraftSavedAt && (
             <span className="text-xs text-subtle">

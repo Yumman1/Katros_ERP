@@ -95,7 +95,7 @@ export default function MyTradesPage() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">My Trades</h1>
           <p className="text-sm text-subtle">
-            Use <span className="text-foreground">Edit</span> on draft trades only — locked
+            Use <span className="text-foreground">Edit</span> on unreviewed trades only — locked
             contracts cannot change price, quantity, or commission. Cancelling a locked trade raises a
             debit note and goes to the CEO.
           </p>
@@ -137,7 +137,7 @@ export default function MyTradesPage() {
             {f === "UNFINISHED"
               ? `Unfinished (${drafts?.length ?? 0})`
               : f === "DRAFTS"
-                ? "Drafts"
+                ? "Unreviewed"
                 : f === "CLOSED"
                   ? "Closed"
                   : f === "CANCELLED"

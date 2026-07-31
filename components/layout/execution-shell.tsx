@@ -50,7 +50,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
     },
     {
       href: "/execution/open-trades",
-      label: "Draft Trades",
+      label: "Unreviewed Trades",
       icon: <FileEdit className="h-4 w-4" />,
       badge:
         (summary?.openTrades ?? 0) > 0 ? (

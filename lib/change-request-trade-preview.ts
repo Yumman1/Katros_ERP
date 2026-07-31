@@ -231,6 +231,24 @@ function row(label: string, before: string, after: string): PreviewRow {
   return { label, before, after, changed };
 }
 
+/**
+ * A field the request does not carry is not a proposed change.
+ *
+ * Patches are partial by design — execution never sends price, quantity or
+ * commission (they are trader-owned and stripped server-side), and the trader's
+ * form never sends counterparty details. Rendering a row for an absent key made
+ * every one of those read "250 MT → —", so an approver saw a request to wipe
+ * fields nobody had touched. Absent means untouched: no row at all.
+ */
+function maybeRow(
+  present: boolean,
+  label: string,
+  before: string,
+  after: string,
+): PreviewRow | null {
+  return present ? row(label, before, after) : null;
+}
+
 /** Build human-readable before/after rows for an open-trade edit approval. */
 export function buildTradeEditPreviewRows(
   current: TradePreviewSource | null | undefined,
@@ -240,6 +258,17 @@ export function buildTradeEditPreviewRows(
   const c = current ? readCurrent(current) : null;
   const commodityCode = current?.commodityCode;
 
+  const has = (...keys: string[]) =>
+    keys.some(
+      (k) => Object.prototype.hasOwnProperty.call(payload, k) && payload[k] !== undefined,
+    );
+  const cpPatch =
+    payload.counterparty && typeof payload.counterparty === "object"
+      ? (payload.counterparty as Record<string, unknown>)
+      : null;
+  const hasCp = (key: string) =>
+    !!cpPatch && Object.prototype.hasOwnProperty.call(cpPatch, key) && cpPatch[key] !== undefined;
+
   const mergedParams = (base?: Record<string, unknown> | null, extra?: Record<string, unknown>) => {
     const out = { ...(base ?? {}) };
     if (p.creditDays != null) out.creditDays = p.creditDays;
@@ -248,81 +277,104 @@ export function buildTradeEditPreviewRows(
   };
 
   const rows: PreviewRow[] = [
-    row(
+    maybeRow(
+      has("quantityEntered", "quantityEnteredUnit"),
       "Quantity",
       c ? fmtQty(c.quantityEntered, c.quantityEnteredUnit) : "—",
       fmtQty(p.quantityEntered, p.quantityEnteredUnit),
     ),
-    row(
+    maybeRow(
+      has("price", "priceCurrency", "priceWeightUnit"),
       "Price",
       c ? fmtPrice(c.price, c.priceCurrency, c.priceWeightUnit) : "—",
       fmtPrice(p.price, p.priceCurrency, p.priceWeightUnit),
     ),
-    row("Delivery start", c ? fmtDate(c.deliveryStart) : "—", fmtDate(p.deliveryStart)),
-    row("Delivery end", c ? fmtDate(c.deliveryEnd) : "—", fmtDate(p.deliveryEnd)),
-    row("Incoterm", c?.incoterms?.trim() || "—", String(p.incoterms ?? "—")),
-    row(
+    maybeRow(has("deliveryStart"), "Delivery start", c ? fmtDate(c.deliveryStart) : "—", fmtDate(p.deliveryStart)),
+    maybeRow(has("deliveryEnd"), "Delivery end", c ? fmtDate(c.deliveryEnd) : "—", fmtDate(p.deliveryEnd)),
+    maybeRow(has("incoterms"), "Incoterm", c?.incoterms?.trim() || "—", String(p.incoterms ?? "—")),
+    maybeRow(
+      has("paymentType", "creditDays"),
       "Payment",
       c ? fmtPayment(c.paymentType, mergedParams(c.tradeParams)) : "—",
       fmtPayment(p.paymentType, mergedParams(p.tradeParams as Record<string, unknown>)),
     ),
-    row("Grade", c?.grade?.trim() || "—", String(p.grade ?? "—").trim() || "—"),
-    row("Product origin", c?.productOrigin?.trim() || "—", String(p.productOrigin ?? "—").trim() || "—"),
-    row("Origin / location", c?.originName?.trim() || "—", String(p.originName ?? "—").trim() || "—"),
-    row(
+    maybeRow(has("grade"), "Grade", c?.grade?.trim() || "—", String(p.grade ?? "—").trim() || "—"),
+    maybeRow(
+      has("productOrigin"),
+      "Product origin",
+      c?.productOrigin?.trim() || "—",
+      String(p.productOrigin ?? "—").trim() || "—",
+    ),
+    maybeRow(
+      has("originName"),
+      "Origin / location",
+      c?.originName?.trim() || "—",
+      String(p.originName ?? "—").trim() || "—",
+    ),
+    maybeRow(
+      has("commissionAmount"),
       "Commission",
       c ? fmtCommission(c.commissionAmount, c.priceCurrency) : "—",
       fmtCommission(p.commissionAmount, p.priceCurrency),
     ),
-    row(
+    maybeRow(
+      has("qualityTolerancesDetail"),
       "Quality specification",
       c ? fmtQualityDetail(c.qualityTolerancesDetail, current?.qualityTolerances) : "—",
       fmtQualityDetail(p.qualityTolerancesDetail),
     ),
-    row(
+    maybeRow(
+      has("tradeParams"),
       "Contract details",
       c ? fmtTradeParams(c.tradeParams ?? null, commodityCode) : "—",
       fmtTradeParams(p.tradeParams ?? null, commodityCode),
     ),
-    row(
+    maybeRow(
+      has("warehouseSelections"),
       "Trader warehouse picks",
       c ? fmtWarehouseSelections(c.warehouseSelections, c.tradeParams ?? null) : "—",
       fmtWarehouseSelections(p.warehouseSelections, p.tradeParams ?? null),
     ),
-    row(
+    maybeRow(
+      has("warehouseSplit"),
       "Warehouse allocation split",
       c ? fmtWarehouseSplit(c.warehouseSplit, c.tradeParams ?? null) : "—",
       fmtWarehouseSplit(p.warehouseSplit, p.tradeParams ?? null),
     ),
-    row("Notes", c?.notes?.trim() || "—", p.notes ? String(p.notes).trim() : "—"),
-    row(
+    maybeRow(has("notes"), "Notes", c?.notes?.trim() || "—", p.notes ? String(p.notes).trim() : "—"),
+    maybeRow(
+      hasCp("name"),
       "Counterparty name",
       c?.counterpartyName?.trim() || "—",
       p.counterpartyName != null ? String(p.counterpartyName).trim() || "—" : "—",
     ),
-    row(
+    maybeRow(
+      hasCp("companyNameNtn"),
       "Company name (NTN)",
       c?.counterpartyCompanyNameNtn?.trim() || "—",
       p.counterpartyCompanyNameNtn != null
         ? String(p.counterpartyCompanyNameNtn).trim() || "—"
         : "—",
     ),
-    row(
+    maybeRow(
+      hasCp("ntn"),
       "NTN no.",
       c?.counterpartyNtn?.trim() || "—",
       p.counterpartyNtn != null ? String(p.counterpartyNtn).trim() || "—" : "—",
     ),
-    row(
+    maybeRow(
+      hasCp("address"),
       "Counterparty address",
       c?.counterpartyAddress?.trim() || "—",
       p.counterpartyAddress != null ? String(p.counterpartyAddress).trim() || "—" : "—",
     ),
-    row(
+    maybeRow(
+      hasCp("bankDetails"),
       "Bank details",
       c?.counterpartyBankDetails?.trim() || "—",
       p.counterpartyBankDetails != null ? String(p.counterpartyBankDetails).trim() || "—" : "—",
     ),
-  ];
+  ].filter((r): r is PreviewRow => r !== null);
 
   if (p.executionEditNote) {
     rows.push(
