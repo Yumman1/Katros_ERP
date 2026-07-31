@@ -15,6 +15,8 @@ export type TradePreviewSource = {
     ntn?: string | null;
     address?: string | null;
     bankDetails?: string | null;
+    contactPerson?: string | null;
+    contactPhone?: string | null;
   };
   counterpartyKycStatus?: string;
   quantityEntered?: number | null;
@@ -190,6 +192,8 @@ function readPayload(payload: Record<string, unknown>) {
     counterpartyNtn: counterparty?.ntn,
     counterpartyAddress: counterparty?.address,
     counterpartyBankDetails: counterparty?.bankDetails,
+    counterpartyContactPerson: counterparty?.contactPerson,
+    counterpartyContactPhone: counterparty?.contactPhone,
     counterpartyVerify: counterparty?.verify === true,
   };
 }
@@ -222,6 +226,8 @@ function readCurrent(current: TradePreviewSource) {
     counterpartyNtn: current.counterparty?.ntn,
     counterpartyAddress: current.counterparty?.address,
     counterpartyBankDetails: current.counterparty?.bankDetails,
+    counterpartyContactPerson: current.counterparty?.contactPerson,
+    counterpartyContactPhone: current.counterparty?.contactPhone,
     counterpartyKycStatus: current.counterpartyKycStatus,
   };
 }
@@ -373,6 +379,18 @@ export function buildTradeEditPreviewRows(
       "Bank details",
       c?.counterpartyBankDetails?.trim() || "—",
       p.counterpartyBankDetails != null ? String(p.counterpartyBankDetails).trim() || "—" : "—",
+    ),
+    maybeRow(
+      hasCp("contactPerson"),
+      "Contact person",
+      c?.counterpartyContactPerson?.trim() || "—",
+      p.counterpartyContactPerson != null ? String(p.counterpartyContactPerson).trim() || "—" : "—",
+    ),
+    maybeRow(
+      hasCp("contactPhone"),
+      "Contact number",
+      c?.counterpartyContactPhone?.trim() || "—",
+      p.counterpartyContactPhone != null ? String(p.counterpartyContactPhone).trim() || "—" : "—",
     ),
   ].filter((r): r is PreviewRow => r !== null);
 

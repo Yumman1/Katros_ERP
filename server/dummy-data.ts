@@ -534,6 +534,8 @@ export type MockTraderTrade = {
     ntn?: string | null;
     address?: string | null;
     bankDetails?: string | null;
+    contactPerson?: string | null;
+    contactPhone?: string | null;
   };
   marketPrice: number;
   mtmPnl: number;

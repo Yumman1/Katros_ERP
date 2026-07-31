@@ -155,6 +155,8 @@ const openTradePatchSchema = z.object({
       ntn: z.string().nullable().optional(),
       address: z.string().nullable().optional(),
       bankDetails: z.string().nullable().optional(),
+      contactPerson: z.string().nullable().optional(),
+      contactPhone: z.string().nullable().optional(),
       verify: z.boolean().optional(),
     })
     .optional(),

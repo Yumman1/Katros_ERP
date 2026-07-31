@@ -71,6 +71,8 @@ export type OpenTradeCounterpartyPatch = {
   ntn?: string | null;
   address?: string | null;
   bankDetails?: string | null;
+  contactPerson?: string | null;
+  contactPhone?: string | null;
   /** Execution head confirms name & NTN against portal. */
   verify?: boolean;
 };
@@ -241,6 +243,8 @@ async function applyCounterpartyPatch(
   if (patch.ntn !== undefined) cp.ntn = patch.ntn?.trim() || null;
   if (patch.address !== undefined) cp.address = patch.address?.trim() || null;
   if (patch.bankDetails !== undefined) cp.bankDetails = patch.bankDetails?.trim() || null;
+  if (patch.contactPerson !== undefined) cp.contactPerson = patch.contactPerson?.trim() || null;
+  if (patch.contactPhone !== undefined) cp.contactPhone = patch.contactPhone?.trim() || null;
 
   const masterPatch = {
     name: cp.name,
@@ -248,6 +252,8 @@ async function applyCounterpartyPatch(
     ntn: cp.ntn ?? null,
     address: cp.address ?? null,
     bankDetails: cp.bankDetails ?? null,
+    contactPerson: cp.contactPerson ?? null,
+    contactPhone: cp.contactPhone ?? null,
   };
 
   // The counterparty is one record shared by every trade booked against it, so

@@ -98,6 +98,8 @@ export function OpenTradeDetail({
   const [requestComment, setRequestComment] = useState("");
   const [counterpartyName, setCounterpartyName] = useState("");
   const [counterpartyNtn, setCounterpartyNtn] = useState("");
+  const [counterpartyContactPerson, setCounterpartyContactPerson] = useState("");
+  const [counterpartyContactPhone, setCounterpartyContactPhone] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -159,6 +161,8 @@ export function OpenTradeDetail({
     setEditNote(trade.executionEditNote ?? "");
     setCounterpartyName(trade.counterparty.name);
     setCounterpartyNtn(trade.counterparty.ntn ?? "");
+    setCounterpartyContactPerson(trade.counterparty.contactPerson ?? "");
+    setCounterpartyContactPhone(trade.counterparty.contactPhone ?? "");
     setSaved(false);
   }, [trade]);
 
@@ -201,6 +205,8 @@ export function OpenTradeDetail({
       counterparty: {
         name: counterpartyName.trim(),
         ntn: counterpartyNtn.trim() || null,
+        contactPerson: counterpartyContactPerson.trim() || null,
+        contactPhone: counterpartyContactPhone.trim() || null,
       },
     };
   }
@@ -450,24 +456,25 @@ export function OpenTradeDetail({
                     </select>
                   </Field>
                 )}
+                {/* Filled from the counterparty record, editable here — a
+                    correction lands on the counterparty, so every trade of
+                    theirs shows it. */}
                 <Field label="Contact person">
                   <input
                     readOnly={ro}
-                    value={String(tradeParams.contactPerson ?? "")}
-                    onChange={(e) =>
-                      setTradeParams((p) => ({ ...p, contactPerson: e.target.value || undefined }))
-                    }
+                    value={counterpartyContactPerson}
+                    onChange={(e) => setCounterpartyContactPerson(e.target.value)}
+                    placeholder="From counterparty record"
                     className={selectClass}
                   />
                 </Field>
                 <Field label="Contact number">
                   <input
                     readOnly={ro}
-                    value={String(tradeParams.contactNumber ?? "")}
-                    onChange={(e) =>
-                      setTradeParams((p) => ({ ...p, contactNumber: e.target.value || undefined }))
-                    }
-                    className={selectClass}
+                    value={counterpartyContactPhone}
+                    onChange={(e) => setCounterpartyContactPhone(e.target.value)}
+                    placeholder="From counterparty record"
+                    className={`${selectClass} font-mono`}
                   />
                 </Field>
               </>

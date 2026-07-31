@@ -78,6 +78,8 @@ export function tradeRowToMock(row: TradeRowWithRelations): MockTraderTrade {
       ntn: row.counterparty.ntn,
       address: row.counterparty.address,
       bankDetails: row.counterparty.bankDetails,
+      contactPerson: row.counterparty.contactPerson,
+      contactPhone: row.counterparty.contactPhone,
     },
     marketPrice: num(row.marketPrice),
     mtmPnl: num(row.mtmPnl),
