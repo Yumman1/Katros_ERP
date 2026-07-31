@@ -156,6 +156,10 @@ export default function TruckMovementsPage() {
       .filter((r) => r.status === "PAID")
       .map((r) => {
       const c = contractByRef.get(r.tradeRef);
+      // The gate invoice is captured on the truck, not the receipt — read it
+      // from there and keep billNo as the fallback for imported rows, which
+      // carry a supplier bill number and no gate invoice.
+      const truck = r.gatepassNo ? truckByGatepass.get(r.gatepassNo) : undefined;
       return {
         id: r.id,
         type: "INBOUND",
@@ -171,11 +175,12 @@ export default function TruckMovementsPage() {
         documentRefs: uploadedDocs(r.documentRefs),
         grossWeightKg: r.weightWarehouseKg,
         netQtyMt: r.allocatedQtyMt,
-        invoiceNo: r.billNo,
-        invoiceQtyMt: r.allocatedQtyMt,
+        invoiceNo: truck?.gateInvoiceNo ?? r.billNo,
+        invoiceQtyMt: truck?.gateInvoiceQtyMt ?? r.allocatedQtyMt,
         invoiceQtyUnit: c?.quantityUnit ?? "MT",
-        invoiceAmount: r.amountDue,
-        invoiceCurrency: c?.currency ?? null,
+        invoiceAmount: truck?.gateInvoiceAmount ?? r.amountDue,
+        invoiceCurrency: truck?.gateInvoiceCurrency ?? c?.currency ?? null,
+        invoiceStage: truck?.gateInvoiceStage ?? null,
         status: r.status,
         driverName: r.driverName,
         sourceKind: "inbound",
@@ -192,6 +197,7 @@ export default function TruckMovementsPage() {
       })
       .map((d) => {
       const c = contractByRef.get(d.tradeRef);
+      const truck = d.gatepassNo ? truckByGatepass.get(d.gatepassNo) : undefined;
       return {
         id: d.id,
         type: "OUTBOUND",
@@ -207,6 +213,13 @@ export default function TruckMovementsPage() {
         documentRefs: uploadedDocs(d.documentRefs),
         grossWeightKg: d.dispatchWeightKg,
         netQtyMt: d.allocatedQtyMt,
+        // Same as inbound: the gate invoice lives on the truck.
+        invoiceNo: truck?.gateInvoiceNo ?? null,
+        invoiceQtyMt: truck?.gateInvoiceQtyMt ?? d.allocatedQtyMt,
+        invoiceQtyUnit: c?.quantityUnit ?? "MT",
+        invoiceAmount: truck?.gateInvoiceAmount ?? null,
+        invoiceCurrency: truck?.gateInvoiceCurrency ?? c?.currency ?? null,
+        invoiceStage: truck?.gateInvoiceStage ?? null,
         status: d.status,
         driverName: d.driverName,
         sourceKind: "outbound",
