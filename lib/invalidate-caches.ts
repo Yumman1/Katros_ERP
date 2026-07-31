@@ -11,6 +11,11 @@ export function invalidateTradeFlowCaches(utils: Utils, tradeRef?: string) {
   void utils.trader.tradeFulfillment.invalidate();
   // Booking, locking, closing or cancelling a trade all move the net position.
   void utils.trader.seasonNetPositions.invalidate();
+  // An edit may have corrected the counterparty record, which every trade,
+  // ledger and truck row shows by name.
+  void utils.trader.referenceData.invalidate();
+  void utils.execution.sellCounterparties.invalidate();
+  void utils.execution.counterpartyLedgers.invalidate();
   void utils.execution.pendingForLock.invalidate();
   void utils.execution.openTrades.invalidate();
   void utils.execution.lockedContracts.invalidate();

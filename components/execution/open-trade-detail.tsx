@@ -365,6 +365,9 @@ export function OpenTradeDetail({
               />
             </Field>
 
+            {/* These edit the counterparty record itself, not this trade — one
+                record shared by every trade booked against it, so a correction
+                here lands on all of them. */}
             <Field label="Trading name">
               <input
                 readOnly={ro}
@@ -372,6 +375,9 @@ export function OpenTradeDetail({
                 onChange={(e) => setCounterpartyName(e.target.value)}
                 className={inputClass}
               />
+              <p className="mt-1 text-[11px] text-subtle">
+                Saving updates the counterparty on every trade of theirs.
+              </p>
             </Field>
 
             <Field label="NTN no.">

@@ -250,23 +250,23 @@ async function applyCounterpartyPatch(
     bankDetails: cp.bankDetails ?? null,
   };
 
+  // The counterparty is one record shared by every trade booked against it, so
+  // correcting a name or NTN here corrects it everywhere. This used to be gated
+  // on a "ccp-" id prefix — the marker of a counterparty added through the app —
+  // which silently discarded the edit for every imported or seeded counterparty.
   if (patch.verify) {
     const verifiedAt = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     trade.counterpartyKycStatus = "VERIFIED";
     trade.counterpartyKycRef = trade.counterpartyKycRef ?? `KYC-${cp.code}-${verifiedAt}`;
-    if (cp.id.startsWith("ccp-")) {
-      await updateCustomCounterparty(cp.id, {
-        ...masterPatch,
-        kycStatus: "VERIFIED",
-        kycRef: trade.counterpartyKycRef,
-      });
-    }
+    await updateCustomCounterparty(cp.id, {
+      ...masterPatch,
+      kycStatus: "VERIFIED",
+      kycRef: trade.counterpartyKycRef,
+    });
     return;
   }
 
-  if (cp.id.startsWith("ccp-")) {
-    await updateCustomCounterparty(cp.id, masterPatch);
-  }
+  await updateCustomCounterparty(cp.id, masterPatch);
 }
 
 async function applyPatchToTrade(
