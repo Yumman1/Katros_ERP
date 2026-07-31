@@ -16,6 +16,7 @@ export default function TraderPositionsPage() {
     refetchInterval: 20000,
   });
   const { data: trades } = trpc.trader.myTrades.useQuery({});
+  const { data: seasonCols } = trpc.trader.seasonNetPositions.useQuery();
 
   const commodityOptions = useMemo(() => {
     const fromExposure = (exposure ?? []).map((e) => ({ commodityCode: e.code, commodityName: e.name }));
@@ -23,8 +24,12 @@ export default function TraderPositionsPage() {
       commodityCode: r.commodityCode,
       commodityName: r.commodityName,
     }));
-    return collectCommodityOptions([...fromExposure, ...fromLedger]);
-  }, [exposure, ledger]);
+    const fromSeason = (seasonCols ?? []).map((c) => ({
+      commodityCode: c.commodityCode,
+      commodityName: c.commodityName,
+    }));
+    return collectCommodityOptions([...fromExposure, ...fromLedger, ...fromSeason]);
+  }, [exposure, ledger, seasonCols]);
 
   const filteredExposure = useMemo(
     () =>
@@ -63,11 +68,11 @@ export default function TraderPositionsPage() {
         </p>
       </div>
 
-      <NetPositionPanel canEdit />
-
       {commodityOptions.length > 0 && (
         <CommodityFilterBar commodities={commodityOptions} value={commodityFilter} onChange={setCommodityFilter} />
       )}
+
+      <NetPositionPanel canEdit commodityFilter={commodityFilter} />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-lg border border-border bg-card px-4 py-3">

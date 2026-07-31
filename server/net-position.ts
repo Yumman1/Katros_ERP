@@ -22,6 +22,7 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
  */
 export type SeasonNetPosition = {
   commodityCode: string;
+  commodityName: string;
   season: TradeSeason;
   /** e.g. "Corn Summer" — the column header of the mail. */
   label: string;
@@ -161,6 +162,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
       const valueUsd = valuePkr != null && fx != null && fx > 0 ? round2(valuePkr / fx) : null;
       return {
         commodityCode: b.commodityCode,
+        commodityName: b.commodityName || b.commodityCode,
         season: b.season,
         label: `${titleCase(b.commodityName || b.commodityCode)} ${titleCase(b.season)}`,
         openPurchasesMt: round2(b.openPurchasesMt),

@@ -21,11 +21,22 @@ function money(v: number | null, parens = true): string {
  * season. Quantities and the entry rate are computed from the book; the
  * market rate and FX are desk-entered per column.
  */
-export function NetPositionPanel({ canEdit }: { canEdit: boolean }) {
+export function NetPositionPanel({
+  canEdit,
+  /** "ALL" shows every commodity's columns; a code narrows to that commodity. */
+  commodityFilter = "ALL",
+}: {
+  canEdit: boolean;
+  commodityFilter?: string;
+}) {
   const utils = trpc.useUtils();
-  const { data: cols, isLoading } = trpc.trader.seasonNetPositions.useQuery(undefined, {
+  const { data: all, isLoading } = trpc.trader.seasonNetPositions.useQuery(undefined, {
     refetchInterval: 30000,
   });
+  const cols =
+    commodityFilter === "ALL"
+      ? all
+      : all?.filter((c) => c.commodityCode === commodityFilter);
   const save = trpc.trader.setPositionMarketInput.useMutation({
     onSuccess: () => {
       setEditing(null);
@@ -41,7 +52,14 @@ export function NetPositionPanel({ canEdit }: { canEdit: boolean }) {
   if (isLoading) {
     return <div className="animate-pulse text-sm text-subtle">Loading net position…</div>;
   }
-  if (!cols?.length) return null;
+  if (!cols?.length) {
+    return (
+      <section className="rounded-xl border border-border bg-card px-5 py-6 text-sm text-subtle">
+        No position in {commodityFilter === "ALL" ? "any commodity" : commodityFilter} yet — book a
+        trade or take stock in and the net position builds itself.
+      </section>
+    );
+  }
 
   return (
     <section className="rounded-xl border border-border bg-card">

@@ -44,6 +44,9 @@ export default function ExecutionShiftingPage() {
     void utils.execution.stockTransfers.invalidate();
     void utils.execution.inboundReceipts.invalidate();
     void utils.execution.outboundDispatches.invalidate();
+    // Shifted stock is inventory in a season's book — the net position moves.
+    void utils.trader.seasonNetPositions.invalidate();
+    void utils.execution.inventoryValuation.invalidate();
   };
   const onError = (e: { message: string }) => setError(e.message);
 

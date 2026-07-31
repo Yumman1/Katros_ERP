@@ -9,6 +9,8 @@ export function invalidateTradeFlowCaches(utils: Utils, tradeRef?: string) {
   void utils.trader.actionItems.invalidate();
   void utils.trader.myExposure.invalidate();
   void utils.trader.tradeFulfillment.invalidate();
+  // Booking, locking, closing or cancelling a trade all move the net position.
+  void utils.trader.seasonNetPositions.invalidate();
   void utils.execution.pendingForLock.invalidate();
   void utils.execution.openTrades.invalidate();
   void utils.execution.lockedContracts.invalidate();
@@ -34,6 +36,9 @@ export function invalidateGateOpsCaches(utils: Utils) {
   void utils.execution.spotPipeline.invalidate();
   void utils.execution.pendingForLock.invalidate();
   void utils.execution.saleWorkflowRows.invalidate();
+  // Stock in or out changes inventory, so the net position moves with it.
+  void utils.trader.seasonNetPositions.invalidate();
+  void utils.execution.inventoryValuation.invalidate();
   void utils.execution.counterpartyLedgers.invalidate();
   void utils.execution.vouchers.invalidate();
   void utils.policy.overdueLedgerAlerts.invalidate();

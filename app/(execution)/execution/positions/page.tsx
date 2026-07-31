@@ -16,6 +16,7 @@ export default function ExecutionPositionsPage() {
   const { data: rows, isLoading } = trpc.execution.positionLedger.useQuery(undefined, {
     refetchInterval: 60_000,
   });
+  const { data: seasonCols } = trpc.trader.seasonNetPositions.useQuery();
 
   const setAdj = trpc.execution.setPositionAdjustment.useMutation({
     onMutate: ({ commodityCode }) => setSavingCode(commodityCode),
@@ -27,10 +28,18 @@ export default function ExecutionPositionsPage() {
 
   const commodityOptions = useMemo(
     () =>
-      collectCommodityOptions(
-        (rows ?? []).map((r) => ({ commodityCode: r.commodityCode, commodityName: r.commodityName })),
-      ),
-    [rows],
+      collectCommodityOptions([
+        ...(rows ?? []).map((r) => ({
+          commodityCode: r.commodityCode,
+          commodityName: r.commodityName,
+        })),
+        // A commodity with a season position but no ledger row still needs a tab.
+        ...(seasonCols ?? []).map((c) => ({
+          commodityCode: c.commodityCode,
+          commodityName: c.commodityName,
+        })),
+      ]),
+    [rows, seasonCols],
   );
 
   const filtered = useMemo(() => {
@@ -61,11 +70,15 @@ export default function ExecutionPositionsPage() {
         </p>
       </div>
 
-      <NetPositionPanel canEdit />
-
       {commodityOptions.length > 0 && (
-        <CommodityFilterBar commodities={commodityOptions} value={commodityFilter} onChange={setCommodityFilter} />
+        <CommodityFilterBar
+          commodities={commodityOptions}
+          value={commodityFilter}
+          onChange={setCommodityFilter}
+        />
       )}
+
+      <NetPositionPanel canEdit commodityFilter={commodityFilter} />
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Stat label="Paper net (MT)" value={totals.paperNet.toFixed(2)} />
