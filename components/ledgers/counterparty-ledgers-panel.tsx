@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { format } from "date-fns";
+
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { AGING_BUCKETS, AGING_BUCKET_LABELS, type AgingBucket } from "@/lib/finance-policy";
 import { cn } from "@/lib/utils";
+import { formatPkDate } from "@/lib/formatters/datetime";
 
 export type LedgerEntryRow = {
   id: string;
@@ -67,7 +68,7 @@ function fmtPkr(value: number): string {
 }
 
 function fmtDate(d: Date | string): string {
-  return format(new Date(d), "d MMM yyyy");
+  return formatPkDate(d);
 }
 
 const STAGE_LABELS: Record<string, string> = {

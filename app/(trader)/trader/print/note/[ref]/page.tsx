@@ -7,6 +7,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { trpc } from "@/lib/trpc/client";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const fmtQty = (n: number) => new Intl.NumberFormat("en-PK", { maximumFractionDigits: 3 }).format(n);
 const fmtMoney = (n: number) =>
@@ -212,7 +213,7 @@ export default function SettlementNotePrintPage() {
             signature.
           </p>
           <p className="mt-1 text-center text-[10px] text-neutral-500">
-            Issued {new Date().toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" })}
+            Issued {formatPkDateTime(new Date())} PKT
           </p>
         </div>
       )}

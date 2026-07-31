@@ -1,10 +1,10 @@
 "use client";
 
-import { format } from "date-fns";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { PageHeader } from "@/components/ui/page-header";
 import { useListPagination } from "@/lib/use-list-pagination";
 import { trpc } from "@/lib/trpc/client";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const pkrFormat = new Intl.NumberFormat("en-PK");
 
@@ -62,7 +62,7 @@ export default function CeoRejectionsPage() {
               <tbody>
                 {pagination.items.map((r) => (
                   <tr key={r.id}>
-                    <td className="whitespace-nowrap">{format(new Date(r.createdAt), "d MMM yyyy, HH:mm")}</td>
+                    <td className="whitespace-nowrap">{formatPkDateTime(r.createdAt)}</td>
                     <td className="whitespace-nowrap">
                       <span className="rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-bold text-destructive">
                         {humanizeKind(r.kind)}

@@ -13,11 +13,12 @@ import {
 } from "@/lib/trade-lifecycle";
 import Link from "next/link";
 import { TradeStatus } from "@prisma/client";
-import { endOfMonth, format, startOfMonth } from "date-fns";
+import { endOfMonth, startOfMonth } from "date-fns";
 import { Ban, PenLine, Printer } from "lucide-react";
 import { useState } from "react";
 import { TradeEditModal } from "@/components/trader/trade-edit-modal";
 import { TradeCancelModal } from "@/components/trader/trade-cancel-modal";
+import { formatPkDate, formatPkDateTime } from "@/lib/formatters/datetime";
 
 type TradeFilter =
   | "UNFINISHED"
@@ -176,7 +177,7 @@ export default function MyTradesPage() {
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-foreground">{label}</div>
                     <div className="mt-0.5 text-xs text-subtle">
-                      Last saved {format(new Date(d.updatedAt), "dd MMM yyyy HH:mm")}
+                      Last saved {formatPkDateTime(d.updatedAt)}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -456,7 +457,7 @@ function CancelledTradesTable({ rows }: { rows: CancelledRow[] }) {
                 </Link>
               </td>
               <td className="px-2 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                {format(new Date(r.cancelledAt), "dd MMM yyyy")}
+                {formatPkDate(r.cancelledAt)}
               </td>
               <td
                 className={`px-2 py-2 text-xs font-medium ${r.direction === "BUY" ? "text-success" : "text-kastros-red"}`}

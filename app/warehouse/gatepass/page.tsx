@@ -27,6 +27,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const RECORDED_BY_KEY = "kastros-gatepass-recorded-by";
 
@@ -59,10 +60,7 @@ const emptyForm = {
 };
 
 function formatGateTimestamp(d: Date) {
-  return d.toLocaleString("en-PK", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  return formatPkDateTime(d);
 }
 
 function digitsOnly(value: string) {

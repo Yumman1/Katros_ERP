@@ -10,14 +10,14 @@ import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { useListPagination } from "@/lib/use-list-pagination";
 import { paymentTypeLabel, type PaymentType } from "@/lib/trade-constants";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const VOUCHER_METHODS = ["Bank transfer", "Cheque", "Cash", "Other"] as const;
 
 const fmtPkr = (n: number) =>
   `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(n)} PKR`;
 
-const fmtDateTime = (d: Date | string) =>
-  new Date(d).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
+const fmtDateTime = (d: Date | string) => formatPkDateTime(d);
 
 type VoucherStatus = "PENDING_FINANCE" | "APPROVED" | "REJECTED";
 

@@ -80,6 +80,7 @@ import {
   commodityEntityRef,
   emptyCommodityFormState,
 } from "@/lib/commodity-registration";
+import { formatPkTime, pkToday } from "@/lib/formatters/datetime";
 
 const bookingPaymentTypes = ["DP", "LC", "CAD", "ADVANCE_100", "CREDIT", "AFTER_DELIVERY_100"] as const;
 
@@ -144,7 +145,7 @@ const schema = z
 
 type Form = z.infer<typeof schema>;
 
-const todayStr = format(new Date(), "yyyy-MM-dd");
+const todayStr = pkToday();
 const defaultStart = todayStr;
 const defaultEnd = format(addDays(new Date(), 14), "yyyy-MM-dd");
 
@@ -1499,7 +1500,7 @@ function BookTradeForm() {
           </span>
           {lastDraftSavedAt && (
             <span className="text-xs text-subtle">
-              Draft autosaved · {format(lastDraftSavedAt, "HH:mm")}
+              Draft autosaved · {formatPkTime(lastDraftSavedAt)}
             </span>
           )}
         </div>

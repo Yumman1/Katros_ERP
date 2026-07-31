@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { format } from "date-fns";
+
 import { AlertTriangle, CheckCircle2, Package, XCircle } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
+import { formatPkDate } from "@/lib/formatters/datetime";
 
 type OverDeliveryRow = {
   truckId: string;
@@ -117,7 +118,7 @@ function OverDeliveryCard({
         <Detail label="Commodity">{row.commodityName}</Detail>
         <Detail label="Warehouse">{row.warehouseName}</Detail>
         <Detail label="Truck">{row.truckNo}</Detail>
-        <Detail label="Arrival date">{format(new Date(row.arrivalDate), "dd MMM yyyy")}</Detail>
+        <Detail label="Arrival date">{formatPkDate(row.arrivalDate)}</Detail>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs">

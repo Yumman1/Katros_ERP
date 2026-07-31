@@ -16,11 +16,12 @@ import { trpc } from "@/lib/trpc/client";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { format } from "date-fns";
+
 import { PenLine, Printer, X } from "lucide-react";
 import { TradeChangeForm, TRADE_EDIT_SECTION_ID } from "@/components/trader/trade-change-form";
 import { TradeActivityPanel } from "@/components/trade/trade-activity-panel";
 import { isTraderDraft, traderCanEditTrade } from "@/lib/trade-lifecycle";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 export default function TradeDetailPage() {
   const params = useParams();
@@ -533,7 +534,7 @@ export default function TradeDetailPage() {
               ? `Edited by ${trade.executionLastEditedBy}`
               : "The execution team edited fields on this contract"}
             {trade.executionLastEditedAt
-              ? ` · ${new Date(trade.executionLastEditedAt).toLocaleString()}`
+              ? ` · ${formatPkDateTime(trade.executionLastEditedAt)}`
               : ""}
           </p>
           {trade.executionEditNote && (
@@ -663,7 +664,7 @@ export default function TradeDetailPage() {
           )}
           {trade.settlementRequestedAt && (
             <p className="mt-1 text-xs text-subtle">
-              Requested {format(new Date(trade.settlementRequestedAt), "d MMM yyyy HH:mm")}
+              Requested {formatPkDateTime(trade.settlementRequestedAt)}
               {trade.settlementRequestedBy ? ` · ${trade.settlementRequestedBy}` : ""}
             </p>
           )}
@@ -689,7 +690,7 @@ export default function TradeDetailPage() {
             <p className="mt-1 text-xs text-subtle">
               Settled{" "}
               {trade.settlementApprovedAt
-                ? format(new Date(trade.settlementApprovedAt), "d MMM yyyy HH:mm")
+                ? formatPkDateTime(trade.settlementApprovedAt)
                 : "—"}
               {trade.settlementApprovedBy ? ` · approved by ${trade.settlementApprovedBy}` : ""}
             </p>
@@ -707,7 +708,7 @@ export default function TradeDetailPage() {
           {trade.lockedAt && (
             <span className="text-xs text-purple-300/80">
               Locked{" "}
-              {trade.lockedAt instanceof Date ? trade.lockedAt.toISOString().slice(0, 16) : String(trade.lockedAt)}
+              {formatPkDateTime(trade.lockedAt)}
             </span>
           )}
           {trade.executionProfile && (

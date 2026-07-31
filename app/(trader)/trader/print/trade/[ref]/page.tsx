@@ -8,6 +8,7 @@ import { useParams } from "next/navigation";
 import { trpc } from "@/lib/trpc/client";
 import { priceUnitLabel } from "@/lib/price-units";
 import { formatQuantityTolerance } from "@/components/trader/quantity-tolerance-field";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const fmtQty = (n: number) => new Intl.NumberFormat("en-PK", { maximumFractionDigits: 3 }).format(n);
 const fmtMoney = (n: number, ccy = "PKR") =>
@@ -240,7 +241,7 @@ export default function TradeConfirmationPrintPage() {
             be deemed accepted and remains valid and binding on both parties without signature.
           </p>
           <p className="mt-1 text-center text-[10px] text-neutral-500">
-            Issued {new Date().toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" })}
+            Issued {formatPkDateTime(new Date())} PKT
           </p>
         </div>
       )}

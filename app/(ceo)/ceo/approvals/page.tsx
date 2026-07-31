@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { format } from "date-fns";
+
 import { Check, Handshake, Inbox, Package, Truck, X } from "lucide-react";
 import { CeoApprovalsInbox } from "@/components/team/ceo-approvals-inbox";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
+import { formatPkDate, formatPkDateTime } from "@/lib/formatters/datetime";
 
 export default function CeoApprovalsPage() {
   // One page, one scroll region. The queues used to sit as siblings, each
@@ -86,7 +87,7 @@ function OverDeliverySection() {
                     <span className="font-mono text-sm font-semibold text-foreground">{r.gatepassNo}</span>
                     <span className="text-sm text-foreground">{r.truckNo}</span>
                     <span className="text-xs text-subtle">
-                      {r.warehouseName} · Arrived {format(new Date(r.arrivalDate), "d MMM yyyy")}
+                      {r.warehouseName} · Arrived {formatPkDate(r.arrivalDate)}
                     </span>
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
@@ -233,7 +234,7 @@ function TradeSettlementSection() {
                   <div className="mt-1 text-xs text-accent-secondary">
                     Trader {r.traderName} requested
                     {r.requestedBy ? ` · ${r.requestedBy}` : ""}
-                    {r.requestedAt ? ` · ${format(new Date(r.requestedAt), "d MMM yyyy HH:mm")}` : ""}
+                    {r.requestedAt ? ` · ${formatPkDateTime(r.requestedAt)}` : ""}
                   </div>
                   {r.note && (
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -349,7 +350,7 @@ function ClearWithoutPaymentSection() {
                     <span className="font-mono text-sm font-semibold text-foreground">{r.gatepassNo}</span>
                     <span className="text-sm text-foreground">{r.truckNo}</span>
                     <span className="text-xs text-subtle">
-                      {r.warehouseName} · Arrived {format(new Date(r.arrivalDate), "d MMM yyyy")}
+                      {r.warehouseName} · Arrived {formatPkDate(r.arrivalDate)}
                     </span>
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">

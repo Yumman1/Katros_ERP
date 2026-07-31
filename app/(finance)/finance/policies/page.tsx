@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { format } from "date-fns";
+
 import { PageHeader } from "@/components/ui/page-header";
 import { fiscalYearLabel } from "@/lib/finance-policy";
 import { trpc } from "@/lib/trpc/client";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const pkrFormat = new Intl.NumberFormat("en-PK");
 
@@ -188,7 +189,7 @@ export default function FinancePoliciesPage() {
 
             <p className="text-xs text-subtle">
               {policy?.updatedAt
-                ? `Last updated ${format(new Date(policy.updatedAt), "d MMM yyyy, HH:mm")}${
+                ? `Last updated ${formatPkDateTime(policy.updatedAt)}${
                     policy.updatedBy ? ` by ${policy.updatedBy}` : ""
                   }`
                 : "Not customized yet — running on company defaults."}

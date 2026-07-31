@@ -3,8 +3,9 @@
 import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency } from "@/lib/formatters/numbers";
-import { format } from "date-fns";
+
 import { useMemo, useState } from "react";
+import { formatPkDateTime, pkToday } from "@/lib/formatters/datetime";
 
 type RowDraft = {
   cnf: string;
@@ -39,7 +40,7 @@ export default function ExecutionDailyPricesPage() {
 
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>({});
   const [formError, setFormError] = useState<string | null>(null);
-  const today = format(new Date(), "yyyy-MM-dd");
+  const today = pkToday();
 
   const currencies = options?.currencies ?? ["USD", "PKR", "MYR"];
   const units = options?.units ?? ["MT", "KG", "MAUND_40", "MAUND_37"];
@@ -281,7 +282,7 @@ export default function ExecutionDailyPricesPage() {
                             </div>
                           )}
                           <div className="mt-1 text-muted-foreground">
-                            {row.updatedAt ? row.updatedAt.slice(0, 16).replace("T", " ") : ""}
+                            {formatPkDateTime(row.updatedAt, "")}
                             {row.updatedBy ? ` · ${row.updatedBy}` : ""}
                           </div>
                         </>
