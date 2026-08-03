@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { format } from "date-fns";
+
 import { ListPagination } from "@/components/ui/list-pagination";
 import { trpc } from "@/lib/trpc/client";
 import { humanizeRejectionKind } from "@/lib/rejection-kinds";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const PAGE_SIZE = 25;
 
@@ -68,7 +69,7 @@ export function RejectionsTable({
               {pageRows.map((r) => (
                 <tr key={r.id}>
                   <td className="whitespace-nowrap text-xs text-subtle">
-                    {format(new Date(r.createdAt), "dd MMM yyyy HH:mm")}
+                    {formatPkDateTime(r.createdAt)}
                   </td>
                   <td className="whitespace-nowrap text-xs font-medium text-foreground">
                     {humanizeRejectionKind(r.kind)}

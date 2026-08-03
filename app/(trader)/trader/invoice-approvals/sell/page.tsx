@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { format } from "date-fns";
+
 import { AlertTriangle, CheckCircle2, Clock, XCircle } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
+import { formatPkDate } from "@/lib/formatters/datetime";
 
 type SellApprovalRow = {
   truckId: string;
@@ -178,7 +179,7 @@ function ClearanceCard({
         <Detail label="Commodity">{row.commodityName}</Detail>
         <Detail label="Warehouse">{row.warehouseName}</Detail>
         <Detail label="Truck">{row.truckNo}</Detail>
-        <Detail label="Arrival date">{format(new Date(row.arrivalDate), "dd MMM yyyy")}</Detail>
+        <Detail label="Arrival date">{formatPkDate(row.arrivalDate)}</Detail>
         <Detail label="Base">
           <span className="tabular-nums">{fmtPkr(row.saleBasePkr)}</span>
         </Detail>
@@ -273,7 +274,7 @@ function UnpaidTruckRowCard({ row }: { row: UnpaidTruckRow }) {
           {fmtPkr(row.saleExpectedPkr)}
         </span>
         <span className="text-xs text-subtle">
-          Released {row.releasedAt ? format(new Date(row.releasedAt), "dd MMM yyyy") : "—"}
+          Released {row.releasedAt ? formatPkDate(row.releasedAt) : "—"}
         </span>
       </div>
       <DueChip row={row} />

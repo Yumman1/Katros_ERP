@@ -3,6 +3,7 @@
 import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency } from "@/lib/formatters/numbers";
+import { formatPkTime } from "@/lib/formatters/datetime";
 
 export default function TraderMarketPage() {
   const { data: prices, isLoading } = trpc.market.snapshot.useQuery(undefined, {
@@ -75,7 +76,7 @@ export default function TraderMarketPage() {
 
                 <div className="mt-2 text-[10px] text-subtle">
                   Execution desk · {p.priceDate}
-                  {p.asOf ? ` · ${new Date(p.asOf).toLocaleTimeString()}` : ""}
+                  {p.asOf ? ` · ${formatPkTime(p.asOf)}` : ""}
                 </div>
               </div>
             );

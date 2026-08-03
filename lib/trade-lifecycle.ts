@@ -18,7 +18,7 @@ export function isTraderDraft(trade: TradeLike): boolean {
   return trade.tradeStatus === TradeStatus.PENDING && trade.submittedToExecution !== true;
 }
 
-/** Trader may edit price, quantity, and commission only while PENDING (draft or unreviewed). */
+/** Trader may edit price, quantity, and commission only while PENDING (unreviewed). */
 export function traderCanEditTrade(trade: TradeLike): boolean {
   return trade.tradeStatus === TradeStatus.PENDING;
 }
@@ -91,7 +91,10 @@ export function executionCanLockOpenTrade(trade: OpenTradeLockGate): boolean {
 
 export function traderListStatusLabel(trade: TradeLike & { submittedToExecution?: boolean }): string {
   if (trade.tradeStatus === TradeStatus.PENDING) {
-    return trade.submittedToExecution ? "Unreviewed" : "Draft";
+    // A booked trade nobody has reviewed yet is "Unreviewed" on both desks —
+    // the trader's Unreviewed tab and execution's Unreviewed Trades queue are
+    // the same rows, so they carry the same word.
+    return trade.submittedToExecution ? "Unreviewed" : "Unreviewed — not sent";
   }
   if (trade.tradeStatus === TradeStatus.SETTLED) {
     return isSettlementCollecting(trade) ? "Settling" : "Closed";

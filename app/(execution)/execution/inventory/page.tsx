@@ -34,6 +34,8 @@ export default function ExecutionInventoryPage() {
     refetchInterval: DESK_REFETCH_MS,
   });
   const { data: stockTransfers } = trpc.execution.stockTransfers.useQuery({});
+  // Season split of the same stock — the desk runs one book per crop season.
+  const { data: seasonPositions } = trpc.trader.seasonNetPositions.useQuery();
 
   const contractByRef = useMemo(
     () => new Map((contracts ?? []).map((c) => [c.tradeRef, c])),
@@ -172,7 +174,7 @@ export default function ExecutionInventoryPage() {
           label="Total weighted purchase price"
           value={
             valuation
-              ? `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(valuation.weightedPurchasePricePkrPerMt)} PKR/MT`
+              ? `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 2 }).format(valuation.weightedPurchasePricePkrPerMaund)} PKR/maund`
               : "—"
           }
           tone="brand"
@@ -183,6 +185,15 @@ export default function ExecutionInventoryPage() {
           value={valuation ? formatQtyWithUnit(valuation.totalSoldMt, "MT", 1) : "—"}
           tone="success"
         />
+        {(seasonPositions ?? []).map((s) => (
+          <Kpi
+            key={`${s.commodityCode}-${s.season}`}
+            icon={<Boxes className="h-5 w-5" />}
+            label={`${s.label} stock`}
+            value={formatQtyWithUnit(s.inventoryMt, "MT", 1)}
+            tone={s.season === "WINTER" ? "info" : "brand"}
+          />
+        ))}
       </div>
 
       <section className="rounded-2xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>

@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { format } from "date-fns";
+
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { AGING_BUCKETS, AGING_BUCKET_LABELS, type AgingBucket } from "@/lib/finance-policy";
 import { cn } from "@/lib/utils";
+import { formatPkDate } from "@/lib/formatters/datetime";
 
 export type LedgerEntryRow = {
   id: string;
@@ -27,6 +28,12 @@ export type LedgerEntryRow = {
   paidPkr?: number;
   /** Buy debits the trader is deliberately holding — held money never ages. */
   held?: boolean;
+  /** Cancellation / short-close note rows: is the claim still open? */
+  noteStatus?: "UNPAID" | "PAID" | null;
+  /** Paid notes: the voucher that settled them. */
+  noteSettledByVoucherNo?: string | null;
+  /** Credit rows raised by a note voucher: the note they settled. */
+  settlesNoteRef?: string | null;
   note: string | null;
 };
 
@@ -61,7 +68,7 @@ function fmtPkr(value: number): string {
 }
 
 function fmtDate(d: Date | string): string {
-  return format(new Date(d), "d MMM yyyy");
+  return formatPkDate(d);
 }
 
 const STAGE_LABELS: Record<string, string> = {
@@ -374,7 +381,34 @@ function AccountCard({
                         >
                           {e.entryType}
                         </span>
-                        {e.settled ? (
+                        {/* A note is a claim, not a delivery — it reads paid or
+                            unpaid on its own status, and a paid one no longer
+                            counts toward the account's balance. */}
+                        {e.noteStatus ? (
+                          e.noteStatus === "PAID" ? (
+                            <span
+                              className="ml-1.5 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase text-success"
+                              title={
+                                e.noteSettledByVoucherNo
+                                  ? `Settled by ${e.noteSettledByVoucherNo} — excluded from the balance`
+                                  : "Settled — excluded from the balance"
+                              }
+                            >
+                              Note paid
+                            </span>
+                          ) : (
+                            <span className="ml-1.5 rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-bold uppercase text-destructive">
+                              Note unpaid
+                            </span>
+                          )
+                        ) : e.settlesNoteRef ? (
+                          <span
+                            className="ml-1.5 rounded-full bg-foreground/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase text-subtle"
+                            title={`Settles ${e.settlesNoteRef} — the pair is excluded from the balance`}
+                          >
+                            Settles {e.settlesNoteRef}
+                          </span>
+                        ) : e.settled ? (
                           <span className="ml-1.5 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase text-success">
                             Paid
                           </span>

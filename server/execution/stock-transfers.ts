@@ -171,6 +171,8 @@ export async function createStockTransfer(input: {
   bags?: number | null;
   reason?: string | null;
   remarks?: string | null;
+  /** Crop season the shifted stock belongs to (position book). */
+  season?: "WINTER" | "SUMMER";
   createdByName?: string | null;
 }): Promise<StockTransferRow> {
   const from = input.fromWarehouseName?.trim() || null;
@@ -204,6 +206,7 @@ export async function createStockTransfer(input: {
   const row = await prisma.stockTransfer.create({
     data: {
       transferRef: `SHF-${String(seq).padStart(5, "0")}`,
+      season: input.season ?? "SUMMER",
       commodityCode: input.commodityCode.trim(),
       commodityName: input.commodityName.trim() || input.commodityCode.trim(),
       fromWarehouseName: from,

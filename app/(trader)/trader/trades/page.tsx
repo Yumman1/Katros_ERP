@@ -13,11 +13,12 @@ import {
 } from "@/lib/trade-lifecycle";
 import Link from "next/link";
 import { TradeStatus } from "@prisma/client";
-import { endOfMonth, format, startOfMonth } from "date-fns";
+import { endOfMonth, startOfMonth } from "date-fns";
 import { Ban, PenLine, Printer } from "lucide-react";
 import { useState } from "react";
 import { TradeEditModal } from "@/components/trader/trade-edit-modal";
 import { TradeCancelModal } from "@/components/trader/trade-cancel-modal";
+import { formatPkDate, formatPkDateTime } from "@/lib/formatters/datetime";
 
 type TradeFilter =
   | "UNFINISHED"
@@ -74,7 +75,13 @@ export default function MyTradesPage() {
       URL.revokeObjectURL(url);
     },
   });
-  const { data: trades, isLoading } = trpc.trader.myTrades.useQuery(filterInput(filter));
+  const { data: trades, isLoading } = trpc.trader.myTrades.useQuery(filterInput(filter), {
+    enabled: filter !== "CANCELLED",
+  });
+  // The Cancelled tab is a different report, not a filter of the same one — a
+  // dead trade is read through its note, not through its booking terms.
+  const { data: cancelled, isLoading: cancelledLoading } =
+    trpc.trader.myCancelledTrades.useQuery(undefined, { enabled: filter === "CANCELLED" });
 
   return (
     <div className="kastros-desk-page">
@@ -89,7 +96,7 @@ export default function MyTradesPage() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">My Trades</h1>
           <p className="text-sm text-subtle">
-            Use <span className="text-foreground">Edit</span> on draft or unreviewed trades only — locked
+            Use <span className="text-foreground">Edit</span> on unreviewed trades only — locked
             contracts cannot change price, quantity, or commission. Cancelling a locked trade raises a
             debit note and goes to the CEO.
           </p>
@@ -131,7 +138,7 @@ export default function MyTradesPage() {
             {f === "UNFINISHED"
               ? `Unfinished (${drafts?.length ?? 0})`
               : f === "DRAFTS"
-                ? "Drafts"
+                ? "Unreviewed"
                 : f === "CLOSED"
                   ? "Closed"
                   : f === "CANCELLED"
@@ -170,7 +177,7 @@ export default function MyTradesPage() {
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-foreground">{label}</div>
                     <div className="mt-0.5 text-xs text-subtle">
-                      Last saved {format(new Date(d.updatedAt), "dd MMM yyyy HH:mm")}
+                      Last saved {formatPkDateTime(d.updatedAt)}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -201,13 +208,22 @@ export default function MyTradesPage() {
             )}
           </div>
         )
+      ) : filter === "CANCELLED" ? (
+        cancelledLoading ? (
+          <div className="text-subtle">Loading cancelled trades…</div>
+        ) : !cancelled?.length ? (
+          <div className="rounded-xl border border-kastros-border bg-kastros-card px-6 py-10 text-center text-sm text-subtle">
+            No cancelled trades. Cancelling a locked trade raises a debit or credit note, and it
+            lands here.
+          </div>
+        ) : (
+          <CancelledTradesTable rows={cancelled} />
+        )
       ) : isLoading ? (
         <div className="text-subtle">Loading trades…</div>
       ) : !trades?.length ? (
         <div className="rounded-xl border border-kastros-border bg-kastros-card px-6 py-10 text-center text-sm text-subtle">
-          {filter === "CANCELLED"
-            ? "No cancelled trades. Trades you cancel before they are locked appear here."
-            : "No trades match this filter."}
+          No trades match this filter.
         </div>
       ) : (
       <div className="kastros-table-wrap text-sm">
@@ -361,6 +377,156 @@ export default function MyTradesPage() {
             </table>
         </div>
       )}
+    </div>
+  );
+}
+
+type CancelledRow = {
+  id: string;
+  tradeRef: string;
+  direction: string;
+  commodityCode: string;
+  quantity: number;
+  quantityUnit: string;
+  counterpartyName: string;
+  cancelledAt: Date;
+  noteRef: string | null;
+  noteKind: "DEBIT" | "CREDIT" | null;
+  noteAmountPkr: number | null;
+  noteSide: "BUY" | "SELL" | null;
+  noteStatus: "UNPAID" | "PAID" | null;
+  noteSettledByVoucherNo: string | null;
+  summary: string | null;
+};
+
+/**
+ * The Cancelled tab. Price, notional and delivery are dead facts on a cancelled
+ * trade — what matters is the note it settled in, what that note is worth, and
+ * whether the money has moved.
+ */
+function CancelledTradesTable({ rows }: { rows: CancelledRow[] }) {
+  return (
+    <div className="kastros-table-wrap text-sm">
+      <table className="w-full border-collapse">
+        <thead className="sticky top-0 bg-kastros-card text-left text-xs uppercase text-subtle">
+          <tr>
+            {[
+              "Actions",
+              "Trade ref",
+              "Cancelled on",
+              "Side",
+              "Commodity",
+              "Qty",
+              "Counterparty",
+              "Note no",
+              "Note amount",
+              "Ledger",
+              "Status",
+            ].map((h) => (
+              <th key={h} className="border-b border-kastros-border px-2 py-2 whitespace-nowrap">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} className="border-b border-kastros-border/60 hover:bg-foreground/[0.02]">
+              <td className="px-2 py-2">
+                <div className="flex items-center gap-1">
+                  {r.noteRef ? (
+                    <Link
+                      href={`/trader/print/note/${encodeURIComponent(r.noteRef)}`}
+                      className="inline-flex items-center gap-1 rounded-md border border-kastros-border px-2 py-1 text-[11px] font-semibold text-muted-foreground hover:bg-foreground/5"
+                      title={`Print ${r.noteRef}`}
+                    >
+                      <Printer className="h-3 w-3" />
+                      {r.noteKind === "CREDIT" ? "Credit note" : "Debit note"}
+                    </Link>
+                  ) : (
+                    <span className="text-[11px] text-subtle">No note</span>
+                  )}
+                </div>
+              </td>
+              <td className="px-2 py-2">
+                <Link
+                  href={`/trader/trades/${encodeURIComponent(r.tradeRef)}`}
+                  className="font-mono text-xs text-success hover:underline"
+                >
+                  {r.tradeRef}
+                </Link>
+              </td>
+              <td className="px-2 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                {formatPkDate(r.cancelledAt)}
+              </td>
+              <td
+                className={`px-2 py-2 text-xs font-medium ${r.direction === "BUY" ? "text-success" : "text-kastros-red"}`}
+              >
+                {r.direction}
+              </td>
+              <td className="px-2 py-2">{r.commodityCode}</td>
+              <td className="px-2 py-2 data-grid">
+                {formatQty(r.quantity)} {r.quantityUnit}
+              </td>
+              <td className="px-2 py-2 text-xs text-muted-foreground max-w-[140px] truncate">
+                {r.counterpartyName}
+              </td>
+              <td className="px-2 py-2 font-mono text-xs">
+                {r.noteRef ? (
+                  <span
+                    className={`rounded px-1.5 py-0.5 ${
+                      r.noteKind === "CREDIT"
+                        ? "bg-sky-500/15 text-sky-400"
+                        : "bg-amber-500/15 text-amber-400"
+                    }`}
+                  >
+                    {r.noteRef}
+                  </span>
+                ) : (
+                  <span className="text-subtle">—</span>
+                )}
+              </td>
+              <td className="px-2 py-2 data-grid">
+                {r.noteAmountPkr != null ? (
+                  formatCurrency(r.noteAmountPkr, "PKR")
+                ) : (
+                  <span
+                    className="text-subtle"
+                    title="Settlement price equalled the trade rate — nothing was owed either way"
+                  >
+                    No ledger entry
+                  </span>
+                )}
+              </td>
+              <td className="px-2 py-2 text-xs text-subtle">
+                {r.noteSide ? (r.noteSide === "BUY" ? "Purchase" : "Sale") : "—"}
+              </td>
+              <td className="px-2 py-2">
+                {r.noteStatus === "PAID" ? (
+                  <span
+                    className="rounded px-1.5 py-0.5 text-xs bg-success/15 text-success"
+                    title={
+                      r.noteSettledByVoucherNo
+                        ? `Settled by ${r.noteSettledByVoucherNo}`
+                        : undefined
+                    }
+                  >
+                    Paid
+                  </span>
+                ) : r.noteStatus === "UNPAID" ? (
+                  <span className="rounded px-1.5 py-0.5 text-xs bg-red-500/20 text-red-400">
+                    Unpaid
+                  </span>
+                ) : (
+                  <span className="rounded px-1.5 py-0.5 text-xs bg-zinc-500/20 text-muted-foreground">
+                    Cancelled
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

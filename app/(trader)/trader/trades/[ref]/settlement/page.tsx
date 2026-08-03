@@ -3,7 +3,7 @@
 import { trpc } from "@/lib/trpc/client";
 import { formatQty } from "@/lib/formatters/numbers";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
+
 import {
   ArrowLeft,
   CheckCircle2,
@@ -16,11 +16,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { use, useState } from "react";
+import { formatPkDate } from "@/lib/formatters/datetime";
 
 const fmtPkr = (n: number) =>
   `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(n)} PKR`;
 
-const fmtDate = (d: Date | string) => format(new Date(d), "dd MMM yyyy");
+const fmtDate = (d: Date | string) => formatPkDate(d);
 
 type InvoiceStatus = "DRAFT" | "SENT" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";
 

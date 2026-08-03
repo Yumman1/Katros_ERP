@@ -80,6 +80,7 @@ import {
   commodityEntityRef,
   emptyCommodityFormState,
 } from "@/lib/commodity-registration";
+import { formatPkTime, pkToday } from "@/lib/formatters/datetime";
 
 const bookingPaymentTypes = ["DP", "LC", "CAD", "ADVANCE_100", "CREDIT", "AFTER_DELIVERY_100"] as const;
 
@@ -107,6 +108,7 @@ const schema = z
     productOrigin: z.string().optional(),
     notes: z.string().optional(),
     tradeScope: z.enum(TRADE_SCOPES),
+    season: z.enum(["WINTER", "SUMMER"]),
   })
   .superRefine((data, ctx) => {
     if (new Date(data.deliveryEnd) < new Date(data.deliveryStart)) {
@@ -143,7 +145,7 @@ const schema = z
 
 type Form = z.infer<typeof schema>;
 
-const todayStr = format(new Date(), "yyyy-MM-dd");
+const todayStr = pkToday();
 const defaultStart = todayStr;
 const defaultEnd = format(addDays(new Date(), 14), "yyyy-MM-dd");
 
@@ -281,6 +283,7 @@ function BookTradeForm() {
       commodityId: "",
       counterpartyId: "",
       tradeScope: "LOCAL",
+      season: "SUMMER",
     },
   });
 
@@ -696,12 +699,11 @@ function BookTradeForm() {
           ← Back to desk
         </Link>
         <h1 className="mt-2 text-2xl font-semibold text-foreground">Book a Trade</h1>
-        <p className="text-sm text-subtle">
-          {formTraderName || loggedInTraderName
-            ? `Trader: ${formTraderName || loggedInTraderName} · `
-            : ""}
-          Capture contract, delivery, pricing, and commodity specs in one flow.
-        </p>
+        {(formTraderName || loggedInTraderName) && (
+          <p className="text-sm text-subtle">
+            Trader: {formTraderName || loggedInTraderName}
+          </p>
+        )}
       </div>
 
       {/* Enter must not book anything — booking happens only via the explicit buttons below. */}
@@ -930,6 +932,16 @@ function BookTradeForm() {
                     {TRADE_SCOPE_LABELS[s]}
                   </option>
                 ))}
+              </select>
+            </Field>
+
+            {/* One position book per crop season — the daily net-position mail
+                splits Corn Winter from Corn Summer, so the trade must say
+                which book it belongs to at booking time. */}
+            <Field label="Season" error={errors.season?.message}>
+              <select {...register("season")} className="kastros-select w-full">
+                <option value="SUMMER">Summer</option>
+                <option value="WINTER">Winter</option>
               </select>
             </Field>
 
@@ -1488,7 +1500,7 @@ function BookTradeForm() {
           </span>
           {lastDraftSavedAt && (
             <span className="text-xs text-subtle">
-              Draft autosaved · {format(lastDraftSavedAt, "HH:mm")}
+              Draft autosaved · {formatPkTime(lastDraftSavedAt)}
             </span>
           )}
         </div>

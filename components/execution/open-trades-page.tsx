@@ -58,7 +58,7 @@ export function OpenTradesPage() {
           </>
         }
         title="Unreviewed Trades"
-        subtitle="Draft contracts submitted by traders — edit fields, allocate warehouses, then lock when ready"
+        subtitle="Unreviewed contracts submitted by traders — edit fields, allocate warehouses, then lock when ready"
       />
 
       <div className="flex flex-wrap gap-3">

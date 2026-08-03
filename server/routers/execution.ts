@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { Role } from "@prisma/client";
-import { EXECUTION_PROFILES, TRADE_SCOPES } from "@/lib/trade-constants";
+import { EXECUTION_PROFILES, KG_PER_MAUND_40, TRADE_SCOPES } from "@/lib/trade-constants";
 import { headProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import {
   advanceSpotState,
@@ -40,7 +40,7 @@ import {
   requestClearWithoutPayment,
   requestInboundOverDelivery,
 } from "@/server/execution-store";
-import { getCounterpartyLedgers } from "@/server/finance/ledger";
+import { getCounterpartyLedgers, listOpenSettlementNotes } from "@/server/finance/ledger";
 import { createVoucher, listVouchers } from "@/server/finance/vouchers";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
@@ -155,6 +155,8 @@ const openTradePatchSchema = z.object({
       ntn: z.string().nullable().optional(),
       address: z.string().nullable().optional(),
       bankDetails: z.string().nullable().optional(),
+      contactPerson: z.string().nullable().optional(),
+      contactPhone: z.string().nullable().optional(),
       verify: z.boolean().optional(),
     })
     .optional(),
@@ -207,6 +209,7 @@ export const executionRouter = router({
         bags: z.number().int().nonnegative().nullish(),
         reason: z.string().nullish(),
         remarks: z.string().nullish(),
+        season: z.enum(["WINTER", "SUMMER"]).optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -998,6 +1001,19 @@ export const executionRouter = router({
       }));
     }),
 
+  /**
+   * Open cancellation / short-close notes of a counterparty — the DN/CN choices
+   * on the voucher form, each carrying the amount still due so it autofills.
+   */
+  openSettlementNotes: roleProcedure([...execRoles, Role.FINANCE])
+    .input(
+      z.object({
+        counterpartyId: z.string().min(1),
+        side: z.enum(["BUY", "SELL"]).optional(),
+      }),
+    )
+    .query(({ input }) => listOpenSettlementNotes(input.counterpartyId, input.side)),
+
   /** Enter a payment voucher — credits the ledger once finance approves it. */
   createVoucher: roleProcedure([...execRoles])
     .input(
@@ -1007,6 +1023,8 @@ export const executionRouter = router({
         side: z.enum(["BUY", "SELL"]).optional(),
         /** Trade the payment is against; omit for a direct advance. */
         tradeRef: z.string().optional(),
+        /** Cancellation / short-close note being settled — overrides tradeRef. */
+        noteRef: z.string().optional(),
         amountPkr: z.number().positive(),
         method: z.string().optional(),
         reference: z.string().optional(),
@@ -1077,8 +1095,12 @@ export const executionRouter = router({
       }
     }
 
+    const weightedPurchasePricePkrPerMt = ratedQtyMt > 0 ? ratedValuePkr / ratedQtyMt : 0;
     return {
-      weightedPurchasePricePkrPerMt: ratedQtyMt > 0 ? ratedValuePkr / ratedQtyMt : 0,
+      weightedPurchasePricePkrPerMt,
+      // The desk quotes corn in ₨/maund, so that is what the stat card shows.
+      weightedPurchasePricePkrPerMaund:
+        weightedPurchasePricePkrPerMt / (1000 / KG_PER_MAUND_40),
       totalPurchasedMt,
       totalSoldMt: num(outboundAgg._sum.allocatedQtyMt),
     };

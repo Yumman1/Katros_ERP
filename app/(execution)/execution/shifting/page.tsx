@@ -44,6 +44,9 @@ export default function ExecutionShiftingPage() {
     void utils.execution.stockTransfers.invalidate();
     void utils.execution.inboundReceipts.invalidate();
     void utils.execution.outboundDispatches.invalidate();
+    // Shifted stock is inventory in a season's book — the net position moves.
+    void utils.trader.seasonNetPositions.invalidate();
+    void utils.execution.inventoryValuation.invalidate();
   };
   const onError = (e: { message: string }) => setError(e.message);
 
@@ -339,6 +342,7 @@ function NewShiftForm({
     biltyNo: string | null;
     bags: number | null;
     reason: string | null;
+    season: "WINTER" | "SUMMER";
   }) => void;
 }) {
   const [commodityCode, setCommodityCode] = useState(commodities[0]?.code ?? "");
@@ -350,6 +354,7 @@ function NewShiftForm({
   const [biltyNo, setBiltyNo] = useState("");
   const [bags, setBags] = useState("");
   const [reason, setReason] = useState("");
+  const [season, setSeason] = useState<"WINTER" | "SUMMER">("SUMMER");
 
   const fromOutside = fromWarehouse === "__external__";
   const commodity = commodities.find((c) => c.code === commodityCode);
@@ -370,10 +375,24 @@ function NewShiftForm({
           biltyNo: biltyNo.trim() || null,
           bags: bags ? Number(bags) : null,
           reason: reason.trim() || null,
+          season,
         });
       }}
     >
       <div className="grid gap-4 md:grid-cols-3">
+        {/* Shifted stock still belongs to a crop season's position book. */}
+        <Field label="Season">
+          <select
+            value={season}
+            onChange={(e) => setSeason(e.target.value as "WINTER" | "SUMMER")}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            required
+          >
+            <option value="SUMMER">Summer</option>
+            <option value="WINTER">Winter</option>
+          </select>
+        </Field>
+
         <Field label="Commodity">
           <select
             value={commodityCode}

@@ -14,6 +14,7 @@ import {
   type Department,
 } from "@/lib/departments";
 import { ChangeRequestPayloadPreview } from "@/components/team/trade-edit-change-preview";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const STATUS_STYLE: Record<ChangeRequestStatus, { bg: string; color: string; label: string }> = {
   PENDING: { bg: "rgba(245,158,11,0.15)", color: "#fbbf24", label: "Pending" },
@@ -23,12 +24,7 @@ const STATUS_STYLE: Record<ChangeRequestStatus, { bg: string; color: string; lab
 };
 
 function fmt(d: Date | string) {
-  return new Date(d).toLocaleString(undefined, {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatPkDateTime(d);
 }
 
 export function ChangeRequestsInbox({

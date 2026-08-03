@@ -6,6 +6,7 @@ import { CheckCircle2, PenLine } from "lucide-react";
 import { formatQty } from "@/lib/formatters/numbers";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
+import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const MY_REQUEST_STATUS_STYLE: Record<string, string> = {
   PENDING: "bg-warning/15 text-warning",
@@ -93,7 +94,7 @@ export default function TraderApprovalsPage() {
                       </p>
                       <p className="mt-1 text-xs text-subtle">
                         Edited by {row.editedBy ?? "execution"}
-                        {row.editedAt ? ` · ${format(new Date(row.editedAt), "dd MMM yyyy HH:mm")}` : ""}
+                        {row.editedAt ? ` · ${formatPkDateTime(row.editedAt)}` : ""}
                         {row.changeCount != null
                           ? ` · ${row.changeCount} field${row.changeCount === 1 ? "" : "s"} changed`
                           : ""}

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { CounterpartyType, TradeDirection, TradeStatus } from "@prisma/client";
 import type { Session } from "next-auth";
+import { prisma } from "@/server/db";
 import { headProcedure, protectedProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import { traderDisplayName } from "@/lib/trader-display-name";
 import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
@@ -37,6 +38,7 @@ import {
 } from "@/server/execution-store";
 import { exportTradeFileCsv } from "@/server/trade-file-export";
 import { computePositionLedger } from "@/server/position-ledger";
+import { getSeasonNetPositions, setPositionMarketInput } from "@/server/net-position";
 import {
   addCustomCommodity,
   addCustomCounterparty,
@@ -190,6 +192,8 @@ const bookTradeInputSchema = z
     tradeParams: tradeParamValuesSchema.optional(),
     notes: z.string().optional(),
     tradeScope: z.enum(TRADE_SCOPES),
+    /** Crop season the trade books into — one position book per season. */
+    season: z.enum(["WINTER", "SUMMER"]).optional(),
     ratePerMaund: z.number().positive().optional(),
     commissionPerMaund: z.number().min(0).optional(),
     /** When true, submit to execution Open Trades instead of a trader-only draft. */
@@ -285,6 +289,155 @@ export const traderRouter = router({
     const all = await mockTraderTrades(name);
     return all.filter((t) => t.tradeStatus === TradeStatus.CANCELLED).length;
   }),
+
+  /**
+   * Cancelled trades seen through the cancellation itself: the debit/credit
+   * note it raised, what that note is worth, and when it was cancelled. The
+   * booking columns (price, notional, delivery) say nothing once a trade is
+   * dead, so the Cancelled tab shows this instead.
+   */
+  myCancelledTrades: protectedProcedure.query(async ({ ctx }) => {
+    const name = traderNameFromSession(ctx.session.user);
+    const all = await mockTraderTrades(name);
+    const cancelled = all.filter((t) => t.tradeStatus === TradeStatus.CANCELLED);
+    if (cancelled.length === 0) return [];
+
+    const refs = cancelled.map((t) => t.tradeRef);
+    const [notes, activities] = await Promise.all([
+      prisma.counterpartyLedgerEntry.findMany({
+        where: { tradeRef: { in: refs }, sourceType: "ADJUSTMENT", sourceRef: { not: null } },
+        orderBy: { entryDate: "desc" },
+        select: {
+          tradeRef: true,
+          sourceRef: true,
+          amountPkr: true,
+          entryDate: true,
+          side: true,
+          noteStatus: true,
+          noteSettledByVoucherNo: true,
+        },
+      }),
+      // When settlement equalled the rate there is no note, so the activity
+      // trail is the only record of when the trade actually died.
+      prisma.tradeActivity.findMany({
+        where: { kind: "CANCELLED", trade: { tradeRef: { in: refs } } },
+        orderBy: { at: "desc" },
+        select: { at: true, summary: true, trade: { select: { tradeRef: true } } },
+      }),
+    ]);
+
+    const noteByRef = new Map<string, (typeof notes)[number]>();
+    for (const n of notes) if (n.tradeRef && !noteByRef.has(n.tradeRef)) noteByRef.set(n.tradeRef, n);
+    const activityByRef = new Map<string, (typeof activities)[number]>();
+    for (const a of activities) {
+      if (!activityByRef.has(a.trade.tradeRef)) activityByRef.set(a.trade.tradeRef, a);
+    }
+
+    return cancelled.map((t) => {
+      const note = noteByRef.get(t.tradeRef);
+      const activity = activityByRef.get(t.tradeRef);
+      return {
+        id: t.id,
+        tradeRef: t.tradeRef,
+        direction: t.direction,
+        commodityCode: t.commodity.code,
+        quantity: t.quantity,
+        quantityUnit: t.quantityUnit ?? t.commodity.unit,
+        counterpartyName: t.counterparty.name,
+        /** When the trade was cancelled — the note's date, else the activity's. */
+        cancelledAt: note?.entryDate ?? activity?.at ?? t.tradeDate,
+        noteRef: note?.sourceRef ?? null,
+        /** DN = the seller owes us, CN = we owe the seller. */
+        noteKind: note?.sourceRef?.startsWith("CN") ? ("CREDIT" as const) : note ? ("DEBIT" as const) : null,
+        noteAmountPkr: note ? Number(note.amountPkr) : null,
+        noteSide: note?.side ?? null,
+        noteStatus: note?.noteStatus ?? null,
+        noteSettledByVoucherNo: note?.noteSettledByVoucherNo ?? null,
+        summary: activity?.summary ?? null,
+      };
+    });
+  }),
+
+  /**
+   * Everything the printed debit/credit note needs, read back from the ledger
+   * entry that IS the note — the paper and the books can never disagree.
+   */
+  settlementNoteByRef: protectedProcedure
+    .input(z.object({ noteRef: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const entry = await prisma.counterpartyLedgerEntry.findFirst({
+        where: { sourceType: "ADJUSTMENT", sourceRef: input.noteRef },
+        select: {
+          sourceRef: true,
+          side: true,
+          amountPkr: true,
+          entryDate: true,
+          tradeRef: true,
+          note: true,
+          noteStatus: true,
+          noteSettledAt: true,
+          noteSettledByVoucherNo: true,
+          counterparty: {
+            select: { name: true, code: true, companyNameNtn: true, ntn: true, address: true },
+          },
+        },
+      });
+      if (!entry) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+
+      const trade = entry.tradeRef
+        ? await prisma.trade.findUnique({
+            where: { tradeRef: entry.tradeRef },
+            select: {
+              tradeRef: true,
+              tradeDate: true,
+              direction: true,
+              quantity: true,
+              quantityUnit: true,
+              traderName: true,
+              commodity: { select: { code: true, name: true } },
+            },
+          })
+        : null;
+
+      // The arithmetic behind the amount lives in the CEO-approved request's
+      // payload — the note text is a rendering of it, not the source.
+      const activity = entry.tradeRef
+        ? await prisma.tradeActivity.findFirst({
+            where: {
+              kind: { in: ["CANCELLED", "CLOSED"] },
+              trade: { tradeRef: entry.tradeRef },
+            },
+            orderBy: { at: "desc" },
+            select: { at: true, actorName: true, summary: true },
+          })
+        : null;
+
+      return {
+        noteRef: entry.sourceRef!,
+        kind: entry.sourceRef!.startsWith("CN") ? ("CREDIT" as const) : ("DEBIT" as const),
+        side: entry.side,
+        amountPkr: Number(entry.amountPkr),
+        noteDate: entry.entryDate,
+        narrative: entry.note,
+        status: entry.noteStatus,
+        settledAt: entry.noteSettledAt,
+        settledByVoucherNo: entry.noteSettledByVoucherNo,
+        counterparty: entry.counterparty,
+        trade: trade
+          ? {
+              tradeRef: trade.tradeRef,
+              tradeDate: trade.tradeDate,
+              direction: trade.direction,
+              quantity: Number(trade.quantity),
+              quantityUnit: trade.quantityUnit,
+              traderName: trade.traderName,
+              commodityCode: trade.commodity.code,
+              commodityName: trade.commodity.name,
+            }
+          : null,
+        approval: activity,
+      };
+    }),
 
   cancelTrade: roleProcedure(["TRADER", "ADMIN"])
     .input(
@@ -714,6 +867,7 @@ export const traderRouter = router({
           notes: input.notes,
           buyingCategory: buyingCategoryFromIncoterms(input.incoterms, input.direction) ?? undefined,
           tradeScope: input.tradeScope,
+          season: input.season,
           ratePerMaund: input.ratePerMaund,
           submitToExecution: input.submitToExecution === true || input.lockNow === true,
         });
@@ -866,6 +1020,27 @@ export const traderRouter = router({
     const name = traderNameFromSession(ctx.session.user);
     return computePositionLedger({ traderName: name });
   }),
+
+  /** The daily "Net Position" mail, computed live — one column per commodity + season. */
+  seasonNetPositions: protectedProcedure.query(() => getSeasonNetPositions()),
+
+  /** Desk sets the day's market rate / FX behind a net-position column. */
+  setPositionMarketInput: roleProcedure(["TRADER", "EXECUTION", "CEO", "ADMIN"])
+    .input(
+      z.object({
+        commodityCode: z.string().min(1),
+        season: z.enum(["WINTER", "SUMMER"]),
+        marketRatePkrPerMaund: z.number().positive().nullable().optional(),
+        fxRate: z.number().positive().nullable().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await setPositionMarketInput({
+        ...input,
+        updatedBy: ctx.session.user.name ?? ctx.session.user.email ?? "desk",
+      });
+      return { ok: true };
+    }),
 
   /** Locked trades with fulfillment progress for the signed-in trader. */
   tradeFulfillment: protectedProcedure.query(async ({ ctx }) => {

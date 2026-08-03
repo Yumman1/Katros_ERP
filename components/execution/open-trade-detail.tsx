@@ -8,7 +8,7 @@ import {
 } from "@/components/trader/corn-specification-fields";
 import { QuantityToleranceField } from "@/components/trader/quantity-tolerance-field";
 import { FormField as Field, FormSection as Section } from "@/components/ui/form-section";
-import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
+import { invalidateApprovalCaches, invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import {
   PRICE_CURRENCIES,
   PRICE_CURRENCY_LABELS,
@@ -98,6 +98,8 @@ export function OpenTradeDetail({
   const [requestComment, setRequestComment] = useState("");
   const [counterpartyName, setCounterpartyName] = useState("");
   const [counterpartyNtn, setCounterpartyNtn] = useState("");
+  const [counterpartyContactPerson, setCounterpartyContactPerson] = useState("");
+  const [counterpartyContactPhone, setCounterpartyContactPhone] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -159,6 +161,8 @@ export function OpenTradeDetail({
     setEditNote(trade.executionEditNote ?? "");
     setCounterpartyName(trade.counterparty.name);
     setCounterpartyNtn(trade.counterparty.ntn ?? "");
+    setCounterpartyContactPerson(trade.counterparty.contactPerson ?? "");
+    setCounterpartyContactPhone(trade.counterparty.contactPhone ?? "");
     setSaved(false);
   }, [trade]);
 
@@ -201,6 +205,8 @@ export function OpenTradeDetail({
       counterparty: {
         name: counterpartyName.trim(),
         ntn: counterpartyNtn.trim() || null,
+        contactPerson: counterpartyContactPerson.trim() || null,
+        contactPhone: counterpartyContactPhone.trim() || null,
       },
     };
   }
@@ -238,6 +244,9 @@ export function OpenTradeDetail({
       setRequestComment("");
       setSaved(true);
       setError(null);
+      // The request has to show up in the head's queue (and the sender's own
+      // "My requests") straight away, or it reads as though nothing was sent.
+      invalidateApprovalCaches(utils);
     },
     onError: (e) => setError(e.message),
   });
@@ -362,6 +371,9 @@ export function OpenTradeDetail({
               />
             </Field>
 
+            {/* These edit the counterparty record itself, not this trade — one
+                record shared by every trade booked against it, so a correction
+                here lands on all of them. */}
             <Field label="Trading name">
               <input
                 readOnly={ro}
@@ -369,6 +381,9 @@ export function OpenTradeDetail({
                 onChange={(e) => setCounterpartyName(e.target.value)}
                 className={inputClass}
               />
+              <p className="mt-1 text-[11px] text-subtle">
+                Saving updates the counterparty on every trade of theirs.
+              </p>
             </Field>
 
             <Field label="NTN no.">
@@ -441,24 +456,25 @@ export function OpenTradeDetail({
                     </select>
                   </Field>
                 )}
+                {/* Filled from the counterparty record, editable here — a
+                    correction lands on the counterparty, so every trade of
+                    theirs shows it. */}
                 <Field label="Contact person">
                   <input
                     readOnly={ro}
-                    value={String(tradeParams.contactPerson ?? "")}
-                    onChange={(e) =>
-                      setTradeParams((p) => ({ ...p, contactPerson: e.target.value || undefined }))
-                    }
+                    value={counterpartyContactPerson}
+                    onChange={(e) => setCounterpartyContactPerson(e.target.value)}
+                    placeholder="From counterparty record"
                     className={selectClass}
                   />
                 </Field>
                 <Field label="Contact number">
                   <input
                     readOnly={ro}
-                    value={String(tradeParams.contactNumber ?? "")}
-                    onChange={(e) =>
-                      setTradeParams((p) => ({ ...p, contactNumber: e.target.value || undefined }))
-                    }
-                    className={selectClass}
+                    value={counterpartyContactPhone}
+                    onChange={(e) => setCounterpartyContactPhone(e.target.value)}
+                    placeholder="From counterparty record"
+                    className={`${selectClass} font-mono`}
                   />
                 </Field>
               </>
@@ -706,19 +722,11 @@ export function OpenTradeDetail({
         isExecutionUser={isExecutionUser}
       />
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {saved && !error && (
-        <p className="text-sm text-success">
-          {isExecutionHead
-            ? isLockedMode
-              ? "Changes saved to locked contract."
-              : "Changes saved — trader will be notified to review."
-            : "Change request submitted."}
-        </p>
-      )}
-
       </div>
 
+      {/* Outcome sits WITH the button in the fixed toolbar, never inside the
+          scrolling form above it — a message rendered off-screen is the same
+          as no message, and the button reads as broken. */}
       <div className="kastros-desk-toolbar flex flex-wrap items-center gap-3 border-t border-kastros-border pt-4">
         {isExecutionHead ? (
           <button
@@ -739,12 +747,24 @@ export function OpenTradeDetail({
             <input
               placeholder="Comment for head of execution…"
               value={requestComment}
-              onChange={(e) => setRequestComment(e.target.value)}
+              onChange={(e) => {
+                setRequestComment(e.target.value);
+                // Typing a fresh comment means a fresh request — drop the
+                // confirmation from the previous one.
+                if (saved) setSaved(false);
+              }}
               className="kastros-input min-w-[200px] flex-1"
             />
             <button
               type="button"
-              disabled={submitRequest.isPending}
+              // A comment is what the head reads to decide — without one the
+              // button would only ever no-op, so it says so instead.
+              disabled={submitRequest.isPending || !requestComment.trim()}
+              title={
+                requestComment.trim()
+                  ? "Send your edits to the head of execution for approval"
+                  : "Add a comment for the head of execution first"
+              }
               onClick={requestEdit}
               className="inline-flex items-center gap-2 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-kastros-bg disabled:opacity-50"
             >
@@ -753,6 +773,26 @@ export function OpenTradeDetail({
             </button>
           </>
         ) : null}
+
+        {error && <p className="w-full text-sm text-destructive">{error}</p>}
+        {saved && !error && (
+          <p className="flex w-full flex-wrap items-center gap-2 text-sm text-success">
+            {isExecutionHead ? (
+              isLockedMode ? (
+                "Changes saved to locked contract."
+              ) : (
+                "Changes saved — trader will be notified to review."
+              )
+            ) : (
+              <>
+                Change request sent to the head of execution.
+                <Link href="/execution/approvals" className="underline hover:text-foreground">
+                  View my requests →
+                </Link>
+              </>
+            )}
+          </p>
+        )}
 
         {!isLockedMode && canLock && (
           <button

@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { format } from "date-fns";
+
 import { Check, X } from "lucide-react";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { PageHeader } from "@/components/ui/page-header";
 import { useListPagination } from "@/lib/use-list-pagination";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
+import { formatPkDate, formatPkDateTime } from "@/lib/formatters/datetime";
 
 const pkrFormat = new Intl.NumberFormat("en-PK");
 
@@ -133,7 +134,7 @@ export default function FinanceVouchersPage() {
                           {v.note ? ` · “${v.note}”` : ""}
                         </div>
                         <div className="mt-1 text-xs text-subtle">
-                          Entered by {v.enteredByName} · {format(new Date(v.createdAt), "d MMM yyyy, HH:mm")}
+                          Entered by {v.enteredByName} · {formatPkDateTime(v.createdAt)}
                         </div>
                       </div>
                       <div className="text-right">
@@ -234,7 +235,7 @@ export default function FinanceVouchersPage() {
                           </td>
                           <td className="whitespace-nowrap">{v.resolvedByName ?? "—"}</td>
                           <td className="whitespace-nowrap">
-                            {v.resolvedAt ? format(new Date(v.resolvedAt), "d MMM yyyy") : "—"}
+                            {v.resolvedAt ? formatPkDate(v.resolvedAt) : "—"}
                           </td>
                           <td className="max-w-[220px] truncate text-muted-foreground" title={v.resolutionNote ?? undefined}>
                             {v.resolutionNote ?? "—"}
