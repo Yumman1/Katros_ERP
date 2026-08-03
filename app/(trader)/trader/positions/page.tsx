@@ -14,6 +14,7 @@ export default function TraderPositionsPage() {
   const { data: ledger, isLoading: loadingLedger } = trpc.trader.positionLedger.useQuery(undefined, {
     refetchInterval: 20000,
   });
+  const { data: fx } = trpc.market.fxRate.useQuery(undefined, { refetchInterval: 60_000 });
   const { data: trades } = trpc.trader.myTrades.useQuery({});
 
   const commodityOptions = useMemo(() => {
@@ -46,6 +47,7 @@ export default function TraderPositionsPage() {
   }
 
   const totalMtm = filteredExposure.reduce((a, e) => a + e.mtm, 0);
+  const totalMtmUsd = fx?.rate && fx.rate > 0 ? totalMtm / fx.rate : null;
   const activeTrades =
     trades?.filter((t) => ["CONFIRMED", "EXECUTED", "PENDING", "LOCKED"].includes(t.tradeStatus)) ?? [];
 
@@ -88,6 +90,11 @@ export default function TraderPositionsPage() {
           <div className={`mt-1 text-2xl font-medium data-grid ${totalMtm >= 0 ? "text-success" : "text-destructive"}`}>
             {formatCurrency(totalMtm)}
           </div>
+          {totalMtmUsd != null ? (
+            <div className="mt-0.5 text-xs tabular-nums text-muted-foreground">
+              ≈ {formatCurrency(totalMtmUsd, "USD")} at {fx!.rate.toLocaleString("en-PK")} PKR/USD
+            </div>
+          ) : null}
         </div>
       </div>
 

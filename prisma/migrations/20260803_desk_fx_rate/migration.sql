@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS "DeskFxRate" (
+  "id"        TEXT NOT NULL DEFAULT 'USD_PKR',
+  "rate"      DECIMAL(20,6) NOT NULL,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
+  "updatedBy" TEXT,
+  CONSTRAINT "DeskFxRate_pkey" PRIMARY KEY ("id")
+);
+
+ALTER TABLE "DeskFxRate" ENABLE ROW LEVEL SECURITY;
