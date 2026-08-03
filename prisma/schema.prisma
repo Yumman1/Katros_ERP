@@ -505,15 +505,6 @@ model DeskMarketPrice {
   updatedBy    String?
 }
 
-/// Desk USD/PKR rate for converting position MTM from rupees to dollars.
-model DeskFxRate {
-  id        String   @id @default("USD_PKR")
-  /// How many PKR for one USD (e.g. 277.8522).
-  rate      Decimal  @db.Decimal(20, 6)
-  updatedAt DateTime @updatedAt
-  updatedBy String?
-}
-
 // ─── Position & MTM (analytics) ──────────────────────────────────────────────
 
 model Position {

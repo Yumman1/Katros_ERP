@@ -8,7 +8,6 @@ import {
   listDailyMarketPrices,
   upsertDailyMarketPrice,
 } from "@/server/market-prices";
-import { getUsdPkrRate, setUsdPkrRate } from "@/server/fx-rate";
 
 const execRoles = ["EXECUTION", "ADMIN", "FINANCE"] as const;
 
@@ -58,24 +57,6 @@ export const marketRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not publish price",
-        });
-      }
-    }),
-
-  /** Desk USD/PKR for position MTM dollar conversion. */
-  fxRate: roleProcedure([...execRoles, "TRADER", "ADMIN", "RISK_MANAGER", "READ_ONLY"]).query(() =>
-    getUsdPkrRate(),
-  ),
-
-  setFxRate: roleProcedure([...execRoles])
-    .input(z.object({ rate: z.number().positive() }))
-    .mutation(async ({ ctx, input }) => {
-      try {
-        return await setUsdPkrRate(input.rate, ctx.session.user.name ?? undefined);
-      } catch (e) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: e instanceof Error ? e.message : "Could not save FX rate",
         });
       }
     }),

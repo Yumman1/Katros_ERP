@@ -4,7 +4,6 @@ import { num, numOrNull } from "@/server/db/convert";
 import { KG_PER_MAUND_40 } from "@/lib/trade-constants";
 import { defaultKgPerUnit } from "@/lib/price-units";
 import { ratePerMaundInclCommission } from "@/server/trade-closure";
-import { getUsdPkrRate } from "@/server/fx-rate";
 
 const MAUNDS_PER_MT = 1000 / KG_PER_MAUND_40;
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -176,8 +175,6 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
     deskRateByCommodity.set(p.commodityCode, { rate: round2(perMaund), date: p.priceDate });
   }
 
-  const defaultFx = (await getUsdPkrRate())?.rate ?? null;
-
   return [...buckets.values()]
     .filter((b) => b.openPurchasesMt || b.openSalesMt || b.inventoryMt)
     .sort((a, z) => a.commodityCode.localeCompare(z.commodityCode) || a.season.localeCompare(z.season))
@@ -190,7 +187,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
       const market = desk?.rate ?? fallback;
       const marketRateSource: SeasonNetPosition["marketRateSource"] =
         desk ? "DAILY_PRICES" : fallback != null ? "FALLBACK" : null;
-      const fx = input?.fxRate != null ? num(input.fxRate) : defaultFx;
+      const fx = input?.fxRate != null ? num(input.fxRate) : null;
       const entry = b.entryWeightMt > 0 ? round2(b.entryWeightedValue / b.entryWeightMt) : null;
       const netMt = round2(b.openPurchasesMt + b.inventoryMt - b.openSalesMt);
       const perMaund = market != null && entry != null ? round2(market - entry) : null;
