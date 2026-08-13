@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 import { ExecutionApprovalsTabs } from "@/components/execution/execution-approvals-tabs";
 import { PageHeader } from "@/components/ui/page-header";
