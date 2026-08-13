@@ -10,6 +10,7 @@ import {
 } from "@/server/execution-store";
 import { getCounterpartyLedgers } from "@/server/finance/ledger";
 import { approveVoucher, listVouchers, rejectVoucher } from "@/server/finance/vouchers";
+import { approveDoFinance, getDoFinanceApprovals } from "@/server/execution/sale-workflow";
 
 export const financeRouter = router({
   pendingPayments: roleProcedure(["FINANCE", "ADMIN"]).query(async () =>
@@ -115,6 +116,23 @@ export const financeRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         return await settleSaleTruck(
+          input.truckId,
+          ctx.session.user.name ?? ctx.session.user.email ?? "finance",
+        );
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  // ─── Delivery order approvals (after execution head) ─────────────────────
+
+  doApprovals: roleProcedure(["FINANCE", "ADMIN"]).query(() => getDoFinanceApprovals()),
+
+  approveDo: roleProcedure(["FINANCE", "ADMIN"])
+    .input(z.object({ truckId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await approveDoFinance(
           input.truckId,
           ctx.session.user.name ?? ctx.session.user.email ?? "finance",
         );

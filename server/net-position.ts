@@ -2,7 +2,7 @@ import type { TradeSeason } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
 import { KG_PER_MAUND_40 } from "@/lib/trade-constants";
-import { defaultKgPerUnit } from "@/lib/price-units";
+import { deskLegsToPkrPerMaund } from "@/lib/desk-mark-price";
 import { ratePerMaundInclCommission } from "@/server/trade-closure";
 
 const MAUNDS_PER_MT = 1000 / KG_PER_MAUND_40;
@@ -75,6 +75,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
     }),
     prisma.outboundDispatch.groupBy({
       by: ["tradeRef"],
+      where: { status: { in: ["WEIGHED", "FINANCE_PENDING", "RELEASED"] } },
       _sum: { allocatedQtyMt: true },
     }),
     prisma.stockTransfer.findMany({
@@ -89,6 +90,9 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
         cnfAmount: true,
         cnfCurrency: true,
         cnfUnit: true,
+        yestAmount: true,
+        yestCurrency: true,
+        yestUnit: true,
         priceDate: true,
       },
     }),
@@ -167,12 +171,18 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
   // ₨/maund, which is how the position sheet reads.
   const deskRateByCommodity = new Map<string, { rate: number; date: string }>();
   for (const p of deskPrices) {
-    const amount = numOrNull(p.cnfAmount);
-    if (amount == null || amount <= 0) continue;
-    if ((p.cnfCurrency ?? "PKR").toUpperCase() !== "PKR") continue;
-    const kgPerQuoted = defaultKgPerUnit(p.cnfUnit ?? "MAUND_40");
-    const perMaund = (amount / kgPerQuoted) * KG_PER_MAUND_40;
-    deskRateByCommodity.set(p.commodityCode, { rate: round2(perMaund), date: p.priceDate });
+    const yestAmount = numOrNull(p.yestAmount);
+    const cnfAmount = numOrNull(p.cnfAmount);
+    const perMaund = deskLegsToPkrPerMaund(
+      yestAmount != null && yestAmount > 0 && p.yestCurrency && p.yestUnit
+        ? { amount: yestAmount, currency: p.yestCurrency, unit: p.yestUnit }
+        : null,
+      cnfAmount != null && cnfAmount > 0 && p.cnfCurrency && p.cnfUnit
+        ? { amount: cnfAmount, currency: p.cnfCurrency, unit: p.cnfUnit }
+        : null,
+    );
+    if (perMaund == null) continue;
+    deskRateByCommodity.set(p.commodityCode, { rate: perMaund, date: p.priceDate });
   }
 
   return [...buckets.values()]

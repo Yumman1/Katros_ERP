@@ -5,6 +5,7 @@ import {
   getMergedLocations,
 } from "@/server/trader-master-data";
 import { getDeskMarketPrice, marketTickerPayload } from "@/server/market-prices";
+import { markPriceForTradeMtm, positionMarkLeg } from "@/lib/desk-mark-price";
 import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import type { KycStatus, QualityTolerances } from "@/lib/trade-constants";
 import {
@@ -685,8 +686,8 @@ export async function deleteBookedTrade(tradeRef: string): Promise<{ ok: true }>
 async function withDeskMtm(trade: MockTraderTrade): Promise<MockTraderTrade> {
   const bookUnitPrice = trade.pricePerCanonicalQty ?? trade.price;
   const desk = trade.commodity?.code ? await getDeskMarketPrice(trade.commodity.code) : null;
-  const mktPrice = desk?.cnf?.amount ?? desk?.yesterday?.amount ?? trade.marketPrice;
-  if (!mktPrice) return trade;
+  const mktPrice = markPriceForTradeMtm(desk, trade, trade.marketPrice);
+  if (mktPrice == null || !(mktPrice > 0)) return trade;
   const book = trade.quantity * bookUnitPrice;
   const mkt = trade.quantity * mktPrice;
   const mtmPnl = trade.direction === TradeDirection.BUY ? mkt - book : book - mkt;
@@ -803,7 +804,7 @@ export async function mockTraderExposure(traderName: string) {
   return Promise.all(
     Array.from(byCommodity.values()).map(async (c) => {
       const desk = await getDeskMarketPrice(c.code);
-      const ref = desk?.cnf ?? desk?.yesterday;
+      const ref = positionMarkLeg(desk);
       return {
         ...c,
         net: c.long - c.short,

@@ -657,7 +657,10 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
     [saleRows, truck.id],
   );
 
-  const confirmPayment = trpc.execution.confirmSalePayment.useMutation({
+  const generateDo = trpc.execution.generateDeliveryOrder.useMutation({
+    onSuccess: () => invalidateGateOpsCaches(utils),
+  });
+  const generateGatePassMut = trpc.execution.generateGatePass.useMutation({
     onSuccess: () => invalidateGateOpsCaches(utils),
   });
   const clear = trpc.execution.requestClearWithoutPayment.useMutation({
@@ -675,67 +678,126 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
     );
   }
 
-  if (row.saleStage === "AWAITING_BALANCE") {
+  if (
+    row.saleStage === "AWAITING_BALANCE" ||
+    (row.saleStage === "CLEARED_UNPAID" && !row.gateOutSlipNo)
+  ) {
     const available = row.availableCreditPkr ?? 0;
     const isCredit = row.fundingKind === "CREDIT";
+    const canDo = row.canGenerateDo ?? row.canSendForApproval;
     return (
-      <StepPanel step={2} title="Payment" state="active" headline="Awaiting balance">
-        <div className="space-y-0.5">
-          <AmountLine label="Base" value={fmtPkr(row.saleBasePkr ?? 0)} />
-          <AmountLine label="236G" value={fmtPkr(row.saleTaxPkr ?? 0)} />
-          <AmountLine label="Receivable" value={fmtPkr(row.saleExpectedPkr ?? 0)} bold />
-        </div>
-        <span
-          className={cn(
-            "text-[10px] font-medium",
-            row.canSendForApproval ? "text-success" : "text-destructive",
-          )}
-        >
-          {isCredit ? (
-            <>
-              Credit trade — line {fmtPkr(available)} of {fmtPkr(row.creditCeilingPkr ?? 0)}{" "}
-              remaining
-            </>
-          ) : (
-            <>Vouchers available for this trade: {fmtPkr(available)}</>
-          )}
-        </span>
-        {!row.canSendForApproval && row.fundingReason && (
-          <span className="text-[10px] font-medium text-destructive">{row.fundingReason}</span>
+      <StepPanel
+        step={2}
+        title="Payment"
+        state="active"
+        headline={row.saleStage === "CLEARED_UNPAID" ? "Credit cleared — generate DO" : "Awaiting balance"}
+      >
+        {row.saleStage === "AWAITING_BALANCE" && (
+          <>
+            <div className="space-y-0.5">
+              <AmountLine label="Base" value={fmtPkr(row.saleBasePkr ?? 0)} />
+              <AmountLine label="236G" value={fmtPkr(row.saleTaxPkr ?? 0)} />
+              <AmountLine label="Receivable" value={fmtPkr(row.saleExpectedPkr ?? 0)} bold />
+            </div>
+            <span
+              className={cn(
+                "text-[10px] font-medium",
+                row.canSendForApproval ? "text-success" : "text-destructive",
+              )}
+            >
+              {isCredit ? (
+                <>
+                  Credit trade — line {fmtPkr(available)} of {fmtPkr(row.creditCeilingPkr ?? 0)}{" "}
+                  remaining
+                </>
+              ) : (
+                <>Vouchers available for this trade: {fmtPkr(available)}</>
+              )}
+            </span>
+            {!row.canSendForApproval && row.fundingReason && (
+              <span className="text-[10px] font-medium text-destructive">{row.fundingReason}</span>
+            )}
+          </>
+        )}
+        {row.saleStage === "CLEARED_UNPAID" && (
+          <span className="text-[10px] text-warning">
+            CEO cleared release on credit — generate the delivery order to start approvals.
+          </span>
         )}
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            disabled={!row.canSendForApproval || confirmPayment.isPending}
-            title={
-              isCredit
-                ? "Within the trade's credit line — ledger runs negative until vouchers arrive"
-                : "Needs approved voucher credit ≥ receivable"
-            }
-            onClick={() => confirmPayment.mutate({ truckId: truck.id })}
+            disabled={!canDo || generateDo.isPending}
+            onClick={() => generateDo.mutate({ truckId: truck.id })}
             className="kastros-btn-primary px-3 py-1.5 text-[11px] disabled:opacity-50"
           >
-            {confirmPayment.isPending ? "Confirming…" : "Confirm payment & issue slips"}
+            {generateDo.isPending ? "Generating…" : "Generate delivery order"}
           </button>
-          <button
-            type="button"
-            disabled={clear.isPending}
-            onClick={() => {
-              if (
-                confirm(
-                  "Buyer has not paid — this needs the trader's and the CEO's approval, and the buyer's ledger will go negative. Continue?",
-                )
-              ) {
-                clear.mutate({ truckId: truck.id });
-              }
-            }}
-            className="rounded-md border border-destructive/40 px-3 py-1.5 text-[11px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
-          >
-            {clear.isPending ? "Requesting…" : "Request release on credit"}
-          </button>
+          {row.saleStage === "AWAITING_BALANCE" && (
+            <button
+              type="button"
+              disabled={clear.isPending}
+              onClick={() => {
+                if (
+                  confirm(
+                    "Buyer has not paid — this needs the trader's and the CEO's approval, and the buyer's ledger will go negative. Continue?",
+                  )
+                ) {
+                  clear.mutate({ truckId: truck.id });
+                }
+              }}
+              className="rounded-md border border-destructive/40 px-3 py-1.5 text-[11px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+            >
+              {clear.isPending ? "Requesting…" : "Request release on credit"}
+            </button>
+          )}
         </div>
-        {confirmPayment.error && <ErrorLine message={confirmPayment.error.message} />}
+        {generateDo.error && <ErrorLine message={generateDo.error.message} />}
         {clear.error && <ErrorLine message={clear.error.message} />}
+      </StepPanel>
+    );
+  }
+
+  if (
+    row.saleStage === "DO_PENDING_EXECUTION" ||
+    row.saleStage === "DO_PENDING_FINANCE"
+  ) {
+    return (
+      <StepPanel step={2} title="Payment" state="active" headline="DO approvals pending">
+        <span className="font-mono text-xs font-semibold text-foreground">
+          {row.deliveryOrderNo ?? "DO pending"}
+        </span>
+        <span className="text-[10px] text-subtle">
+          {row.saleStage === "DO_PENDING_EXECUTION"
+            ? "Awaiting head of execution approval."
+            : "Execution approved — awaiting finance DO approval."}
+        </span>
+        {row.deliveryOrderNo && (
+          <Link
+            href={`/execution/print/delivery-order/${truck.id}`}
+            target="_blank"
+            className="text-[11px] font-medium text-accent-secondary hover:underline"
+          >
+            Preview delivery order →
+          </Link>
+        )}
+      </StepPanel>
+    );
+  }
+
+  if (row.saleStage === "DO_APPROVED") {
+    return (
+      <StepPanel step={2} title="Payment" state="active" headline="DO approved">
+        <span className="font-mono text-xs font-semibold text-foreground">{row.deliveryOrderNo}</span>
+        <button
+          type="button"
+          disabled={!row.canGenerateGatePass || generateGatePassMut.isPending}
+          onClick={() => generateGatePassMut.mutate({ truckId: truck.id })}
+          className="kastros-btn-primary px-3 py-1.5 text-[11px] disabled:opacity-50"
+        >
+          {generateGatePassMut.isPending ? "Generating…" : "Generate gate pass"}
+        </button>
+        {generateGatePassMut.error && <ErrorLine message={generateGatePassMut.error.message} />}
       </StepPanel>
     );
   }
@@ -752,7 +814,7 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
     );
   }
 
-  if (row.saleStage === "CLEARED_UNPAID") {
+  if (row.saleStage === "CLEARED_UNPAID" && row.gateOutSlipNo) {
     return (
       <StepPanel
         step={2}
@@ -794,22 +856,33 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
     );
   }
 
-  // PAYMENT_RECEIVED
+  if (
+    row.saleStage === "GATE_PASS_ISSUED" ||
+    row.saleStage === "PAYMENT_RECEIVED" ||
+    (row.saleStage === "CLEARED_UNPAID" && row.gateOutSlipNo)
+  ) {
+    return (
+      <StepPanel
+        step={2}
+        title="Payment"
+        state="done"
+        headline={row.saleReleasedAt ? "Released" : "Gate pass issued"}
+      >
+        <span className="truncate font-mono text-xs font-semibold text-foreground">
+          {row.gateOutSlipNo ?? "—"}
+          {row.deliveryOrderNo && (
+            <span className="text-muted-foreground"> · {row.deliveryOrderNo}</span>
+          )}
+        </span>
+        <PrintLinks truckId={truck.id} />
+        <ReleaseToggle row={row} truckId={truck.id} />
+      </StepPanel>
+    );
+  }
+
   return (
-    <StepPanel
-      step={2}
-      title="Payment"
-      state="done"
-      headline={row.saleReleasedAt ? "Released" : "Payment received"}
-    >
-      <span className="truncate font-mono text-xs font-semibold text-foreground">
-        {row.gateOutSlipNo ?? "—"}
-        {row.deliveryOrderNo && (
-          <span className="text-muted-foreground"> · {row.deliveryOrderNo}</span>
-        )}
-      </span>
-      <PrintLinks truckId={truck.id} />
-      <ReleaseToggle row={row} truckId={truck.id} />
+    <StepPanel step={2} title="Payment" state="waiting" headline="In progress">
+      <span className="text-[10px] text-subtle">Stage: {row.saleStage}</span>
     </StepPanel>
   );
 }

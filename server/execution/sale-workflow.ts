@@ -18,16 +18,12 @@ import { TraderInvoiceOwnershipError, truckTransporterName, truckTransporterPhon
  * Assignment computes the receivable (weight × rate + 236G) and posts the
  * buyer-ledger DEBIT (see assignTruckToTrade). From there:
  *
- *   AWAITING_BALANCE ──confirm (trade funding covers it: credit-terms line or
- *     vouchers)──▶ PAYMENT_RECEIVED
- *   AWAITING_BALANCE ──release on credit──▶ CLEAR_PENDING_TRADER ──trader──▶
- *     CLEAR_PENDING_CEO ──CEO──▶ CLEARED_UNPAID ──finance settles──▶ SETTLED
+ *   AWAITING_BALANCE ──(funding ok)──▶ Generate DO ──▶ DO_PENDING_EXECUTION
+ *     ──head of execution──▶ DO_PENDING_FINANCE ──finance──▶ DO_APPROVED
+ *     ──Generate gate pass──▶ GATE_PASS_ISSUED ──mark released──▶ dispatch RELEASED
  *
- * PAYMENT_RECEIVED / CLEARED_UNPAID issue the Gate Out Slip + Delivery Order
- * numbers; execution prints them and flips the manual release toggle
- * (markSaleTruckReleased) — only then does the register show RELEASED.
- * (PENDING_TRADER / PENDING_FINANCE are retired enum values — nothing
- * transitions into them.)
+ *   AWAITING_BALANCE ──release on credit──▶ CLEAR_PENDING_TRADER ──trader──▶
+ *     CLEAR_PENDING_CEO ──CEO──▶ CLEARED_UNPAID ──(same DO flow)──▶ …
  */
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
@@ -90,25 +86,42 @@ async function transition(
   }
 }
 
-/**
- * Issue Gate Out Slip + Delivery Order numbers. This does NOT release the
- * truck — execution prints the documents and, once they are handed to the
- * warehouse manager, flips the manual release toggle (markSaleTruckReleased).
- */
-async function issueReleaseDocuments(truckId: string): Promise<void> {
+/** Issue a Delivery Order number only — starts the DO approval chain. */
+async function issueDeliveryOrderOnly(truckId: string): Promise<string> {
   const row = await prisma.pendingTruck.findUnique({
     where: { id: truckId },
-    select: { gateOutSlipNo: true, deliveryOrderNo: true },
+    select: { deliveryOrderNo: true },
   });
-  if (!row) return;
-  const gateOutSlipNo =
-    row.gateOutSlipNo ?? `GOS-${String(await nextRef(COUNTER.GATE_OUT_SLIP)).padStart(5, "0")}`;
+  if (!row) throw new Error("Gate entry not found");
   const deliveryOrderNo =
     row.deliveryOrderNo ?? `DO-${String(await nextRef(COUNTER.DELIVERY_ORDER)).padStart(5, "0")}`;
   await prisma.pendingTruck.update({
     where: { id: truckId },
-    data: { gateOutSlipNo, deliveryOrderNo },
+    data: { deliveryOrderNo },
   });
+  return deliveryOrderNo;
+}
+
+/** Issue a Gate Out Slip number only — after both DO approvals. */
+async function issueGateOutSlipOnly(truckId: string): Promise<string> {
+  const row = await prisma.pendingTruck.findUnique({
+    where: { id: truckId },
+    select: { gateOutSlipNo: true },
+  });
+  if (!row) throw new Error("Gate entry not found");
+  const gateOutSlipNo =
+    row.gateOutSlipNo ?? `GOS-${String(await nextRef(COUNTER.GATE_OUT_SLIP)).padStart(5, "0")}`;
+  await prisma.pendingTruck.update({
+    where: { id: truckId },
+    data: { gateOutSlipNo },
+  });
+  return gateOutSlipNo;
+}
+
+/** @deprecated Legacy — issues both documents together for in-flight trucks. */
+async function issueReleaseDocuments(truckId: string): Promise<void> {
+  await issueDeliveryOrderOnly(truckId);
+  await issueGateOutSlipOnly(truckId);
 }
 
 /**
@@ -121,8 +134,13 @@ export async function markSaleTruckReleased(
   releasedByName: string,
 ): Promise<PendingTruck> {
   const row = await saleTruckOrThrow(truckId);
-  if (row.saleStage !== "PAYMENT_RECEIVED" && row.saleStage !== "CLEARED_UNPAID") {
-    throw new Error("Only trucks with payment received (or CEO clearance) can be released");
+  const releasable: SaleTruckStage[] = [
+    "GATE_PASS_ISSUED",
+    "PAYMENT_RECEIVED",
+    "CLEARED_UNPAID",
+  ];
+  if (!row.saleStage || !releasable.includes(row.saleStage)) {
+    throw new Error("Generate the gate pass and complete DO approvals before releasing");
   }
   if (!row.gateOutSlipNo || !row.deliveryOrderNo) {
     throw new Error("Release documents have not been issued yet");
@@ -170,6 +188,12 @@ export type SaleWorkflowRow = {
   saleTraderApprovedBy: string | null;
   saleFinanceApprovedBy: string | null;
   saleCeoApprovedBy: string | null;
+  doExecutionApprovedBy: string | null;
+  doFinanceApprovedBy: string | null;
+  /** True when funding covers the truck or CEO cleared credit release. */
+  canGenerateDo: boolean;
+  /** True when both DO approvals are complete. */
+  canGenerateGatePass: boolean;
   /** Manual release toggle state (null = not yet handed to warehouse manager). */
   saleReleasedAt: Date | null;
   saleReleasedBy: string | null;
@@ -211,6 +235,10 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
   return rows.map((r) => {
     const expected = numOrNull(r.saleExpectedPkr);
     const funding = fundingByTruck.get(r.id) ?? null;
+    const canGenerateDo =
+      (r.saleStage === "AWAITING_BALANCE" && funding?.ok === true) ||
+      r.saleStage === "CLEARED_UNPAID";
+    const canGenerateGatePass = r.saleStage === "DO_APPROVED";
     return {
       truckId: r.id,
       gatepassNo: r.gatepassNo,
@@ -234,6 +262,10 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
       saleTraderApprovedBy: r.saleTraderApprovedBy,
       saleFinanceApprovedBy: r.saleFinanceApprovedBy,
       saleCeoApprovedBy: r.saleCeoApprovedBy,
+      doExecutionApprovedBy: r.doExecutionApprovedBy,
+      doFinanceApprovedBy: r.doFinanceApprovedBy,
+      canGenerateDo,
+      canGenerateGatePass,
       saleReleasedAt: r.saleReleasedAt,
       saleReleasedBy: r.saleReleasedBy,
       saleSettledAt: r.saleSettledAt,
@@ -243,54 +275,150 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
 }
 
 /**
- * Confirm payment for an outbound truck — succeeds when the buyer's approved
- * voucher credit covers the receivable. No human approvals needed: finance
- * already vetted the money at voucher approval. Consumes the credit, marks
- * PAYMENT_RECEIVED and issues the Gate Out Slip + Delivery Order.
+ * Generate a Delivery Order for an outbound truck — when voucher/credit funding
+ * covers the receivable, or after CEO clearance on credit release.
  */
+export async function generateDeliveryOrder(
+  truckId: string,
+  requestedByName: string,
+): Promise<PendingTruck> {
+  const row = await saleTruckOrThrow(truckId);
+  if (row.saleStage === "AWAITING_BALANCE") {
+    const expected = numOrNull(row.saleExpectedPkr);
+    if (expected == null || !row.assignedTradeRef) {
+      throw new Error("Assign the truck to a sale trade first");
+    }
+    const cp = await saleCounterparty(truckId, row.assignedTradeRef);
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Counterparty" WHERE "id" = ${cp.id} FOR UPDATE`;
+      const funding = await canFundTruck(
+        { counterpartyId: cp.id, tradeRef: row.assignedTradeRef!, amountPkr: expected },
+        tx,
+      );
+      if (!funding.ok) {
+        throw new Error(
+          `${funding.reason ?? "Insufficient funding"} — enter a payment voucher first, ` +
+            `or request release on credit (trader + CEO approval).`,
+        );
+      }
+      const updated = await tx.pendingTruck.updateMany({
+        where: { id: truckId, movementType: "OUTBOUND", saleStage: "AWAITING_BALANCE" },
+        data: {
+          saleStage: "DO_PENDING_EXECUTION",
+          saleFinanceApprovedBy: requestedByName,
+          saleFinanceApprovedAt: new Date(),
+        },
+      });
+      if (updated.count === 0) {
+        throw new Error("Truck stage changed in the meantime — refresh and try again");
+      }
+    });
+  } else if (row.saleStage === "CLEARED_UNPAID") {
+    await transition(truckId, ["CLEARED_UNPAID"], "DO_PENDING_EXECUTION");
+  } else {
+    throw new Error("This truck is not ready for a delivery order");
+  }
+  await issueDeliveryOrderOnly(truckId);
+  return freshTruck(truckId);
+}
+
+/** @deprecated Use generateDeliveryOrder — kept for existing clients. */
 export async function confirmSalePayment(
   truckId: string,
   confirmedByName: string,
 ): Promise<PendingTruck> {
-  const row = await saleTruckOrThrow(truckId);
-  if (row.saleStage !== "AWAITING_BALANCE") {
-    throw new Error("This truck is not awaiting balance");
-  }
-  const expected = numOrNull(row.saleExpectedPkr);
-  if (expected == null || !row.assignedTradeRef) {
-    throw new Error("Assign the truck to a sale trade first");
-  }
-  const cp = await saleCounterparty(truckId, row.assignedTradeRef);
+  return generateDeliveryOrder(truckId, confirmedByName);
+}
 
-  // Funding check + stage transition run inside ONE transaction holding a
-  // row lock on the counterparty, so two concurrent confirms (or a confirm
-  // racing a settle) can never double-spend the same voucher credit.
-  await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT "id" FROM "Counterparty" WHERE "id" = ${cp.id} FOR UPDATE`;
-    const funding = await canFundTruck(
-      { counterpartyId: cp.id, tradeRef: row.assignedTradeRef!, amountPkr: expected },
-      tx,
-    );
-    if (!funding.ok) {
-      throw new Error(
-        `${funding.reason ?? "Insufficient funding"} — enter a payment voucher first, ` +
-          `or request release on credit (trader + CEO approval).`,
-      );
-    }
-    const updated = await tx.pendingTruck.updateMany({
-      where: { id: truckId, movementType: "OUTBOUND", saleStage: "AWAITING_BALANCE" },
-      data: {
-        saleStage: "PAYMENT_RECEIVED",
-        saleFinanceApprovedBy: confirmedByName,
-        saleFinanceApprovedAt: new Date(),
-      },
-    });
-    if (updated.count === 0) {
-      throw new Error("Truck stage changed in the meantime — refresh and try again");
-    }
+/** Head of execution approves a pending delivery order. */
+export async function approveDoExecution(
+  truckId: string,
+  approvedByName: string,
+): Promise<PendingTruck> {
+  await saleTruckOrThrow(truckId);
+  await transition(truckId, ["DO_PENDING_EXECUTION"], "DO_PENDING_FINANCE", {
+    doExecutionApprovedBy: approvedByName,
+    doExecutionApprovedAt: new Date(),
   });
-  await issueReleaseDocuments(truckId);
   return freshTruck(truckId);
+}
+
+/** Finance approves a delivery order after execution head approval. */
+export async function approveDoFinance(
+  truckId: string,
+  approvedByName: string,
+): Promise<PendingTruck> {
+  await saleTruckOrThrow(truckId);
+  await transition(truckId, ["DO_PENDING_FINANCE"], "DO_APPROVED", {
+    doFinanceApprovedBy: approvedByName,
+    doFinanceApprovedAt: new Date(),
+  });
+  return freshTruck(truckId);
+}
+
+/** Issue the gate out slip after both DO approvals. */
+export async function generateGatePass(truckId: string): Promise<PendingTruck> {
+  const row = await saleTruckOrThrow(truckId);
+  if (row.saleStage !== "DO_APPROVED") {
+    throw new Error("Delivery order must be approved by execution and finance first");
+  }
+  await issueGateOutSlipOnly(truckId);
+  await transition(truckId, ["DO_APPROVED"], "GATE_PASS_ISSUED");
+  return freshTruck(truckId);
+}
+
+export type DoApprovalRow = {
+  truckId: string;
+  gatepassNo: string;
+  deliveryOrderNo: string | null;
+  truckNo: string;
+  arrivalDate: Date;
+  warehouseName: string;
+  counterpartyName: string;
+  commodityName: string | null;
+  tradeRef: string | null;
+  saleExpectedPkr: number | null;
+  weightKg: number;
+};
+
+export async function getDoExecutionApprovals(): Promise<DoApprovalRow[]> {
+  const rows = await prisma.pendingTruck.findMany({
+    where: { movementType: "OUTBOUND", saleStage: "DO_PENDING_EXECUTION" },
+    orderBy: { arrivalDate: "asc" },
+  });
+  return rows.map((r) => ({
+    truckId: r.id,
+    gatepassNo: r.gatepassNo,
+    deliveryOrderNo: r.deliveryOrderNo,
+    truckNo: r.truckNo,
+    arrivalDate: r.arrivalDate,
+    warehouseName: r.warehouseName,
+    counterpartyName: r.counterpartyName,
+    commodityName: r.commodityName,
+    tradeRef: r.assignedTradeRef,
+    saleExpectedPkr: numOrNull(r.saleExpectedPkr),
+    weightKg: num(r.weightKg),
+  }));
+}
+
+export async function getDoFinanceApprovals(): Promise<DoApprovalRow[]> {
+  const rows = await prisma.pendingTruck.findMany({
+    where: { movementType: "OUTBOUND", saleStage: "DO_PENDING_FINANCE" },
+    orderBy: { arrivalDate: "asc" },
+  });
+  return rows.map((r) => ({
+    truckId: r.id,
+    gatepassNo: r.gatepassNo,
+    deliveryOrderNo: r.deliveryOrderNo,
+    truckNo: r.truckNo,
+    arrivalDate: r.arrivalDate,
+    warehouseName: r.warehouseName,
+    counterpartyName: r.counterpartyName,
+    commodityName: r.commodityName,
+    tradeRef: r.assignedTradeRef,
+    saleExpectedPkr: numOrNull(r.saleExpectedPkr),
+    weightKg: num(r.weightKg),
+  }));
 }
 
 /**
@@ -685,7 +813,6 @@ export async function ceoResolveClearWithoutPayment(
     saleCeoApprovedBy: ceoName,
     saleCeoApprovedAt: new Date(),
   });
-  await issueReleaseDocuments(truckId);
   return freshTruck(truckId);
 }
 
@@ -702,6 +829,7 @@ export type SaleTruckPrintable = {
   builtyDetails: string | null;
   warehouseName: string;
   buyerName: string;
+  buyerNtn: string | null;
   commodityName: string | null;
   commodityCode: string | null;
   weightKg: number;
@@ -730,17 +858,30 @@ export async function getSaleTruckPrintable(truckId: string): Promise<SaleTruckP
   });
   if (!row) throw new Error("Gate entry not found");
   const truck = truckRowToRuntime(row);
+  let buyerNtn: string | null = null;
+  if (truck.assignedTradeRef) {
+    const trade = await prisma.trade.findUnique({
+      where: { tradeRef: truck.assignedTradeRef },
+      select: { counterparty: { select: { ntn: true } } },
+    });
+    buyerNtn = trade?.counterparty.ntn ?? null;
+  }
   return {
     gatepassNo: truck.gatepassNo,
     gateOutSlipNo: truck.gateOutSlipNo ?? null,
     deliveryOrderNo: truck.deliveryOrderNo ?? null,
-    issuedAt: truck.saleFinanceApprovedAt ?? truck.saleCeoApprovedAt ?? null,
+    issuedAt:
+      truck.doFinanceApprovedAt ??
+      truck.saleFinanceApprovedAt ??
+      truck.saleCeoApprovedAt ??
+      null,
     truckNo: truck.truckNo,
     transporterName: truckTransporterName(truck),
     transporterPhone: truckTransporterPhone(truck),
     builtyDetails: truck.builtyDetails ?? null,
     warehouseName: truck.warehouseName,
     buyerName: truck.counterpartyName,
+    buyerNtn,
     commodityName: truck.commodityName ?? null,
     commodityCode: truck.commodityCode ?? null,
     weightKg: num(row.weightKg),

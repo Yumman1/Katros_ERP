@@ -92,6 +92,10 @@ export type PendingTruck = {
   saleFinanceApprovedAt?: Date | null;
   saleCeoApprovedBy?: string | null;
   saleCeoApprovedAt?: Date | null;
+  doExecutionApprovedBy?: string | null;
+  doExecutionApprovedAt?: Date | null;
+  doFinanceApprovedBy?: string | null;
+  doFinanceApprovedAt?: Date | null;
   gateOutSlipNo?: string | null;
   deliveryOrderNo?: string | null;
   /** Manual release toggle — set once printed slips reach the warehouse manager. */
@@ -116,6 +120,10 @@ export type InboundOverStage = "PENDING_TRADER" | "PENDING_CEO" | "APPROVED";
 
 export type SaleTruckStage =
   | "AWAITING_BALANCE"
+  | "DO_PENDING_EXECUTION"
+  | "DO_PENDING_FINANCE"
+  | "DO_APPROVED"
+  | "GATE_PASS_ISSUED"
   | "PENDING_TRADER"
   | "PENDING_FINANCE"
   | "PAYMENT_RECEIVED"
@@ -348,6 +356,10 @@ export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
     saleFinanceApprovedAt: row.saleFinanceApprovedAt,
     saleCeoApprovedBy: row.saleCeoApprovedBy,
     saleCeoApprovedAt: row.saleCeoApprovedAt,
+    doExecutionApprovedBy: row.doExecutionApprovedBy,
+    doExecutionApprovedAt: row.doExecutionApprovedAt,
+    doFinanceApprovedBy: row.doFinanceApprovedBy,
+    doFinanceApprovedAt: row.doFinanceApprovedAt,
     gateOutSlipNo: row.gateOutSlipNo,
     deliveryOrderNo: row.deliveryOrderNo,
     saleReleasedAt: row.saleReleasedAt,

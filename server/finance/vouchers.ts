@@ -18,12 +18,14 @@ export type VoucherView = {
   amountPkr: number;
   method: string | null;
   reference: string | null;
+  bankName: string | null;
   note: string | null;
   status: "PENDING_FINANCE" | "APPROVED" | "REJECTED";
   enteredByName: string;
   resolvedByName: string | null;
   resolvedAt: Date | null;
   resolutionNote: string | null;
+  voucherDate: Date;
   createdAt: Date;
 };
 
@@ -46,12 +48,14 @@ function voucherRowToView(row: VoucherRow): VoucherView {
     amountPkr: num(row.amountPkr),
     method: row.method,
     reference: row.reference,
+    bankName: row.bankName,
     note: row.note,
     status: row.status,
     enteredByName: row.enteredByName,
     resolvedByName: row.resolvedByName,
     resolvedAt: row.resolvedAt,
     resolutionNote: row.resolutionNote,
+    voucherDate: row.voucherDate,
     createdAt: row.createdAt,
   };
 }
@@ -68,11 +72,18 @@ export async function createVoucher(input: {
   amountPkr: number;
   method?: string | null;
   reference?: string | null;
+  bankName?: string | null;
+  voucherDate?: Date | null;
   note?: string | null;
   enteredByName: string;
 }): Promise<VoucherView> {
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Voucher amount must be positive");
+  }
+  const method = input.method?.trim() || null;
+  const bankName = input.bankName?.trim() || null;
+  if (method?.toLowerCase() === "bank transfer" && !bankName) {
+    throw new Error("Select a bank when payment method is Bank transfer");
   }
   const cp = await prisma.counterparty.findUnique({
     where: { id: input.counterpartyId },
@@ -148,8 +159,10 @@ export async function createVoucher(input: {
       tradeRef,
       noteRef,
       amountPkr: input.amountPkr,
-      method: input.method?.trim() || null,
+      method,
       reference: input.reference?.trim() || null,
+      bankName,
+      voucherDate: input.voucherDate ?? new Date(),
       note: input.note?.trim() || null,
       enteredByName: input.enteredByName,
     },

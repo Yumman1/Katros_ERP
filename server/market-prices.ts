@@ -3,6 +3,7 @@ import { prisma } from "@/server/db";
 import { numOrNull } from "@/server/db/convert";
 import { getMergedCommodities } from "@/server/trader-master-data";
 import { QUANTITY_UNITS } from "@/lib/trade-constants";
+import { deskLegsToPkrPerMaund } from "@/lib/desk-mark-price";
 
 export const DESK_MARKET_CURRENCIES = ["USD", "PKR", "MYR", "EUR", "CNY"] as const;
 export type DeskMarketCurrency = (typeof DESK_MARKET_CURRENCIES)[number];
@@ -224,11 +225,19 @@ export async function getDeskMarketPrice(code: string): Promise<StoredMarketPric
   return hasPublishedData(stored) ? stored : null;
 }
 
-/** Primary desk reference — CNF if set, otherwise yesterday local. */
+/** Position marking — yesterday local first, CNF optional fallback. */
 export async function getMarketPriceForCode(code: string): Promise<number | null> {
   const row = await getDeskMarketPrice(code);
   if (!row) return null;
-  return row.cnf?.amount ?? row.yesterday?.amount ?? null;
+  const leg = row.yesterday ?? row.cnf;
+  return leg?.amount ?? null;
+}
+
+/** PKR per maund for net-position (yesterday first). */
+export async function getPositionMarkPricePkrPerMaund(code: string): Promise<number | null> {
+  const row = await getDeskMarketPrice(code);
+  if (!row) return null;
+  return deskLegsToPkrPerMaund(row.yesterday, row.cnf);
 }
 
 export function deskMarketUnits(): readonly string[] {

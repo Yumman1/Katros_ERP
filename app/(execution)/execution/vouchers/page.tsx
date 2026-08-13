@@ -10,6 +10,7 @@ import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { useListPagination } from "@/lib/use-list-pagination";
 import { paymentTypeLabel, type PaymentType } from "@/lib/trade-constants";
+import { PAKISTAN_BANKS } from "@/lib/pakistan-banks";
 import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const VOUCHER_METHODS = ["Bank transfer", "Cheque", "Cash", "Other"] as const;
@@ -49,6 +50,8 @@ export default function ExecutionVouchersPage() {
   const [noteRef, setNoteRef] = useState("");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<string>(VOUCHER_METHODS[0]);
+  const [bankName, setBankName] = useState("");
+  const [voucherDate, setVoucherDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
 
@@ -75,6 +78,8 @@ export default function ExecutionVouchersPage() {
       clearAgainst();
       setAmount("");
       setMethod(VOUCHER_METHODS[0]);
+      setBankName("");
+      setVoucherDate(new Date().toISOString().slice(0, 10));
       setReference("");
       setNote("");
       void utils.execution.vouchers.invalidate();
@@ -95,6 +100,7 @@ export default function ExecutionVouchersPage() {
     counterpartyId !== "" &&
     Number(amount) > 0 &&
     (side === "SELL" || tradeRef !== "" || noteRef !== "") &&
+    !(method === "Bank transfer" && !bankName.trim()) &&
     !create.isPending;
 
   if (isLoading && !vouchers) {
@@ -153,7 +159,7 @@ export default function ExecutionVouchersPage() {
             <span className="text-xs text-subtle">
               {side === "SELL"
                 ? "Credits the sell ledger — money received from a buyer."
-                : "Credits the buy ledger — money received on a settled purchase."}
+                : "Credits the buy ledger — settles a purchase or debit-note receivable."}
             </span>
           </div>
 
@@ -212,7 +218,13 @@ export default function ExecutionVouchersPage() {
                   </option>
                 ))}
                 {(openNotes ?? []).length > 0 && (
-                  <optgroup label="Cancellation / short-close notes">
+                  <optgroup
+                    label={
+                      side === "BUY"
+                        ? "Debit notes (receivable)"
+                        : "Cancellation / short-close notes"
+                    }
+                  >
                     {(openNotes ?? []).map((n) => (
                       <option key={n.noteRef} value={`note:${n.noteRef}`}>
                         {n.noteRef} · {fmtPkr(n.amountPkr)} due
@@ -237,10 +249,22 @@ export default function ExecutionVouchersPage() {
               />
             </label>
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+              Voucher date
+              <input
+                type="date"
+                value={voucherDate}
+                onChange={(e) => setVoucherDate(e.target.value)}
+                className="kastros-input kastros-input-sm w-full"
+              />
+            </label>
+            <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Method
               <select
                 value={method}
-                onChange={(e) => setMethod(e.target.value)}
+                onChange={(e) => {
+                  setMethod(e.target.value);
+                  if (e.target.value !== "Bank transfer") setBankName("");
+                }}
                 className="kastros-select kastros-select-sm w-full"
               >
                 {VOUCHER_METHODS.map((m) => (
@@ -250,6 +274,24 @@ export default function ExecutionVouchersPage() {
                 ))}
               </select>
             </label>
+            {method === "Bank transfer" && (
+              <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+                Bank
+                <select
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  className="kastros-select kastros-select-sm w-full"
+                  required
+                >
+                  <option value="">Select bank…</option>
+                  {PAKISTAN_BANKS.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Reference (optional)
               <input
@@ -281,6 +323,8 @@ export default function ExecutionVouchersPage() {
                   noteRef: noteRef || undefined,
                   amountPkr: Number(amount),
                   method,
+                  bankName: method === "Bank transfer" ? bankName : undefined,
+                  voucherDate: new Date(voucherDate),
                   reference: reference.trim() || undefined,
                   note: note.trim() || undefined,
                 })
@@ -362,7 +406,10 @@ export default function ExecutionVouchersPage() {
                     {fmtPkr(v.amountPkr)}
                   </td>
                   <td className="px-5 py-3">
-                    <div className="text-muted-foreground">{v.method ?? "—"}</div>
+                    <div className="text-muted-foreground">
+                      {v.method ?? "—"}
+                      {v.bankName ? ` · ${v.bankName}` : ""}
+                    </div>
                     {v.reference && <div className="font-mono text-subtle">{v.reference}</div>}
                   </td>
                   <td className="px-5 py-3">
@@ -370,7 +417,7 @@ export default function ExecutionVouchersPage() {
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">{v.enteredByName ?? "—"}</td>
                   <td className="px-5 py-3 whitespace-nowrap text-muted-foreground">
-                    {fmtDateTime(v.createdAt)}
+                    {fmtDateTime(v.voucherDate ?? v.createdAt)}
                   </td>
                   <td className="px-5 py-3">
                     {v.resolvedByName ? (

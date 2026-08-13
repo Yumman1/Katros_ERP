@@ -310,6 +310,16 @@ export function OpenTradeDetail({
               {trade.commodity.code} · {TRADE_SCOPE_LABELS[tradeScope]}
             </p>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {isLockedMode && (
+              <Link
+                href={`/execution/print/trade/${encodeURIComponent(trade.tradeRef)}`}
+                target="_blank"
+                className="rounded-md border border-kastros-border px-3 py-1.5 text-xs font-medium text-accent-secondary hover:bg-foreground/[0.04]"
+              >
+                Print contract
+              </Link>
+            )}
           {isLockedMode ? (
             <span className="rounded-md bg-info/20 px-3 py-1 text-sm font-medium text-info">
               Locked — editable with head approval
@@ -327,6 +337,7 @@ export function OpenTradeDetail({
               Unreviewed — review booking details below
             </span>
           )}
+          </div>
         </div>
       </div>
 

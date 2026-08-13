@@ -766,6 +766,14 @@ enum GateInvoiceStage {
 enum SaleTruckStage {
   /// Receivable computed but the buyer's ledger credit does not cover it yet.
   AWAITING_BALANCE
+  /// DO issued — awaiting head of execution approval.
+  DO_PENDING_EXECUTION
+  /// Execution approved DO — awaiting finance approval.
+  DO_PENDING_FINANCE
+  /// Both DO approvals complete — gate pass may be generated.
+  DO_APPROVED
+  /// Gate out slip issued — ready for manual release.
+  GATE_PASS_ISSUED
   /// Sent to the trade's trader for sell-invoice approval.
   PENDING_TRADER
   /// Trader approved — awaiting finance approval.
@@ -845,6 +853,12 @@ model PendingTruck {
   saleFinanceApprovedAt DateTime?
   saleCeoApprovedBy     String?
   saleCeoApprovedAt     DateTime?
+  /// Delivery order — head of execution approval.
+  doExecutionApprovedBy String?
+  doExecutionApprovedAt DateTime?
+  /// Delivery order — finance approval (after execution).
+  doFinanceApprovedBy   String?
+  doFinanceApprovedAt   DateTime?
   /// Printable release documents, numbered on payment approval / CEO clearance.
   gateOutSlipNo   String? @unique
   deliveryOrderNo String? @unique
@@ -1543,6 +1557,10 @@ model Voucher {
   method         String?
   /// Bank / cheque / deposit reference.
   reference      String?
+  /// Bank name when method is bank transfer.
+  bankName       String?
+  /// User-entered voucher date (may be backdated).
+  voucherDate    DateTime      @default(now())
   note           String?
   status         VoucherStatus @default(PENDING_FINANCE)
   enteredByName  String

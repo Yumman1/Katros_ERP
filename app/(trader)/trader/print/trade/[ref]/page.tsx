@@ -129,7 +129,7 @@ export default function TradeConfirmationPrintPage() {
               Agri-commodity trading · Pakistan
             </div>
             <div className="mt-3 text-lg font-bold uppercase tracking-[0.2em]">
-              {trade.direction === "BUY" ? "Purchase" : "Sale"} Contract Note
+              {trade.direction === "BUY" ? "Purchase Contract" : "Sale Contract"}
             </div>
           </div>
 

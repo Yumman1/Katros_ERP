@@ -124,6 +124,7 @@ export default function GateOutSlipPrintPage() {
             <Field label="Builty" value={data.builtyDetails ?? "—"} wide />
             <Field label="Warehouse" value={data.warehouseName} />
             <Field label="Buyer" value={data.buyerName} />
+            <Field label="NTN" value={data.buyerNtn ?? "—"} />
             <Field
               label="Commodity"
               value={

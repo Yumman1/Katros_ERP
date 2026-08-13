@@ -37,11 +37,18 @@ import {
   getSaleTruckPrintable,
   markSaleTruckReleased,
   confirmSalePayment,
+  generateDeliveryOrder,
+  generateGatePass,
+  approveDoExecution,
+  approveDoFinance,
+  getDoExecutionApprovals,
+  getDoFinanceApprovals,
   requestClearWithoutPayment,
   requestInboundOverDelivery,
 } from "@/server/execution-store";
 import { getCounterpartyLedgers, listOpenSettlementNotes } from "@/server/finance/ledger";
 import { createVoucher, listVouchers } from "@/server/finance/vouchers";
+import { mockTradeByRefGlobal } from "@/server/dummy-data";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
 import {
@@ -867,10 +874,23 @@ export const executionRouter = router({
   saleWorkflowRows: roleProcedure([...execRoles]).query(() => getSaleWorkflowRows()),
 
   /**
-   * Confirm payment for a truck — succeeds when the buyer's approved voucher
-   * credit covers the receivable; no trader/finance approval needed. Issues
-   * the Gate Out Slip + Delivery Order.
+   * Generate a delivery order when funding covers the receivable (or after CEO
+   * credit clearance). Starts the execution → finance DO approval chain.
    */
+  generateDeliveryOrder: roleProcedure([...execRoles])
+    .input(z.object({ truckId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await generateDeliveryOrder(
+          input.truckId,
+          ctx.session.user.name ?? ctx.session.user.email ?? "execution",
+        );
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  /** @deprecated Use generateDeliveryOrder */
   confirmSalePayment: roleProcedure([...execRoles])
     .input(z.object({ truckId: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -882,6 +902,56 @@ export const executionRouter = router({
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
       }
+    }),
+
+  generateGatePass: roleProcedure([...execRoles])
+    .input(z.object({ truckId: z.string() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await generateGatePass(input.truckId);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  doExecutionApprovals: roleProcedure([...execRoles]).query(() => getDoExecutionApprovals()),
+
+  approveDoExecution: headProcedure("EXECUTION")
+    .input(z.object({ truckId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await approveDoExecution(
+          input.truckId,
+          ctx.session.user.name ?? ctx.session.user.email ?? "execution",
+        );
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  doFinanceApprovals: roleProcedure([Role.FINANCE, Role.ADMIN, Role.CEO]).query(() =>
+    getDoFinanceApprovals(),
+  ),
+
+  approveDoFinance: roleProcedure([Role.FINANCE, Role.ADMIN])
+    .input(z.object({ truckId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await approveDoFinance(
+          input.truckId,
+          ctx.session.user.name ?? ctx.session.user.email ?? "finance",
+        );
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  tradeForPrint: roleProcedure([...execRoles, Role.FINANCE, Role.CEO])
+    .input(z.object({ tradeRef: z.string() }))
+    .query(async ({ input }) => {
+      const trade = await mockTradeByRefGlobal(input.tradeRef.trim());
+      if (!trade) throw new TRPCError({ code: "NOT_FOUND", message: "Trade not found" });
+      return trade;
     }),
 
   /**
@@ -1028,6 +1098,8 @@ export const executionRouter = router({
         amountPkr: z.number().positive(),
         method: z.string().optional(),
         reference: z.string().optional(),
+        bankName: z.string().optional(),
+        voucherDate: z.coerce.date().optional(),
         note: z.string().optional(),
       }),
     )

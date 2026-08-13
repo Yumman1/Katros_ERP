@@ -26,6 +26,7 @@ const nav: NavEntry[] = [
     label: "Finance",
     children: [
       { href: "/finance/payments", label: "Payment approvals" },
+      { href: "/finance/delivery-order-approvals", label: "DO approvals" },
       { href: "/finance/ledgers", label: "Ledgers" },
       { href: "/finance/vouchers", label: "Vouchers" },
       { href: "/finance/rejections", label: "Rejections" },

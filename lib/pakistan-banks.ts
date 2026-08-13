@@ -1,0 +1,20 @@
+/** Major Pakistani banks for voucher bank-transfer selection. */
+export const PAKISTAN_BANKS = [
+  "Habib Bank Limited (HBL)",
+  "Meezan Bank",
+  "United Bank Limited (UBL)",
+  "Bank Alfalah",
+  "Faysal Bank",
+  "Soneri Bank",
+  "Dubai Islamic Bank (DIB)",
+  "Bank Al-Habib",
+  "Allied Bank",
+  "MCB Bank",
+  "Bank of Punjab (BOP)",
+  "Askari Bank",
+  "Standard Chartered Bank Pakistan",
+  "JS Bank",
+  "Silk Bank",
+  "Summit Bank",
+  "National Bank of Pakistan (NBP)",
+] as const;

@@ -7,9 +7,6 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { trpc } from "@/lib/trpc/client";
 
-const fmtPkr = (n: number) =>
-  `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(n)} PKR`;
-
 const fmtKg = (n: number) =>
   `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(n)} kg`;
 
@@ -45,27 +42,15 @@ function Field({ label, value, wide }: { label: string; value: string; wide?: bo
   );
 }
 
-function SignatureLine({ label }: { label: string }) {
-  return (
-    <div className="flex-1 text-center">
-      <div className="mx-auto mt-10 w-full border-t border-black" />
-      <div className="mt-1 text-[11px] text-black">{label}</div>
-    </div>
-  );
-}
-
 export default function DeliveryOrderPrintPage() {
   const params = useParams();
   const truckId = params.truckId as string;
   const { data, isLoading, error } = trpc.execution.saleTruckPrintable.useQuery({ truckId });
 
-  const paid = data?.saleStage === "PAYMENT_RECEIVED";
-
   return (
     <div className="min-h-screen bg-white text-black">
       <style>{PRINT_CSS}</style>
 
-      {/* ── Toolbar (never printed) ── */}
       <div className="no-print flex flex-wrap items-center gap-2 border-b border-black/10 px-4 py-3">
         <Link href="/execution/movements" className="text-sm font-medium text-black underline">
           ← Back to movements
@@ -85,16 +70,15 @@ export default function DeliveryOrderPrintPage() {
 
       {data && !data.deliveryOrderNo && (
         <div className="mx-auto max-w-[560px] p-10 text-center">
-          <p className="text-base font-semibold">Not released yet</p>
+          <p className="text-base font-semibold">Not issued yet</p>
           <p className="mt-1 text-sm text-neutral-600">
-            Not released yet — this document is issued after payment approval.
+            Generate the delivery order from the truck workflow first.
           </p>
         </div>
       )}
 
       {data && data.deliveryOrderNo && (
         <div className="print-doc mx-auto my-6 w-full max-w-[560px] border border-black bg-white p-6">
-          {/* ── Company header ── */}
           <div className="border-b-2 border-black pb-3 text-center">
             <div className="text-2xl font-bold uppercase tracking-[0.3em]">Kastros</div>
             <div className="mt-0.5 text-[11px] uppercase tracking-wider text-neutral-600">
@@ -115,9 +99,9 @@ export default function DeliveryOrderPrintPage() {
             described below, for and on account of <b>{data.buyerName}</b>.
           </p>
 
-          {/* ── Details ── */}
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
             <Field label="Buyer" value={data.buyerName} />
+            <Field label="NTN" value={data.buyerNtn ?? "—"} />
             <Field
               label="Commodity"
               value={
@@ -132,34 +116,8 @@ export default function DeliveryOrderPrintPage() {
             <Field label="Trade ref" value={data.tradeRef ?? "—"} />
           </div>
 
-          {/* ── Amounts ── */}
-          <div className="mt-5 border border-black/60">
-            <div className="flex items-center justify-between border-b border-black/30 px-3 py-1.5 text-sm">
-              <span>Base amount</span>
-              <span className="font-mono tabular-nums">{fmtPkr(data.saleBasePkr ?? 0)}</span>
-            </div>
-            <div className="flex items-center justify-between border-b border-black/30 px-3 py-1.5 text-sm">
-              <span>236G advance tax</span>
-              <span className="font-mono tabular-nums">{fmtPkr(data.saleTaxPkr ?? 0)}</span>
-            </div>
-            <div className="flex items-center justify-between px-3 py-1.5 text-sm font-bold">
-              <span>Total receivable</span>
-              <span className="font-mono tabular-nums">{fmtPkr(data.saleExpectedPkr ?? 0)}</span>
-            </div>
-          </div>
-
-          <div
-            className={`mt-4 inline-block border-2 px-4 py-1 text-sm font-bold uppercase tracking-[0.25em] ${
-              paid ? "border-black" : "border-black/70"
-            }`}
-          >
-            {paid ? "Paid" : "Unpaid — CEO cleared"}
-          </div>
-
-          {/* ── Signatures ── */}
-          <div className="mt-8 flex gap-6 border-t border-black/30 pt-2">
-            <SignatureLine label="Authorized signatory" />
-            <SignatureLine label="Receiver" />
+          <div className="mt-8 border-t border-black/30 pt-4 text-center text-sm font-semibold uppercase tracking-wider">
+            Approved By Kastros
           </div>
         </div>
       )}

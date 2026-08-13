@@ -177,10 +177,9 @@ function SideSection({
   const totals = useMemo(() => {
     const debit = accounts.reduce((s, r) => s + r.totalDebitPkr, 0);
     const credit = accounts.reduce((s, r) => s + r.totalCreditPkr, 0);
-    const available = accounts.reduce((s, r) => s + r.availableCreditPkr, 0);
     const settled = accounts.reduce((s, r) => s + r.settledDebitPkr, 0);
     const outstanding = accounts.reduce((s, r) => s + r.outstandingDebitPkr, 0);
-    return { debit, credit, balance: credit - debit, available, settled, outstanding };
+    return { debit, credit, balance: credit - debit, settled, outstanding };
   }, [accounts]);
 
   return (
@@ -204,7 +203,7 @@ function SideSection({
           />
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-3">
           <SummaryCell label="Total debit" value={fmtPkr(totals.debit)} tone="text-destructive" />
           <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
           <SummaryCell
@@ -212,7 +211,6 @@ function SideSection({
             value={fmtPkr(totals.balance)}
             tone={totals.balance >= 0 ? "text-success" : "text-destructive"}
           />
-          <SummaryCell label="Available credit" value={fmtPkr(totals.available)} tone="text-foreground" />
         </div>
       )}
 
@@ -294,7 +292,6 @@ function AccountCard({
                 value={fmtPkr(r.balancePkr)}
                 tone={r.balancePkr >= 0 ? "text-success" : "text-destructive"}
               />
-              <Metric label="Available credit" value={fmtPkr(r.availableCreditPkr)} tone="text-foreground" />
             </>
           ) : (
             <>
@@ -398,7 +395,9 @@ function AccountCard({
                             </span>
                           ) : (
                             <span className="ml-1.5 rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-bold uppercase text-destructive">
-                              Note unpaid
+                              {r.side === "BUY" && e.sourceType === "ADJUSTMENT"
+                                ? "Receivable"
+                                : "Note unpaid"}
                             </span>
                           )
                         ) : e.settlesNoteRef ? (

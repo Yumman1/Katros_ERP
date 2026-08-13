@@ -61,6 +61,7 @@ import { FormField as Field, FormSection as Section } from "@/components/ui/form
 import { NumericInput } from "@/components/ui/numeric-input";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import {
+  normWarehouseName,
   serializeTraderWarehouseSelections,
   TRADER_WAREHOUSE_SELECTIONS_KEY,
 } from "@/lib/warehouse-allocation";
@@ -530,9 +531,11 @@ function BookTradeForm() {
     );
 
   const warehouseOptions = useMemo(() => {
-    const availByName = new Map((warehouseAvailability ?? []).map((w) => [w.name, w]));
+    const availByName = new Map(
+      (warehouseAvailability ?? []).map((w) => [normWarehouseName(w.name), w]),
+    );
     return (refData.data?.companyWarehouses ?? []).map((w) => {
-      const avail = availByName.get(w.name);
+      const avail = availByName.get(normWarehouseName(w.name));
       return {
         ...w,
         availabilityPct: avail?.availabilityPct ?? null,
