@@ -1034,12 +1034,12 @@ export async function assignTruckFifoAuto(truckId: string): Promise<{
 
 // ─── Gate-invoice workflow ────────────────────────────────────────────────────
 
-/** PKR rounding tolerance when matching an entered invoice against the expected amount. */
-export const GATE_INVOICE_MATCH_TOLERANCE_PKR = 1;
+/** PKR rounding tolerance when matching an entered invoice against the expected amount (exact match). */
+export const GATE_INVOICE_MATCH_TOLERANCE_PKR = 0;
 
 /**
  * Re-derive the workflow stage of an entered gate invoice from the expected amount.
- * Match (|entered − expected| ≤ 1 PKR) or unknown expected → PENDING_TRADE_APPROVAL;
+ * Match (entered equals expected) or unknown expected → PENDING_TRADE_APPROVAL;
  * mismatch → WRONG_INVOICING. A PAYMENT_APPROVED invoice is never downgraded.
  */
 export function revalidateGateInvoiceStage(truck: {

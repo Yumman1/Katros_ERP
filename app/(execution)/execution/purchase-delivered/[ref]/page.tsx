@@ -387,7 +387,7 @@ function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: 
             {update.isPending ? "Saving…" : "Save & re-validate"}
           </button>
           <span className="text-[10px] text-subtle">
-            Amount is matched against the expected value (±1 PKR) — a mismatch marks the invoice
+            Amount must match the expected value exactly — any mismatch marks the invoice
             as wrong invoicing.
           </span>
         </div>
