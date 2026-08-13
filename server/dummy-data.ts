@@ -5,7 +5,7 @@ import {
   getMergedLocations,
 } from "@/server/trader-master-data";
 import { getDeskMarketPrice, marketTickerPayload } from "@/server/market-prices";
-import { markPriceForTradeMtm, positionMarkLeg } from "@/lib/desk-mark-price";
+import { markPriceForTradeMtm } from "@/lib/desk-mark-price";
 import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import type { KycStatus, QualityTolerances } from "@/lib/trade-constants";
 import {
@@ -540,6 +540,8 @@ export type MockTraderTrade = {
   };
   marketPrice: number;
   mtmPnl: number;
+  /** MTM converted to USD at desk FX (null when FX missing for PKR legs). */
+  mtmPnlUsd?: number | null;
   notes?: string;
   buyingCategory?: "Delivered" | "Spot" | null;
   tradeScope?: "LOCAL" | "INTERNATIONAL";
@@ -749,71 +751,13 @@ export async function mockTradeByRefGlobal(tradeRef: string): Promise<MockTrader
 }
 
 export async function mockTraderDeskSummary(traderName: string) {
-  const trades = await mockTraderTrades(canonicalTraderName(traderName));
-  const isOpen = (s: TradeStatus) => s === TradeStatus.PENDING || s === TradeStatus.LOCKED;
-  const open = trades.filter((t) => isOpen(t.tradeStatus));
-  const pending = trades.filter((t) => t.tradeStatus === TradeStatus.PENDING);
-  const weekEnd = addDays(now(), 7);
-  const deliveriesDue = trades.filter(
-    (t) => t.deliveryStart <= weekEnd && t.tradeStatus === TradeStatus.LOCKED,
-  );
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const bookedToday = trades.filter((t) => t.tradeDate >= todayStart);
-  const myMtm = open.reduce((a, t) => a + t.mtmPnl, 0);
-
-  return {
-    traderName,
-    desk: "AGRI_DESK",
-    openTrades: open.length,
-    pendingConfirmation: pending.length,
-    deliveriesThisWeek: deliveriesDue.length,
-    bookedToday: bookedToday.length,
-    todayVolumeMt: bookedToday.reduce((a, t) => a + t.quantity, 0),
-    myMtm,
-    openNotional: open.reduce((a, t) => a + t.quantity * (t.pricePerCanonicalQty ?? t.price), 0),
-  };
+  const { buildTraderDeskSummary } = await import("@/server/trader-book");
+  return buildTraderDeskSummary(traderName);
 }
 
 export async function mockTraderExposure(traderName: string) {
-  const trades = (await mockTraderTrades(canonicalTraderName(traderName))).filter(
-    (t) =>
-      t.tradeStatus === TradeStatus.CONFIRMED ||
-      t.tradeStatus === TradeStatus.EXECUTED ||
-      t.tradeStatus === TradeStatus.LOCKED ||
-      t.tradeStatus === TradeStatus.PENDING,
-  );
-  const byCommodity = new Map<
-    string,
-    { code: string; name: string; long: number; short: number; mtm: number; marketPrice: number }
-  >();
-  for (const t of trades) {
-    const cur = byCommodity.get(t.commodity.code) ?? {
-      code: t.commodity.code,
-      name: t.commodity.name,
-      long: 0,
-      short: 0,
-      mtm: 0,
-      marketPrice: t.marketPrice,
-    };
-    if (t.direction === TradeDirection.BUY) cur.long += t.quantity;
-    else cur.short += t.quantity;
-    cur.mtm += t.mtmPnl;
-    byCommodity.set(t.commodity.code, cur);
-  }
-  return Promise.all(
-    Array.from(byCommodity.values()).map(async (c) => {
-      const desk = await getDeskMarketPrice(c.code);
-      const ref = positionMarkLeg(desk);
-      return {
-        ...c,
-        net: c.long - c.short,
-        marketPrice: ref?.amount ?? c.marketPrice,
-        marketCurrency: ref?.currency,
-        marketUnit: ref?.unit,
-      };
-    }),
-  );
+  const { buildTraderExposure } = await import("@/server/trader-book");
+  return buildTraderExposure(traderName);
 }
 
 export async function mockTraderActionItems(traderName: string) {

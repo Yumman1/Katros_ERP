@@ -93,6 +93,7 @@ import {
   raiseSettlementInvoice,
   voidSettlementInvoice,
 } from "@/server/settlement-billing";
+import { getTraderBookTrades } from "@/server/trader-book";
 
 const paymentTypeSchema = z.enum([
   "DP",
@@ -245,21 +246,7 @@ export const traderRouter = router({
     )
     .query(async ({ ctx, input }) => {
       const name = traderNameFromSession(ctx.session.user);
-      const all = await mockTraderTrades(name);
-
-      // A locked trade whose execution contract is fully fulfilled counts as Closed.
-      const closedRefs = new Set(
-        (await getLockedContracts({ openOnly: false }))
-          .filter((c) => c.contractStatus !== "Open")
-          .map((c) => c.tradeRef),
-      );
-
-      const overlaid = all.map((t) =>
-        (t.tradeStatus === TradeStatus.LOCKED || t.tradeStatus === TradeStatus.CONFIRMED) &&
-        closedRefs.has(t.tradeRef)
-          ? { ...t, tradeStatus: TradeStatus.EXECUTED }
-          : t,
-      );
+      const overlaid = await getTraderBookTrades(name);
 
       const isDraft = (s: TradeStatus) => s === TradeStatus.PENDING;
       const isLocked = (s: TradeStatus) =>

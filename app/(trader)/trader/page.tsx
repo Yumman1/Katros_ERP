@@ -6,6 +6,7 @@ import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import Link from "next/link";
 import { TradeStatus } from "@prisma/client";
 import { OverdueAlertsCard } from "@/components/ledgers/overdue-alerts-card";
+import { isActiveTraderTrade } from "@/lib/trade-lifecycle";
 
 const statusStyle: Partial<Record<TradeStatus, string>> = {
   PENDING: "bg-warning/20 text-warning",
@@ -25,7 +26,7 @@ export default function TraderDeskPage() {
     return <div className="animate-pulse text-subtle">Loading your desk…</div>;
   }
 
-  const openTrades = trades?.slice(0, 8) ?? [];
+  const openTrades = (trades ?? []).filter(isActiveTraderTrade).slice(0, 8);
 
   return (
     <div className="kastros-desk-page">
@@ -55,7 +56,7 @@ export default function TraderDeskPage() {
           { label: "Today's volume", value: `${formatQty(summary.todayVolumeMt)} MT` },
           {
             label: "My open MTM",
-            value: formatCurrency(summary.myMtm),
+            value: formatCurrency(summary.myMtm, "USD"),
             tone: summary.myMtm >= 0 ? "up" : "down",
           },
         ].map((t) => (
@@ -134,8 +135,8 @@ export default function TraderDeskPage() {
                     </td>
                     <td className="px-2 py-1.5 text-xs text-muted-foreground max-w-[100px] truncate">{t.counterparty.name}</td>
                     <td className="px-2 py-1.5 text-xs text-subtle">{t.deliveryStart.toISOString().slice(0, 10)}</td>
-                    <td className={`px-2 py-1.5 data-grid ${t.mtmPnl >= 0 ? "text-success" : "text-kastros-red"}`}>
-                      {formatCurrency(t.mtmPnl, t.currency)}
+                    <td className={`px-2 py-1.5 data-grid ${(t.mtmPnlUsd ?? t.mtmPnl) >= 0 ? "text-success" : "text-kastros-red"}`}>
+                      {formatCurrency(t.mtmPnlUsd ?? t.mtmPnl, "USD")}
                     </td>
                     <td className="px-2 py-1.5">
                       <span className={`rounded px-1.5 py-0.5 text-xs ${statusStyle[t.tradeStatus] ?? ""}`}>
@@ -183,7 +184,7 @@ export default function TraderDeskPage() {
                     <span className="ml-2 text-subtle">Net {formatQty(e.net)} MT</span>
                   </div>
                   <span className={`data-grid ${e.mtm >= 0 ? "text-success" : "text-kastros-red"}`}>
-                    {formatCurrency(e.mtm)}
+                    {formatCurrency(e.mtm, "USD")}
                   </span>
                 </div>
               ))}

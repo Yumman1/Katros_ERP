@@ -8,6 +8,16 @@ type TradeLike = {
   settlementClosedAt?: Date | null;
 };
 
+export function isActiveTraderTrade(t: {
+  tradeStatus: TradeStatus;
+}): boolean {
+  return (
+    t.tradeStatus === TradeStatus.PENDING ||
+    t.tradeStatus === TradeStatus.LOCKED ||
+    t.tradeStatus === TradeStatus.CONFIRMED
+  );
+}
+
 /** Settled, but the trade amount is still being gathered in the ledger. */
 export function isSettlementCollecting(trade: TradeLike): boolean {
   return trade.directSettled === true && trade.settlementClosedAt == null;
