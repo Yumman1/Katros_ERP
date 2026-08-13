@@ -45,6 +45,8 @@ export type WarehouseAvailabilityRow = {
   trueAvailableMt: number | null;
   /** trueAvailableMt as a % of capacityMt. */
   trueAvailabilityPct: number | null;
+  /** Physical stock on hand (MT) for the selected commodity at this warehouse. */
+  stockOnHandMt: number | null;
 };
 
 type WarehouseLoc = {
@@ -109,6 +111,7 @@ const EMPTY_ROW = (loc: WarehouseLoc): WarehouseAvailabilityRow => ({
   freeOfUnallocatedMt: null,
   trueAvailableMt: null,
   trueAvailabilityPct: null,
+  stockOnHandMt: null,
 });
 
 /** Same utilization math as Execution → Warehouses → Utilization. */
@@ -194,6 +197,7 @@ export function computeWarehouseAvailability(
       freeOfUnallocatedMt,
       trueAvailableMt,
       trueAvailabilityPct,
+      stockOnHandMt: null,
     };
   });
 }

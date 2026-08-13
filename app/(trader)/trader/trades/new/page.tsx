@@ -548,6 +548,8 @@ function BookTradeForm() {
         divisionAvailableMt: avail?.divisionAvailableMt ?? null,
         trueAvailableMt: avail?.trueAvailableMt ?? null,
         trueAvailabilityPct: avail?.trueAvailabilityPct ?? null,
+        stockOnHandMt: avail?.stockOnHandMt ?? null,
+        capacityMt: avail?.capacityMt ?? null,
       };
     });
   }, [refData.data?.companyWarehouses, warehouseAvailability, warehouseStorageDivision]);
@@ -1362,13 +1364,16 @@ function BookTradeForm() {
                 onChange={setSelectedWarehouses}
                 loading={warehouseAvailabilityLoading || !commodityId}
                 storageDivision={warehouseStorageDivision}
+                bookingDirection={direction}
               />
               <p className="mt-1 text-xs text-subtle">
-                {warehouseStorageDivision === "grain"
-                  ? "Grain capacity only — uses each warehouse's grain division (sq ft / MT). Shows availability % and free grain MT."
-                  : warehouseStorageDivision === "bale"
-                    ? "Bale capacity — uses each warehouse's bale division."
-                    : "Select a commodity to see warehouse availability for its storage division."}
+                {direction === TradeDirection.SELL
+                  ? "Physical stock on hand for this commodity at each warehouse."
+                  : warehouseStorageDivision === "grain"
+                    ? "Spare grain storage — free capacity in each warehouse's grain division."
+                    : warehouseStorageDivision === "bale"
+                      ? "Spare bale storage — free capacity in each warehouse's bale division."
+                      : "Select a commodity to see spare storage capacity for its division."}
               </p>
             </Field>
           </div>

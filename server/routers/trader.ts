@@ -635,12 +635,19 @@ export const traderRouter = router({
       },
     });
     const inventoryByWarehouse = new Map<string, { allocatedMt: number; unallocatedMt: number }>();
+    const stockOnHandByWarehouse = new Map<string, number>();
     for (const row of inventoryRows) {
       const key = normWarehouseName(row.warehouseName);
       const cur = inventoryByWarehouse.get(key) ?? { allocatedMt: 0, unallocatedMt: 0 };
       cur.allocatedMt += row.allocatedQty;
       cur.unallocatedMt += row.unallocatedQty;
       inventoryByWarehouse.set(key, cur);
+      if (commodity && row.commodityCode === commodity.code) {
+        stockOnHandByWarehouse.set(
+          key,
+          (stockOnHandByWarehouse.get(key) ?? 0) + row.netQty,
+        );
+      }
     }
 
     return computeWarehouseAvailability(
@@ -653,7 +660,12 @@ export const traderRouter = router({
         ? { code: commodity.code, category: commodity.category, unit: commodity.unit }
         : null,
       inventoryByWarehouse,
-    );
+    ).map((row) => ({
+      ...row,
+      stockOnHandMt: commodity
+        ? Math.max(0, stockOnHandByWarehouse.get(normWarehouseName(row.name)) ?? 0)
+        : null,
+    }));
   }),
 
   addCommodity: roleProcedure(["CEO", "ADMIN"])

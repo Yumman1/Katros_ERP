@@ -3,6 +3,7 @@
 import { availabilityTone, fmtCapacityMt } from "@/lib/warehouse-availability";
 import type { WarehouseStorageDivision } from "@/lib/warehouse-utilization";
 import { cn } from "@/lib/utils";
+import { TradeDirection } from "@prisma/client";
 
 export type WarehouseOption = {
   id: string;
@@ -20,6 +21,10 @@ export type WarehouseOption = {
   trueAvailableMt?: number | null;
   /** trueAvailableMt as a % of capacity. */
   trueAvailabilityPct?: number | null;
+  /** Physical stock on hand (MT) for the booked commodity. */
+  stockOnHandMt?: number | null;
+  /** Division capacity (MT) — used for sell stock % when configured. */
+  capacityMt?: number | null;
 };
 
 type Props = {
@@ -30,6 +35,8 @@ type Props = {
   loading?: boolean;
   /** When set, show capacity for this division only (grain for corn/grains, bale for cotton). */
   storageDivision?: WarehouseStorageDivision | null;
+  /** BUY = spare storage capacity; SELL = physical stock on hand. */
+  bookingDirection?: TradeDirection;
 };
 
 const TONE_CLASS = {
@@ -51,6 +58,7 @@ export function WarehouseMultiSelect({
   className,
   loading,
   storageDivision = null,
+  bookingDirection = TradeDirection.BUY,
 }: Props) {
   const selected = new Set(value.map((v) => v.trim()).filter(Boolean));
 
@@ -74,22 +82,37 @@ export function WarehouseMultiSelect({
   }
 
   const divisionLabel = storageDivision ? DIVISION_LABEL[storageDivision] : null;
+  const isSell = bookingDirection === TradeDirection.SELL;
 
   return (
     <div className={cn("space-y-2", className)}>
       {warehouses.map((w) => {
         const checked = selected.has(w.name);
         const showDivisionScoped = storageDivision != null;
-        const availPct = showDivisionScoped
-          ? (w.divisionAvailabilityPct ?? w.availabilityPct)
-          : w.availabilityPct;
         const availMt = showDivisionScoped
           ? w.divisionAvailableMt
           : w.availableGrainMt;
-        const tone = availabilityTone(availPct);
         const hasCapacity = availMt != null || w.grainDivisionSqFt != null;
-        const hasTrueAvailability =
-          w.trueAvailableMt != null && w.trueAvailabilityPct != null;
+
+        const freeMt = w.trueAvailableMt ?? availMt;
+        const freePct =
+          w.trueAvailabilityPct ??
+          (showDivisionScoped ? w.divisionAvailabilityPct : w.availabilityPct);
+
+        const stockMt = w.stockOnHandMt ?? 0;
+
+        const badgeMt = isSell ? stockMt : freeMt;
+        const badgePct = isSell ? null : freePct;
+        const badgeTone = isSell
+          ? stockMt > 0
+            ? "high"
+            : "unknown"
+          : availabilityTone(freePct);
+        const badgeTitle = isSell
+          ? "Physical stock on hand for this commodity"
+          : divisionLabel
+            ? `${divisionLabel} — spare storage capacity`
+            : "Spare storage capacity";
 
         return (
           <label
@@ -123,29 +146,21 @@ export function WarehouseMultiSelect({
                 </p>
               )}
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <span
-                  className={cn(
-                    "rounded-full border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
-                    TONE_CLASS[tone],
-                  )}
-                  title={divisionLabel ? `${divisionLabel} availability` : undefined}
-                >
-                  {availPct != null ? `${availPct.toFixed(0)}% available` : "N/A"}
-                </span>
-                {hasTrueAvailability ? (
+                {isSell || badgeMt != null ? (
                   <span
                     className={cn(
                       "rounded-full border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
-                      TONE_CLASS[availabilityTone(w.trueAvailabilityPct)],
+                      TONE_CLASS[badgeTone],
                     )}
-                    title="True free space: capacity minus all physical inventory (allocated + unallocated)."
+                    title={badgeTitle}
                   >
                     Available{" "}
-                    {(w.trueAvailableMt as number).toLocaleString(undefined, {
+                    {(badgeMt ?? 0).toLocaleString(undefined, {
                       minimumFractionDigits: 1,
                       maximumFractionDigits: 1,
                     })}{" "}
-                    MT · {(w.trueAvailabilityPct as number).toFixed(0)}%
+                    MT
+                    {badgePct != null ? ` · ${badgePct.toFixed(0)}%` : ""}
                   </span>
                 ) : hasCapacity ? (
                   <span
