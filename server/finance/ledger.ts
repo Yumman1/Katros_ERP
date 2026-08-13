@@ -696,7 +696,13 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
   const accounts: CounterpartyLedgerView[] = [];
   for (const cp of counterparties) {
     for (const side of ["SELL", "BUY"] as const) {
-      const list = byAccount.get(`${cp.id}:${side}`) ?? [];
+      const rawList = byAccount.get(`${cp.id}:${side}`) ?? [];
+      // Inbound payments settle on receipt PAID — buy-side PAYMENT credits are
+      // legacy audit noise and must not appear in the payable view or totals.
+      const list =
+        side === "BUY"
+          ? rawList.filter((e) => e.sourceType !== "PAYMENT")
+          : rawList;
       // SELL accounts always shown (voucher targets); BUY only when active.
       if (side === "BUY" && list.length === 0) continue;
       let totalDebit = 0;

@@ -1533,9 +1533,9 @@ export async function traderResolveGateInvoice(
   }
 
   // Connected flow: a release raises the finance payment request for this
-  // truck's receipts — finance approval then pays it, posts the buy-ledger
-  // credit and puts it in the gate register. A partial release asks finance
-  // only for the amount the trader let through, oldest receipt first.
+  // truck's receipts — finance approval marks the receipt paid and the
+  // gatepass DEBIT shows Paid on the buy ledger. A partial release asks
+  // finance only for the amount the trader let through, oldest receipt first.
   if (decision !== "HOLD") {
     const { submitInboundForFinance } = await import("./movements");
     let left = releasePkr;

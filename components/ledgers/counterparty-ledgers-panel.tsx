@@ -144,7 +144,7 @@ export function CounterpartyLedgersPanel({
       <SideSection
         side="BUY"
         heading="Buy ledgers (payables)"
-        description="What we owe sellers — expected-invoice debits vs payment-out credits."
+        description="What we owe sellers — expected-invoice debits; paid when finance approves the linked receipt."
         accounts={buyRows}
         expanded={expanded}
         setExpanded={setExpanded}

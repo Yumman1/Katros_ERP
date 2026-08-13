@@ -206,9 +206,10 @@ export async function approvePayment(
       });
     }
 
-    // Buy-side ledger: money paid out to a seller credits their payables
-    // account (the expected-invoice debit was posted at truck assignment).
-    if (pr.sourceType === "INBOUND" || pr.sourceType === "SPOT") {
+    // Inbound payables settle on the gatepass DEBIT when the receipt reaches
+    // PAID — no buy-side credit row. Spot purchases still credit the ledger
+    // because they have no gatepass debit settlement path.
+    if (pr.sourceType === "SPOT") {
       const trade = await tx.trade.findUnique({
         where: { tradeRef: pr.tradeRef },
         select: { counterpartyId: true },
