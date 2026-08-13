@@ -25,6 +25,7 @@ import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import { commodityCreateInputSchema, commodityEntityRef } from "@/lib/commodity-registration";
 import { getMergedCommodities } from "@/server/trader-master-data";
 import { mockTradeByRefGlobal } from "@/server/dummy-data";
+import { prisma } from "@/server/db";
 import { TradeStatus } from "@prisma/client";
 
 function actorName(user: { name?: string | null; email?: string | null }) {
@@ -247,6 +248,13 @@ export const teamRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "Not the head of this department" });
       }
 
+      if (input.decision === "REJECTED" && req.department === "EXECUTION" && !input.note?.trim()) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Add a reason before rejecting — it is shown to the requester",
+        });
+      }
+
       let applied = false;
       if (input.decision === "APPROVED") {
         if (
@@ -267,6 +275,26 @@ export const teamRouter = router({
       );
       if (req.entityType === "TRADE" && (input.decision === "REJECTED" || req.action === "DELETE")) {
         await recordTradeChangeResolved(resolved, input.decision, actorName(ctx.session.user));
+      }
+
+      if (input.decision === "REJECTED" && req.department === "EXECUTION") {
+        const trade =
+          req.entityType === "TRADE"
+            ? await prisma.trade.findUnique({
+                where: { tradeRef: req.entityRef.trim() },
+                select: { counterparty: { select: { name: true } } },
+              })
+            : null;
+        const { recordRejection } = await import("@/server/rejections");
+        await recordRejection({
+          kind: "CHANGE_REQUEST_EXECUTION",
+          refLabel: req.entityLabel,
+          tradeRef: req.entityType === "TRADE" ? req.entityRef : null,
+          counterpartyName: trade?.counterparty.name ?? null,
+          rejectedBy: actorName(ctx.session.user),
+          rejectedRole: "EXECUTION",
+          reason: input.note!.trim(),
+        });
       }
       return resolved;
     }),

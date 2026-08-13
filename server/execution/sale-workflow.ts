@@ -343,6 +343,45 @@ export async function approveDoExecution(
   return freshTruck(truckId);
 }
 
+/** Head of execution rejects a pending delivery order — truck returns to balance check. */
+export async function rejectDoExecution(
+  truckId: string,
+  reason: string,
+  rejectedByName: string,
+): Promise<PendingTruck> {
+  const row = await saleTruckOrThrow(truckId);
+  if (row.saleStage !== "DO_PENDING_EXECUTION") {
+    throw new Error("This delivery order is not awaiting execution approval");
+  }
+  const why = reason.trim();
+  if (!why) throw new Error("A rejection reason is required");
+
+  const deliveryOrderNo = row.deliveryOrderNo;
+  await transition(truckId, ["DO_PENDING_EXECUTION"], "AWAITING_BALANCE", {
+    deliveryOrderNo: null,
+    doExecutionApprovedBy: null,
+    doExecutionApprovedAt: null,
+    doFinanceApprovedBy: null,
+    doFinanceApprovedAt: null,
+    saleFinanceApprovedBy: null,
+    saleFinanceApprovedAt: null,
+  });
+
+  const { recordRejection } = await import("@/server/rejections");
+  await recordRejection({
+    kind: "DO_EXECUTION",
+    refLabel: deliveryOrderNo ?? row.gatepassNo,
+    gatepassNo: row.gatepassNo,
+    tradeRef: row.assignedTradeRef,
+    counterpartyName: row.counterpartyName,
+    amountPkr: numOrNull(row.saleExpectedPkr),
+    rejectedBy: rejectedByName,
+    rejectedRole: "EXECUTION",
+    reason: why,
+  });
+  return freshTruck(truckId);
+}
+
 /** Finance approves a delivery order after execution head approval. */
 export async function approveDoFinance(
   truckId: string,

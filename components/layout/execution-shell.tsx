@@ -2,7 +2,6 @@
 
 import {
   BookOpen,
-  ClipboardCheck,
   ClipboardList,
   FileSpreadsheet,
   LayoutGrid,
@@ -15,7 +14,6 @@ import {
   Truck,
   Warehouse,
   FileEdit,
-  XCircle,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -40,6 +38,14 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
     { department: "EXECUTION" },
     { enabled: isExecutionHead, staleTime: 60_000, refetchInterval: 60_000, retry: false },
   );
+  const { data: pendingDo } = trpc.execution.doExecutionApprovals.useQuery(undefined, {
+    enabled: isExecutionHead,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+
+  const approvalsBadgeCount = (pendingApprovals ?? 0) + (pendingDo?.length ?? 0);
 
   const nav = [
     {
@@ -77,22 +83,20 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         { href: "/execution/inventory", label: "Inventory", icon: <Warehouse className="h-4 w-4" /> },
         { href: "/execution/positions", label: "Positions", icon: <LineChart className="h-4 w-4" /> },
         { href: "/execution/movements", label: "Truck Movements", icon: <Truck className="h-4 w-4" /> },
-        { href: "/execution/delivery-order-approvals", label: "DO approvals", icon: <ClipboardCheck className="h-4 w-4" /> },
         { href: "/execution/shifting", label: "Internal Shifting", icon: <MoveRight className="h-4 w-4" /> },
         { href: "/execution/vouchers", label: "Vouchers", icon: <Receipt className="h-4 w-4" /> },
         { href: "/execution/ledgers", label: "Ledgers", icon: <BookOpen className="h-4 w-4" /> },
-        { href: "/execution/rejections", label: "Rejections", icon: <XCircle className="h-4 w-4" /> },
         { href: "/execution/warehouses", label: "Warehouses", icon: <MapPin className="h-4 w-4" /> },
         ...(isExecutionHead
           ? [
               {
                 href: "/execution/approvals",
-                label: "Approvals",
+                label: "Team Approvals",
                 icon: <ShieldCheck className="h-4 w-4" />,
                 badge:
-                  pendingApprovals && pendingApprovals > 0 ? (
+                  approvalsBadgeCount > 0 ? (
                     <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-warning/15 px-1.5 text-[10px] font-bold text-warning">
-                      {pendingApprovals}
+                      {approvalsBadgeCount}
                     </span>
                   ) : undefined,
               },
@@ -100,8 +104,8 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
           : [
               {
                 href: "/execution/approvals",
-                label: "My requests",
-                icon: <ClipboardCheck className="h-4 w-4" />,
+                label: "My Approvals",
+                icon: <ShieldCheck className="h-4 w-4" />,
               },
             ]),
         { href: "/execution/trade-files", label: "Trade Files", icon: <FileSpreadsheet className="h-4 w-4" /> },

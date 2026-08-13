@@ -21,8 +21,28 @@ export const REJECTION_KIND_LABELS: Record<string, string> = {
   TRADE_SETTLEMENT: "Direct settlement",
   VOUCHER: "Voucher",
   PAYMENT: "Payment",
+  CHANGE_REQUEST_EXECUTION: "Team change request",
+  DO_EXECUTION: "Delivery order — execution",
+  DO_FINANCE: "Delivery order — finance",
 };
 
+/** Sub-filters on the execution approvals hub Rejections tab. */
+export const EXECUTION_REJECTION_FILTERS = {
+  team: ["CHANGE_REQUEST_EXECUTION"],
+  do: ["DO_EXECUTION", "DO_FINANCE"],
+  operations: [
+    "VOUCHER",
+    "PAYMENT",
+    "SELL_RELEASE_TRADER",
+    "SELL_RELEASE_CEO",
+    "INBOUND_OVER_TRADER",
+    "INBOUND_OVER_CEO",
+    "TRADE_SETTLEMENT",
+  ],
+} as const;
+
 export function humanizeRejectionKind(kind: string): string {
-  return REJECTION_KIND_LABELS[kind] ?? kind;
+  if (kind in REJECTION_KIND_LABELS) return REJECTION_KIND_LABELS[kind];
+  const words = kind.replace(/_/g, " ").toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }

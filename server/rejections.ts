@@ -11,7 +11,13 @@ export type RejectionKind =
   | "INBOUND_OVER_CEO"
   /** CEO turned down a change request on a trade — edit, delete, close, cancel. */
   | "TRADE_CHANGE_CEO"
-  | "TRADE_SETTLEMENT";
+  | "TRADE_SETTLEMENT"
+  /** Execution head turned down a team change request. */
+  | "CHANGE_REQUEST_EXECUTION"
+  /** Execution head turned down a delivery order. */
+  | "DO_EXECUTION"
+  /** Finance turned down a delivery order. */
+  | "DO_FINANCE";
 
 export type RejectionView = {
   id: string;

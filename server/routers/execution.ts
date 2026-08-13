@@ -40,6 +40,7 @@ import {
   generateDeliveryOrder,
   generateGatePass,
   approveDoExecution,
+  rejectDoExecution,
   approveDoFinance,
   getDoExecutionApprovals,
   getDoFinanceApprovals,
@@ -922,6 +923,20 @@ export const executionRouter = router({
       try {
         return await approveDoExecution(
           input.truckId,
+          ctx.session.user.name ?? ctx.session.user.email ?? "execution",
+        );
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
+      }
+    }),
+
+  rejectDoExecution: headProcedure("EXECUTION")
+    .input(z.object({ truckId: z.string(), reason: z.string().trim().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await rejectDoExecution(
+          input.truckId,
+          input.reason,
           ctx.session.user.name ?? ctx.session.user.email ?? "execution",
         );
       } catch (e) {

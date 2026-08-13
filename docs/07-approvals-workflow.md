@@ -138,11 +138,17 @@ Routes to `deletePendingTruck`, `deleteInboundReceipt`, `deleteOutboundDispatch`
 
 | User | Page | Component |
 |------|------|-----------|
-| Execution head | `/execution/approvals` | `ApprovalsInbox` → `ChangeRequestsInbox` |
-| Execution staff | `/execution/approvals` | "My requests" view |
+| Execution head | `/execution/approvals` | Hub: Team tab — `ApprovalsInbox` → `ChangeRequestsInbox` (PENDING queue only) |
+| Execution head | `/execution/approvals/do` | Hub: DO tab — `DoApprovalsPanel` (approve / reject) |
+| Execution head | `/execution/approvals/rejections` | Hub: Rejections tab — `ExecutionRejectionsPanel` |
+| Execution staff | `/execution/approvals` | Hub: My requests view |
 | Trader | `/trader/approvals`, `/trader/change-requests` | Same inbox pattern |
 | Finance | `/finance/change-requests` | FINANCE department |
 | CEO | `/ceo/approvals` | `CeoApprovalsInbox` |
+
+Legacy URLs redirect into the hub: `/execution/rejections` → `/execution/approvals/rejections`, `/execution/delivery-order-approvals` → `/execution/approvals/do`.
+
+Execution head rejecting a change request records `CHANGE_REQUEST_EXECUTION` on the Rejections tab. DO execution reject records `DO_EXECUTION` and returns the truck to `AWAITING_BALANCE`.
 
 Gate register submit links to My requests (`gate-register-actions.tsx`).
 

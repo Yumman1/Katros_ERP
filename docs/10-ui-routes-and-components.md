@@ -52,7 +52,11 @@ Shared: `components/layout/app-shell.tsx`, `shell-header.tsx`, `desk-page.tsx`
 | `/execution/warehouses/manage` | manage/page.tsx | WH edit/delete requests |
 | `/execution/warehouses/utilization` | utilization/page.tsx | Capacity charts |
 | `/execution/payments` | payments/page.tsx | Payment requests |
-| `/execution/approvals` | approvals/page.tsx | ApprovalsInbox |
+| `/execution/approvals` | approvals/page.tsx | Hub Team tab — ApprovalsInbox (embedded) |
+| `/execution/approvals/do` | approvals/do/page.tsx | Hub DO tab — DoApprovalsPanel |
+| `/execution/approvals/rejections` | approvals/rejections/page.tsx | Hub Rejections tab — ExecutionRejectionsPanel |
+| `/execution/rejections` | rejections/page.tsx | Redirect → `/execution/approvals/rejections` |
+| `/execution/delivery-order-approvals` | delivery-order-approvals/page.tsx | Redirect → `/execution/approvals/do` |
 | `/execution/trade-files` | trade-files/page.tsx | Export bar |
 | `/execution/[scope]/purchase-delivered` | [scope]/purchase-delivered/page.tsx | PurchaseDeliveredDesk |
 | `/execution/[scope]/purchase-spot` | [scope]/purchase-spot/page.tsx | PurchaseSpotDesk |
@@ -154,6 +158,9 @@ Legacy redirects: `/execution/purchase-spot` → `/execution/local/purchase-spot
 |-----------|------|
 | ApprovalsInbox | components/team/approvals-inbox.tsx |
 | ChangeRequestsInbox | components/team/change-requests-inbox.tsx |
+| ExecutionApprovalsTabs | components/execution/execution-approvals-tabs.tsx |
+| DoApprovalsPanel | components/execution/do-approvals-panel.tsx |
+| ExecutionRejectionsPanel | components/execution/execution-rejections-panel.tsx |
 | CeoApprovalsInbox | components/team/ceo-approvals-inbox.tsx |
 | TradeEditChangePreview | components/team/trade-edit-change-preview.tsx |
 | EntryActions | components/team/entry-actions.tsx |
