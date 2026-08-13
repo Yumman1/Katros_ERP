@@ -71,7 +71,7 @@ export function ChangeRequestsInbox({
           <div className="flex items-center justify-between border-b border-kastros-border px-5 py-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <ShieldCheck className="h-4 w-4 text-success" />
-              Team queue
+              {embedded && department === "EXECUTION" ? "Team Approvals" : "Team queue"}
             </div>
             <span className="rounded-full bg-warning/15 px-2.5 py-0.5 text-xs font-semibold text-warning">
               {queueItems.length} pending
@@ -196,7 +196,7 @@ export function ChangeRequestsInbox({
       <section className="rounded-xl border border-kastros-border bg-kastros-card">
         <div className="flex items-center gap-2 border-b border-kastros-border px-5 py-3 text-sm font-semibold text-foreground">
           <Clock className="h-4 w-4 text-muted-foreground" />
-          My requests
+          {embedded && department === "EXECUTION" && !isHeadHere ? "My Approvals" : "My requests"}
         </div>
         <div className="divide-y divide-kastros-border">
           {mine.data?.length === 0 && (

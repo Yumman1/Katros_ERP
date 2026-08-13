@@ -8,13 +8,13 @@ import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
 import { cn } from "@/lib/utils";
 
-const TABS = [
-  { href: "/execution/approvals", label: "Team", match: "team" as const },
+const TAB_ROUTES = [
+  { href: "/execution/approvals", match: "team" as const },
   { href: "/execution/approvals/do", label: "DO approvals", match: "do" as const },
   { href: "/execution/approvals/rejections", label: "Rejections", match: "rejections" as const },
 ] as const;
 
-function activeTab(pathname: string): (typeof TABS)[number]["match"] {
+function activeTab(pathname: string): (typeof TAB_ROUTES)[number]["match"] {
   if (pathname.startsWith("/execution/approvals/do")) return "do";
   if (pathname.startsWith("/execution/approvals/rejections")) return "rejections";
   return "team";
@@ -25,6 +25,12 @@ export function ExecutionApprovalsTabs() {
   const current = activeTab(pathname);
   const { role, isHead } = useTeam();
   const isExecutionHead = role != null && canActOnDepartment(role, isHead, "EXECUTION");
+
+  const tabs = TAB_ROUTES.map((tab) =>
+    tab.match === "team"
+      ? { ...tab, label: isExecutionHead ? "Team Approvals" : "My Approvals" }
+      : tab,
+  );
 
   const { data: pendingTeam } = trpc.team.pendingApprovals.useQuery(
     { department: "EXECUTION" },
@@ -44,7 +50,7 @@ export function ExecutionApprovalsTabs() {
     staleTime: DESK_REFETCH_MS,
   });
 
-  const countFor = (match: (typeof TABS)[number]["match"]) => {
+  const countFor = (match: (typeof TAB_ROUTES)[number]["match"]) => {
     if (match === "team") return isExecutionHead ? pendingTeam : undefined;
     if (match === "do") return isExecutionHead ? pendingDo?.length : undefined;
     return rejections?.length;
@@ -52,7 +58,7 @@ export function ExecutionApprovalsTabs() {
 
   return (
     <div className="flex flex-wrap gap-2">
-      {TABS.map((tab) => {
+      {tabs.map((tab) => {
         const active = current === tab.match;
         const count = countFor(tab.match);
         return (
