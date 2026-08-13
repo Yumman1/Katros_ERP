@@ -147,7 +147,7 @@ export default function WarehouseSetupPage() {
             : "Submit new warehouses for head of execution review, then CEO approval."
         }
         actions={
-          <Link href="/execution/approvals" className="kastros-btn-secondary text-xs">
+          <Link href="/execution/my-approvals" className="kastros-btn-secondary text-xs">
             My requests
           </Link>
         }

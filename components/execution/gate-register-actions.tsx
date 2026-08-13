@@ -383,7 +383,7 @@ export function GateRegisterActions({ entry, compact }: { entry: GateRegisterEnt
                 </div>
                 <div className="flex justify-end gap-2">
                   <Link
-                    href="/execution/approvals"
+                    href="/execution/my-approvals"
                     className="rounded-md border border-kastros-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5"
                   >
                     View my requests

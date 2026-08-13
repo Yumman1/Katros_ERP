@@ -32,21 +32,28 @@ export function ChangeRequestsInbox({
   title = "Change requests",
   subtitle,
   embedded = false,
+  showTeamQueue,
+  showMine = true,
 }: {
   department: Department;
   title?: string;
   subtitle?: string;
   embedded?: boolean;
+  /** When set, overrides default head-only team queue visibility. */
+  showTeamQueue?: boolean;
+  showMine?: boolean;
 }) {
   const { role, isHead } = useTeam();
   const isHeadHere = role != null && canActOnDepartment(role, isHead, department);
+  const showQueue = showTeamQueue ?? isHeadHere;
   const utils = trpc.useUtils();
 
   const queue = trpc.team.changeRequests.useQuery(
     { department },
-    { enabled: isHeadHere, refetchInterval: DESK_REFETCH_MS },
+    { enabled: showQueue, refetchInterval: DESK_REFETCH_MS },
   );
   const mine = trpc.team.myChangeRequests.useQuery(undefined, {
+    enabled: showMine,
     refetchInterval: DESK_REFETCH_MS,
   });
 
@@ -66,12 +73,12 @@ export function ChangeRequestsInbox({
 
   const content = (
     <div className={embedded ? "kastros-desk-scroll flex flex-col gap-6 pt-4" : "kastros-desk-scroll flex flex-col gap-6"}>
-      {isHeadHere && (
+      {showQueue && (
         <section className="rounded-xl border border-kastros-border bg-kastros-card">
           <div className="flex items-center justify-between border-b border-kastros-border px-5 py-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <ShieldCheck className="h-4 w-4 text-success" />
-              {embedded && department === "EXECUTION" ? "Team Approvals" : "Team queue"}
+              Team queue
             </div>
             <span className="rounded-full bg-warning/15 px-2.5 py-0.5 text-xs font-semibold text-warning">
               {queueItems.length} pending
@@ -193,10 +200,11 @@ export function ChangeRequestsInbox({
         </section>
       )}
 
+      {showMine && (
       <section className="rounded-xl border border-kastros-border bg-kastros-card">
         <div className="flex items-center gap-2 border-b border-kastros-border px-5 py-3 text-sm font-semibold text-foreground">
           <Clock className="h-4 w-4 text-muted-foreground" />
-          {embedded && department === "EXECUTION" && !isHeadHere ? "My Approvals" : "My requests"}
+          My requests
         </div>
         <div className="divide-y divide-kastros-border">
           {mine.data?.length === 0 && (
@@ -243,6 +251,7 @@ export function ChangeRequestsInbox({
           onPageChange={minePagination.setPage}
         />
       </section>
+      )}
     </div>
   );
 

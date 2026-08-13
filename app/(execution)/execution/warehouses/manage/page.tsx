@@ -181,11 +181,11 @@ export default function WarehouseManagePage() {
         }
         actions={
           !isExecutionHead ? (
-            <Link href="/execution/approvals" className="kastros-btn-secondary text-xs">
+            <Link href="/execution/my-approvals" className="kastros-btn-secondary text-xs">
               My requests
             </Link>
           ) : (
-            <Link href="/execution/approvals" className="kastros-btn-secondary text-xs">
+            <Link href="/execution/my-approvals" className="kastros-btn-secondary text-xs">
               Approvals inbox
             </Link>
           )

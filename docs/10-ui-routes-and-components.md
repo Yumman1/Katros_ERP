@@ -52,9 +52,12 @@ Shared: `components/layout/app-shell.tsx`, `shell-header.tsx`, `desk-page.tsx`
 | `/execution/warehouses/manage` | manage/page.tsx | WH edit/delete requests |
 | `/execution/warehouses/utilization` | utilization/page.tsx | Capacity charts |
 | `/execution/payments` | payments/page.tsx | Payment requests |
-| `/execution/approvals` | approvals/page.tsx | Hub Team tab — ApprovalsInbox (embedded) |
-| `/execution/approvals/do` | approvals/do/page.tsx | Hub DO tab — DoApprovalsPanel |
-| `/execution/approvals/rejections` | approvals/rejections/page.tsx | Hub Rejections tab — ExecutionRejectionsPanel |
+| `/execution/approvals` | approvals/page.tsx | Team Approvals — team queue (head only) |
+| `/execution/approvals/do` | approvals/do/page.tsx | Team Approvals DO tab |
+| `/execution/approvals/rejections` | approvals/rejections/page.tsx | Team Approvals rejections tab |
+| `/execution/my-approvals` | my-approvals/page.tsx | Redirect → my-approvals/approvals |
+| `/execution/my-approvals/approvals` | my-approvals/approvals/page.tsx | My Approvals — pending/approved requests |
+| `/execution/my-approvals/rejections` | my-approvals/rejections/page.tsx | My Approvals — rejected requests |
 | `/execution/rejections` | rejections/page.tsx | Redirect → `/execution/approvals/rejections` |
 | `/execution/delivery-order-approvals` | delivery-order-approvals/page.tsx | Redirect → `/execution/approvals/do` |
 | `/execution/trade-files` | trade-files/page.tsx | Export bar |
@@ -159,6 +162,8 @@ Legacy redirects: `/execution/purchase-spot` → `/execution/local/purchase-spot
 | ApprovalsInbox | components/team/approvals-inbox.tsx |
 | ChangeRequestsInbox | components/team/change-requests-inbox.tsx |
 | ExecutionApprovalsTabs | components/execution/execution-approvals-tabs.tsx |
+| ExecutionMyApprovalsTabs | components/execution/execution-my-approvals-tabs.tsx |
+| ExecutionMyApprovalsPanel | components/execution/execution-my-approvals-panel.tsx |
 | DoApprovalsPanel | components/execution/do-approvals-panel.tsx |
 | ExecutionRejectionsPanel | components/execution/execution-rejections-panel.tsx |
 | CeoApprovalsInbox | components/team/ceo-approvals-inbox.tsx |

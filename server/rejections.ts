@@ -14,6 +14,8 @@ export type RejectionKind =
   | "TRADE_SETTLEMENT"
   /** Execution head turned down a team change request. */
   | "CHANGE_REQUEST_EXECUTION"
+  /** CEO turned down a change request (non-trade or execution desk). */
+  | "CHANGE_REQUEST_CEO"
   /** Execution head turned down a delivery order. */
   | "DO_EXECUTION"
   /** Finance turned down a delivery order. */

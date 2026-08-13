@@ -138,10 +138,9 @@ Routes to `deletePendingTruck`, `deleteInboundReceipt`, `deleteOutboundDispatch`
 
 | User | Page | Component |
 |------|------|-----------|
-| Execution head | `/execution/approvals` | Hub: Team tab — `ApprovalsInbox` → `ChangeRequestsInbox` (PENDING queue only) |
-| Execution head | `/execution/approvals/do` | Hub: DO tab — `DoApprovalsPanel` (approve / reject) |
-| Execution head | `/execution/approvals/rejections` | Hub: Rejections tab — `ExecutionRejectionsPanel` |
-| Execution staff | `/execution/approvals` | Hub: My requests view |
+| Execution head | `/execution/approvals` | Team Approvals hub — team queue, DO, rejections |
+| Execution head | `/execution/my-approvals` | My Approvals — own CEO-bound requests (Approvals / Rejections tabs) |
+| Execution staff | `/execution/my-approvals` | My Approvals — submitted requests and outcomes |
 | Trader | `/trader/approvals`, `/trader/change-requests` | Same inbox pattern |
 | Finance | `/finance/change-requests` | FINANCE department |
 | CEO | `/ceo/approvals` | `CeoApprovalsInbox` |

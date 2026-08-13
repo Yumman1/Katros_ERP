@@ -22,13 +22,14 @@ export const REJECTION_KIND_LABELS: Record<string, string> = {
   VOUCHER: "Voucher",
   PAYMENT: "Payment",
   CHANGE_REQUEST_EXECUTION: "Team change request",
+  CHANGE_REQUEST_CEO: "Change request — CEO",
   DO_EXECUTION: "Delivery order — execution",
   DO_FINANCE: "Delivery order — finance",
 };
 
 /** Sub-filters on the execution approvals hub Rejections tab. */
 export const EXECUTION_REJECTION_FILTERS = {
-  team: ["CHANGE_REQUEST_EXECUTION"],
+  team: ["CHANGE_REQUEST_EXECUTION", "CHANGE_REQUEST_CEO"],
   do: ["DO_EXECUTION", "DO_FINANCE"],
   operations: [
     "VOUCHER",

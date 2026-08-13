@@ -157,6 +157,24 @@ export const ceoRouter = router({
           rejectedRole: "CEO",
           reason: input.note!.trim(),
         });
+      } else if (input.decision === "REJECTED" && req.department === "EXECUTION") {
+        const trade =
+          req.entityType === "TRADE"
+            ? await prisma.trade.findUnique({
+                where: { tradeRef: req.entityRef.trim() },
+                select: { counterparty: { select: { name: true } } },
+              })
+            : null;
+        const { recordRejection } = await import("@/server/rejections");
+        await recordRejection({
+          kind: "CHANGE_REQUEST_CEO",
+          refLabel: req.entityLabel,
+          tradeRef: req.entityType === "TRADE" ? req.entityRef : null,
+          counterpartyName: trade?.counterparty.name ?? null,
+          rejectedBy: actorName(ctx.session.user),
+          rejectedRole: "CEO",
+          reason: input.note!.trim(),
+        });
       }
       return resolved;
     }),

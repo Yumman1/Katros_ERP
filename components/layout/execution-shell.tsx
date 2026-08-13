@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   TrendingUp,
   Truck,
+  UserCheck,
   Warehouse,
   FileEdit,
 } from "lucide-react";
@@ -44,8 +45,15 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
     refetchInterval: 60_000,
     retry: false,
   });
+  const { data: myRequests } = trpc.team.myChangeRequests.useQuery(undefined, {
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: false,
+  });
 
-  const approvalsBadgeCount = (pendingApprovals ?? 0) + (pendingDo?.length ?? 0);
+  const teamApprovalsBadgeCount = (pendingApprovals ?? 0) + (pendingDo?.length ?? 0);
+  const myApprovalsBadgeCount =
+    myRequests?.filter((r) => ["PENDING", "PENDING_CEO"].includes(r.status)).length ?? 0;
 
   const nav = [
     {
@@ -94,18 +102,35 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
                 label: "Team Approvals",
                 icon: <ShieldCheck className="h-4 w-4" />,
                 badge:
-                  approvalsBadgeCount > 0 ? (
+                  teamApprovalsBadgeCount > 0 ? (
                     <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-warning/15 px-1.5 text-[10px] font-bold text-warning">
-                      {approvalsBadgeCount}
+                      {teamApprovalsBadgeCount}
+                    </span>
+                  ) : undefined,
+              },
+              {
+                href: "/execution/my-approvals",
+                label: "My Approvals",
+                icon: <UserCheck className="h-4 w-4" />,
+                badge:
+                  myApprovalsBadgeCount > 0 ? (
+                    <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-warning/15 px-1.5 text-[10px] font-bold text-warning">
+                      {myApprovalsBadgeCount}
                     </span>
                   ) : undefined,
               },
             ]
           : [
               {
-                href: "/execution/approvals",
+                href: "/execution/my-approvals",
                 label: "My Approvals",
-                icon: <ShieldCheck className="h-4 w-4" />,
+                icon: <UserCheck className="h-4 w-4" />,
+                badge:
+                  myApprovalsBadgeCount > 0 ? (
+                    <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-warning/15 px-1.5 text-[10px] font-bold text-warning">
+                      {myApprovalsBadgeCount}
+                    </span>
+                  ) : undefined,
               },
             ]),
         { href: "/execution/trade-files", label: "Trade Files", icon: <FileSpreadsheet className="h-4 w-4" /> },

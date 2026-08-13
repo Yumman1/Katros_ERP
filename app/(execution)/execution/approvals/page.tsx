@@ -1,7 +1,9 @@
 "use client";
 
-import { ApprovalsInbox } from "@/components/team/approvals-inbox";
+import { ChangeRequestsInbox } from "@/components/team/change-requests-inbox";
 
-export default function ExecutionApprovalsPage() {
-  return <ApprovalsInbox department="EXECUTION" embedded />;
+export default function ExecutionTeamApprovalsPage() {
+  return (
+    <ChangeRequestsInbox department="EXECUTION" embedded showTeamQueue showMine={false} />
+  );
 }
