@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { TradeStatus } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { formatNoteRef, nextSerialSeq, SERIALS } from "@/server/db/serials";
+import { settlementNoteEntryType } from "@/server/finance/ledger";
 import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import { freeCloseFloorQty } from "@/lib/contract-closure";
 import { getContractByRef } from "@/server/execution-store";
@@ -191,9 +192,10 @@ async function postSettlementNote(
 ): Promise<string | null> {
   const { priced } = input;
   if (priced.amountPkr <= 0.005) return null;
-  const isDebit = priced.diffPerMaund > 0;
+  const isDebitNote = priced.diffPerMaund > 0;
   const seq = await nextSerialSeq(SERIALS.CANCELLATION_NOTE, tx);
-  const noteRef = formatNoteRef(isDebit ? "DN" : "CN", seq);
+  const noteRef = formatNoteRef(isDebitNote ? "DN" : "CN", seq);
+  const counterpartyOwesUs = isDebitNote;
   await tx.counterpartyLedgerEntry.create({
     data: {
       counterpartyId: input.counterpartyId,
@@ -201,7 +203,7 @@ async function postSettlementNote(
       // way the money runs — the seller's buy ledger is where that trade lives,
       // and splitting the two would hide the claim from the account it settles.
       side: input.side,
-      entryType: "DEBIT",
+      entryType: settlementNoteEntryType(input.side, isDebitNote),
       amountPkr: priced.amountPkr,
       sourceType: "ADJUSTMENT",
       sourceRef: noteRef,
@@ -209,11 +211,11 @@ async function postSettlementNote(
       // The claim is open until a voucher settles it.
       noteStatus: "UNPAID",
       note:
-        `${isDebit ? "Debit" : "Credit"} note ${noteRef} — ${input.reason} of ${input.tradeRef}: ` +
+        `${isDebitNote ? "Debit" : "Credit"} note ${noteRef} — ${input.reason} of ${input.tradeRef}: ` +
         `${priced.openMaunds.toLocaleString("en-PK")} maund open × ` +
         `(settlement ${priced.settlement.toLocaleString("en-PK")} − rate ${priced.rate.toLocaleString("en-PK")}) ` +
-        `= ${(isDebit ? priced.amountPkr : -priced.amountPkr).toLocaleString("en-PK")} PKR ` +
-        `(${isDebit ? "seller owes us" : "we owe seller"})`,
+        `= ${(isDebitNote ? priced.amountPkr : -priced.amountPkr).toLocaleString("en-PK")} PKR ` +
+        `(${counterpartyOwesUs ? "counterparty owes us" : "we owe counterparty"})`,
     },
   });
   return noteRef;

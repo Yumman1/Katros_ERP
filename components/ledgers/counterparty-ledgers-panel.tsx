@@ -85,6 +85,12 @@ function humanizeStage(stage: string | null): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+function noteKindLabel(sourceRef: string | null): string {
+  if (sourceRef?.startsWith("DN-")) return "Debit note";
+  if (sourceRef?.startsWith("CN-")) return "Credit note";
+  return "Note unpaid";
+}
+
 const SOURCE_LABELS: Record<LedgerEntryRow["sourceType"], string> = {
   GATEPASS: "Gatepass",
   VOUCHER: "Voucher",
@@ -366,10 +372,15 @@ function AccountCard({
                               Note paid
                             </span>
                           ) : (
-                            <span className="ml-1.5 rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-bold uppercase text-destructive">
-                              {r.side === "BUY" && e.sourceType === "ADJUSTMENT"
-                                ? "Receivable"
-                                : "Note unpaid"}
+                            <span
+                              className={cn(
+                                "ml-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+                                e.entryType === "CREDIT"
+                                  ? "bg-success/15 text-success"
+                                  : "bg-destructive/15 text-destructive",
+                              )}
+                            >
+                              {noteKindLabel(e.sourceRef)}
                             </span>
                           )
                         ) : e.settlesNoteRef ? (

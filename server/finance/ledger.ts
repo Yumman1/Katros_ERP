@@ -170,6 +170,26 @@ export async function postPaymentOutCredit(
 // ─── Settlement notes (cancellation / short close) ───────────────────────────
 
 /**
+ * Ledger direction for a cancellation note.
+ *
+ * DN (settlement above contract rate) and CN (below) must post on opposite sides
+ * depending which account they live on, so balance = credit − debit always
+ * moves the right way:
+ *   BUY + DN  → CREDIT (seller owes us — reduces net payable)
+ *   BUY + CN  → DEBIT  (we owe seller)
+ *   SELL + DN → DEBIT  (buyer owes us more)
+ *   SELL + CN → CREDIT (we owe buyer)
+ */
+export function settlementNoteEntryType(
+  side: CounterpartySide,
+  /** true when settlement price exceeds the contract rate (a DN). */
+  isDebitNote: boolean,
+): "DEBIT" | "CREDIT" {
+  if (side === "BUY") return isDebitNote ? "CREDIT" : "DEBIT";
+  return isDebitNote ? "DEBIT" : "CREDIT";
+}
+
+/**
  * Ledger filter excluding credits raised by a note voucher. Money that settles
  * a cancellation note is spoken for the moment it lands, so it can neither fund
  * a truck nor inflate the account's free credit.
@@ -635,14 +655,14 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     // A cancellation note answers to its own status, not to a gatepass or a
     // truck stage — it is settled the moment a voucher pays it.
     const settled =
-      e.entryType === "DEBIT" &&
-      (e.noteStatus != null
+      e.noteStatus != null
         ? e.noteStatus === "PAID"
-        : e.sourceType === "INVOICE"
-          ? invStatus === "PAID"
-          : e.side === "BUY"
-            ? e.sourceRef != null && paidGatepasses.has(e.sourceRef)
-            : stage != null && settledStages.has(stage));
+        : e.entryType === "DEBIT" &&
+          (e.sourceType === "INVOICE"
+            ? invStatus === "PAID"
+            : e.side === "BUY"
+              ? e.sourceRef != null && paidGatepasses.has(e.sourceRef)
+              : stage != null && settledStages.has(stage));
     // How much of this debit the money has actually covered. On the buy side
     // that is the amount paid against the gatepass, so a part-released truck
     // shows its paid share rather than all-or-nothing.
