@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
+import { DeliveryOrderPreviewModal } from "@/components/finance/delivery-order-preview-modal";
 import { invalidateFinanceApprovalBadges } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { PageHeader } from "@/components/ui/page-header";
@@ -11,6 +13,8 @@ const fmtPkr = (n: number | null) =>
 
 export default function FinanceDoApprovalsPage() {
   const utils = trpc.useUtils();
+  const [previewTruckId, setPreviewTruckId] = useState<string | null>(null);
+  const [previewDoNo, setPreviewDoNo] = useState<string | null>(null);
   const { data: rows, isLoading } = trpc.finance.doApprovals.useQuery(undefined, {
     refetchInterval: 20_000,
   });
@@ -21,6 +25,16 @@ export default function FinanceDoApprovalsPage() {
       void utils.execution.saleWorkflowRows.invalidate();
     },
   });
+
+  const openPreview = (truckId: string, deliveryOrderNo: string | null) => {
+    setPreviewTruckId(truckId);
+    setPreviewDoNo(deliveryOrderNo);
+  };
+
+  const closePreview = () => {
+    setPreviewTruckId(null);
+    setPreviewDoNo(null);
+  };
 
   return (
     <div className="kastros-desk-page">
@@ -75,13 +89,13 @@ export default function FinanceDoApprovalsPage() {
                     <td className="px-4 whitespace-nowrap">{formatPkDateTime(r.arrivalDate)}</td>
                     <td className="px-4">
                       <div className="flex flex-wrap gap-2">
-                        <Link
-                          href={`/execution/print/delivery-order/${r.truckId}`}
-                          target="_blank"
+                        <button
+                          type="button"
+                          onClick={() => openPreview(r.truckId, r.deliveryOrderNo)}
                           className="text-accent-secondary hover:underline"
                         >
-                          View
-                        </Link>
+                          Preview
+                        </button>
                         <button
                           type="button"
                           disabled={approve.isPending}
@@ -99,6 +113,15 @@ export default function FinanceDoApprovalsPage() {
           </div>
         )}
       </div>
+
+      {previewTruckId && (
+        <DeliveryOrderPreviewModal
+          truckId={previewTruckId}
+          deliveryOrderNo={previewDoNo}
+          open={Boolean(previewTruckId)}
+          onClose={closePreview}
+        />
+      )}
     </div>
   );
 }
