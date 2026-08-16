@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { invalidateFinanceApprovalBadges } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { PageHeader } from "@/components/ui/page-header";
 import { formatPkDateTime } from "@/lib/formatters/datetime";
@@ -15,6 +16,7 @@ export default function FinanceDoApprovalsPage() {
   });
   const approve = trpc.finance.approveDo.useMutation({
     onSuccess: () => {
+      invalidateFinanceApprovalBadges(utils);
       void utils.finance.doApprovals.invalidate();
       void utils.execution.saleWorkflowRows.invalidate();
     },
@@ -34,6 +36,13 @@ export default function FinanceDoApprovalsPage() {
         }
         title="Delivery order approvals"
         subtitle="Final finance sign-off on delivery orders. After approval, execution can generate the gate pass."
+        actions={
+          rows && rows.length > 0 ? (
+            <span className="rounded-full bg-warning/15 px-2.5 py-1 text-xs font-bold text-warning">
+              {rows.length} pending
+            </span>
+          ) : undefined
+        }
       />
       <div className="kastros-desk-scroll">
         {isLoading ? (

@@ -23,6 +23,7 @@ export function invalidateTradeFlowCaches(utils: Utils, tradeRef?: string) {
   void utils.execution.pendingWarehouseAllocation.invalidate();
   void utils.execution.spotPipeline.invalidate();
   void utils.finance.pendingPayments.invalidate();
+  invalidateFinanceApprovalBadges(utils);
   if (tradeRef) {
     void utils.trader.tradeByRef.invalidate({ tradeRef });
     void utils.execution.openTradeByRef.invalidate({ tradeRef });
@@ -62,9 +63,18 @@ export function invalidateApprovalCaches(utils: Utils) {
   void utils.trader.referenceData.invalidate();
   void utils.policy.rejections.invalidate();
   void utils.execution.doExecutionApprovals.invalidate();
+  void utils.finance.doApprovals.invalidate();
+  invalidateFinanceApprovalBadges(utils);
   invalidateTradeFlowCaches(utils);
   invalidateGateOpsCaches(utils);
 }
 
 /** Shared polling for live desks — mutation invalidation is primary; this is a safety net. */
 export const DESK_REFETCH_MS = 60_000;
+
+/** Finance sidebar + nav approval badges (payments, DO, vouchers, change requests). */
+export function invalidateFinanceApprovalBadges(utils: Utils) {
+  void utils.finance.approvalBadges.invalidate();
+  void utils.finance.pendingVouchersCount.invalidate();
+  void utils.finance.doApprovals.invalidate();
+}

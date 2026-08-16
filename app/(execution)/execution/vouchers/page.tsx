@@ -1,5 +1,6 @@
 "use client";
 
+import { invalidateFinanceApprovalBadges } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 import { ReceiptText } from "lucide-react";
@@ -88,7 +89,7 @@ export default function ExecutionVouchersPage() {
       void utils.policy.overdueLedgerAlerts.invalidate();
       // Finance mirrors of the voucher queue — keep them fresh in-session.
       void utils.finance.vouchers.invalidate();
-      void utils.finance.pendingVouchersCount.invalidate();
+      invalidateFinanceApprovalBadges(utils);
     },
   });
 

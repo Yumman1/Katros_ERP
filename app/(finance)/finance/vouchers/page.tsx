@@ -6,6 +6,7 @@ import { Check, X } from "lucide-react";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { PageHeader } from "@/components/ui/page-header";
 import { useListPagination } from "@/lib/use-list-pagination";
+import { invalidateFinanceApprovalBadges } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 import { formatPkDate, formatPkDateTime } from "@/lib/formatters/datetime";
@@ -45,8 +46,8 @@ export default function FinanceVouchersPage() {
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
 
   const invalidate = () => {
+    invalidateFinanceApprovalBadges(utils);
     void utils.finance.vouchers.invalidate();
-    void utils.finance.pendingVouchersCount.invalidate();
     void utils.finance.counterpartyLedgers.invalidate();
     void utils.execution.vouchers.invalidate();
     void utils.execution.saleWorkflowRows.invalidate();
@@ -130,6 +131,7 @@ export default function FinanceVouchersPage() {
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {v.method ? `Method: ${v.method}` : "Method: —"}
+                          {v.bankName ? ` · ${v.bankName}` : ""}
                           {v.reference ? ` · Ref: ${v.reference}` : ""}
                           {v.note ? ` · “${v.note}”` : ""}
                         </div>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { OverdueAlertsCard } from "@/components/ledgers/overdue-alerts-card";
-import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
+import { invalidateFinanceApprovalBadges, invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { EntryActions } from "@/components/team/entry-actions";
 
@@ -15,6 +15,7 @@ export default function FinancePaymentsPage() {
   const approve = trpc.finance.approvePayment.useMutation({
     onSuccess: () => {
       invalidateTradeFlowCaches(utils);
+      invalidateFinanceApprovalBadges(utils);
       void utils.finance.counterpartyLedgers.invalidate();
       void utils.policy.overdueLedgerAlerts.invalidate();
     },
@@ -22,13 +23,17 @@ export default function FinancePaymentsPage() {
   const reject = trpc.finance.rejectPayment.useMutation({
     onSuccess: () => {
       invalidateTradeFlowCaches(utils);
+      invalidateFinanceApprovalBadges(utils);
       void utils.finance.counterpartyLedgers.invalidate();
       void utils.policy.overdueLedgerAlerts.invalidate();
       void utils.policy.rejections.invalidate();
     },
   });
   const del = trpc.finance.deletePayment.useMutation({
-    onSuccess: () => invalidateTradeFlowCaches(utils),
+    onSuccess: () => {
+      invalidateTradeFlowCaches(utils);
+      invalidateFinanceApprovalBadges(utils);
+    },
   });
 
   return (

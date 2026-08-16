@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import { canActOnDepartment } from "@/lib/departments";
 import { headProcedure, roleProcedure, router } from "@/server/trpc/trpc";
+import { countPendingChangeRequests } from "@/server/change-requests-store";
 import {
   approvePayment,
   deletePaymentRequest,
@@ -76,6 +78,28 @@ export const financeRouter = router({
   pendingVouchersCount: roleProcedure(["FINANCE", "ADMIN"]).query(
     async () => (await listVouchers({ status: "PENDING_FINANCE" })).length,
   ),
+
+  /** Sidebar + nav badge counts for every finance approval queue. */
+  approvalBadges: roleProcedure(["FINANCE", "ADMIN"]).query(async ({ ctx }) => {
+    const u = ctx.session.user;
+    const isFinanceHead = canActOnDepartment(u.role, u.isHead ?? false, "FINANCE");
+    const [payments, vouchers, doApprovals, changeRequests] = await Promise.all([
+      listPaymentRequests("PENDING"),
+      listVouchers({ status: "PENDING_FINANCE" }),
+      getDoFinanceApprovals(),
+      isFinanceHead ? countPendingChangeRequests("FINANCE") : Promise.resolve(0),
+    ]);
+    const counts = {
+      payments: payments.length,
+      vouchers: vouchers.length,
+      doApprovals: doApprovals.length,
+      changeRequests,
+    };
+    return {
+      ...counts,
+      total: counts.payments + counts.vouchers + counts.doApprovals + counts.changeRequests,
+    };
+  }),
 
   approveVoucher: roleProcedure(["FINANCE", "ADMIN"])
     .input(z.object({ voucherId: z.string(), note: z.string().optional() }))
