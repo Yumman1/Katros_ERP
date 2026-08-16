@@ -17,8 +17,22 @@ type Db = PrismaClient | Prisma.TransactionClient;
  * Balances and totals never mix across sides.
  */
 
-/** Sale-truck stages whose receivable has consumed (is covered by) sell-ledger credit. */
-export const CREDIT_CONSUMING_STAGES = ["PAYMENT_RECEIVED", "SETTLED"] as const;
+/**
+ * Sale-truck stages whose receivable earmarks voucher credit against their trade.
+ * In-flight trucks reserve funding once assigned; clear-pending / cleared-unpaid
+ * paths use the credit-release workflow instead.
+ */
+export const VOUCHER_EARMARK_STAGES = [
+  "AWAITING_BALANCE",
+  "DO_PENDING_EXECUTION",
+  "DO_PENDING_FINANCE",
+  "DO_APPROVED",
+  "GATE_PASS_ISSUED",
+  "PENDING_TRADER",
+  "PENDING_FINANCE",
+  "PAYMENT_RECEIVED",
+  "SETTLED",
+] as const;
 
 /** Sale-truck stages considered paid/settled — their debit no longer ages. */
 const SETTLED_STAGES = ["PAYMENT_RECEIVED", "SETTLED"] as const;
@@ -293,6 +307,7 @@ type SellFundingState = {
 export async function getSellFundingState(
   counterpartyId: string,
   db: Db = prisma,
+  options?: { excludeTruckId?: string },
 ): Promise<SellFundingState> {
   const [credits, debits, settlementDebits] = await Promise.all([
     db.counterpartyLedgerEntry.findMany({
@@ -328,7 +343,7 @@ export async function getSellFundingState(
     ? new Set(
         (
           await db.pendingTruck.findMany({
-            where: { id: { in: truckIds }, saleStage: { in: [...CREDIT_CONSUMING_STAGES] } },
+            where: { id: { in: truckIds }, saleStage: { in: [...VOUCHER_EARMARK_STAGES] } },
             select: { id: true },
           })
         ).map((t) => t.id),
@@ -338,6 +353,7 @@ export async function getSellFundingState(
   const consumedByTrade = new Map<string, number>();
   for (const d of debits) {
     if (!d.truckId || !consuming.has(d.truckId) || !d.tradeRef) continue;
+    if (options?.excludeTruckId && d.truckId === options.excludeTruckId) continue;
     consumedByTrade.set(d.tradeRef, (consumedByTrade.get(d.tradeRef) ?? 0) + num(d.amountPkr));
   }
   const settlementRefs = new Set<string>();
@@ -410,7 +426,13 @@ export type TruckFundingCheck = {
  * cover it — otherwise it needs the trader + CEO release path.
  */
 export async function canFundTruck(
-  input: { counterpartyId: string; tradeRef: string; amountPkr: number },
+  input: {
+    counterpartyId: string;
+    tradeRef: string;
+    amountPkr: number;
+    /** Omit this truck's receivable when checking whether it can be funded. */
+    excludeTruckId?: string;
+  },
   db: Db = prisma,
 ): Promise<TruckFundingCheck> {
   const trade = await db.trade.findUnique({
@@ -425,7 +447,9 @@ export async function canFundTruck(
   });
   if (!trade) return { ok: false, kind: "ADVANCE", availablePkr: 0, reason: "Trade not found" };
   const kind = tradeTermsKind(trade.paymentType);
-  const state = await getSellFundingState(input.counterpartyId, db);
+  const state = await getSellFundingState(input.counterpartyId, db, {
+    excludeTruckId: input.excludeTruckId,
+  });
 
   if (kind === "CREDIT") {
     const { getFinancePolicy } = await import("./policy");
@@ -457,7 +481,7 @@ export async function canFundTruck(
     availablePkr: available,
     reason: ok
       ? undefined
-      : `Insufficient vouchers for this trade: available ${Math.round(available).toLocaleString("en-PK")} PKR < receivable ${Math.round(input.amountPkr).toLocaleString("en-PK")} PKR`,
+      : `Insufficient vouchers for ${input.tradeRef}: ${Math.round(available).toLocaleString("en-PK")} PKR remaining after other trucks on this trade — need ${Math.round(input.amountPkr).toLocaleString("en-PK")} PKR`,
   };
 }
 
@@ -490,7 +514,7 @@ export async function availableCreditPkr(counterpartyId: string, db: Db = prisma
     ? new Set(
         (
           await db.pendingTruck.findMany({
-            where: { id: { in: truckIds }, saleStage: { in: [...CREDIT_CONSUMING_STAGES] } },
+            where: { id: { in: truckIds }, saleStage: { in: [...VOUCHER_EARMARK_STAGES] } },
             select: { id: true },
           })
         ).map((t) => t.id),
@@ -500,7 +524,7 @@ export async function availableCreditPkr(counterpartyId: string, db: Db = prisma
     (s, e) => (e.truckId && consuming.has(e.truckId) ? s + num(e.amountPkr) : s),
     0,
   );
-  return credit - earmarked - settlementEarmark;
+  return Math.max(0, credit - earmarked - settlementEarmark);
 }
 
 export type LedgerEntryView = {
@@ -711,7 +735,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     byAccount.set(key, list);
   }
 
-  const earmarkStages = new Set<string>(CREDIT_CONSUMING_STAGES);
+  const earmarkStages = new Set<string>(VOUCHER_EARMARK_STAGES);
 
   const accounts: CounterpartyLedgerView[] = [];
   for (const cp of counterparties) {
@@ -767,7 +791,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
         outstandingDebitPkr: Math.round((totalDebit - settledDebit) * 100) / 100,
         balancePkr: Math.round((totalCredit - totalDebit) * 100) / 100,
         availableCreditPkr:
-          side === "SELL" ? Math.round((totalCredit - earmarked) * 100) / 100 : 0,
+          side === "SELL" ? Math.round(Math.max(0, totalCredit - earmarked) * 100) / 100 : 0,
         aging,
         entries: list,
       });

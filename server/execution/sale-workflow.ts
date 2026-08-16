@@ -226,7 +226,12 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
     if (!cpId || !r.assignedTradeRef || expected == null) continue;
     fundingByTruck.set(
       r.id,
-      await canFundTruck({ counterpartyId: cpId, tradeRef: r.assignedTradeRef, amountPkr: expected }),
+      await canFundTruck({
+        counterpartyId: cpId,
+        tradeRef: r.assignedTradeRef,
+        amountPkr: expected,
+        excludeTruckId: r.id,
+      }),
     );
   }
 
@@ -290,7 +295,12 @@ export async function generateDeliveryOrder(
     await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "Counterparty" WHERE "id" = ${cp.id} FOR UPDATE`;
       const funding = await canFundTruck(
-        { counterpartyId: cp.id, tradeRef: row.assignedTradeRef!, amountPkr: expected },
+        {
+          counterpartyId: cp.id,
+          tradeRef: row.assignedTradeRef!,
+          amountPkr: expected,
+          excludeTruckId: truckId,
+        },
         tx,
       );
       if (!funding.ok) {
