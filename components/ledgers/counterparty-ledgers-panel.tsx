@@ -143,8 +143,8 @@ export function CounterpartyLedgersPanel({
       />
       <SideSection
         side="BUY"
-        heading="Buy ledgers (payables)"
-        description="What we owe sellers — expected-invoice debits; paid when finance approves the linked receipt."
+        heading="Buy ledgers (purchases)"
+        description="What we owe sellers and what they owe us — truck debits, payment credits, and debit-note receivables on one account."
         accounts={buyRows}
         expanded={expanded}
         setExpanded={setExpanded}
@@ -177,9 +177,7 @@ function SideSection({
   const totals = useMemo(() => {
     const debit = accounts.reduce((s, r) => s + r.totalDebitPkr, 0);
     const credit = accounts.reduce((s, r) => s + r.totalCreditPkr, 0);
-    const settled = accounts.reduce((s, r) => s + r.settledDebitPkr, 0);
-    const outstanding = accounts.reduce((s, r) => s + r.outstandingDebitPkr, 0);
-    return { debit, credit, balance: credit - debit, settled, outstanding };
+    return { debit, credit, balance: credit - debit };
   }, [accounts]);
 
   return (
@@ -189,30 +187,17 @@ function SideSection({
         <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
       </div>
 
-      {/* Payables are settled by the payment process marking the receipt paid,
-          not by a credit row — so the buy side is read as billed / paid / still
-          owed rather than debit vs credit. */}
-      {side === "BUY" ? (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <SummaryCell label="Total payable" value={fmtPkr(totals.debit)} tone="text-foreground" />
-          <SummaryCell label="Paid" value={fmtPkr(totals.settled)} tone="text-success" />
-          <SummaryCell
-            label="Still to pay"
-            value={fmtPkr(totals.outstanding)}
-            tone={totals.outstanding > 0 ? "text-destructive" : "text-success"}
-          />
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <SummaryCell label="Total debit" value={fmtPkr(totals.debit)} tone="text-destructive" />
-          <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
-          <SummaryCell
-            label="Net balance"
-            value={fmtPkr(totals.balance)}
-            tone={totals.balance >= 0 ? "text-success" : "text-destructive"}
-          />
-        </div>
-      )}
+      {/* Both sides read as debit / credit / balance. A buy account can carry
+          receivables too — debit notes post as unpaid claims until settled. */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <SummaryCell label="Total debit" value={fmtPkr(totals.debit)} tone="text-destructive" />
+        <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
+        <SummaryCell
+          label="Net balance"
+          value={fmtPkr(totals.balance)}
+          tone={totals.balance >= 0 ? "text-success" : "text-destructive"}
+        />
+      </div>
 
       {side === "SELL" ? (
         <p className="text-xs text-muted-foreground">
@@ -221,8 +206,9 @@ function SideSection({
         </p>
       ) : (
         <p className="text-xs text-muted-foreground">
-          A purchase is settled when its receipt is marked paid through the payment process — paid
-          payables stop aging and are not owed. This account never mixes with the sell ledger.
+          Truck debits bill on assignment; payment credits settle when finance marks the receipt paid.
+          Debit notes raise receivables on this account until a voucher settles them. This ledger never
+          mixes with the sell side.
         </p>
       )}
 
@@ -279,31 +265,17 @@ function AccountCard({
               isSell ? "bg-success/15 text-success" : "bg-warning/15 text-warning",
             )}
           >
-            {isSell ? "Sell · receivable" : "Buy · payable"}
+            {isSell ? "Sell · receivable" : "Buy · purchase"}
           </span>
         </div>
         <div className="flex flex-wrap justify-end gap-x-6 gap-y-2 text-right">
-          {isSell ? (
-            <>
-              <Metric label="Debit" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
-              <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
-              <Metric
-                label="Balance"
-                value={fmtPkr(r.balancePkr)}
-                tone={r.balancePkr >= 0 ? "text-success" : "text-destructive"}
-              />
-            </>
-          ) : (
-            <>
-              <Metric label="Payable" value={fmtPkr(r.totalDebitPkr)} tone="text-foreground" />
-              <Metric label="Paid" value={fmtPkr(r.settledDebitPkr)} tone="text-success" />
-              <Metric
-                label="Still to pay"
-                value={fmtPkr(r.outstandingDebitPkr)}
-                tone={r.outstandingDebitPkr > 0 ? "text-destructive" : "text-success"}
-              />
-            </>
-          )}
+          <Metric label="Debit" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
+          <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
+          <Metric
+            label="Balance"
+            value={fmtPkr(r.balancePkr)}
+            tone={r.balancePkr >= 0 ? "text-success" : "text-destructive"}
+          />
         </div>
       </div>
 

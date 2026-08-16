@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { KG_PER_MAUND, type ExecutionProfile } from "@/lib/trade-constants";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { nextSerial, SERIALS } from "@/server/db/serials";
 import {
   SPOT_INCLUDE,
   inboundRowToRuntime,
@@ -117,10 +117,10 @@ export async function submitSpotForFinance(tradeRef: string) {
     });
     if (dupe) throw new Error("A payment request for this spot trade is already awaiting finance");
     const amount = num(ev.invoiceAmount);
-    const seq = await nextRef(COUNTER.PAYMENT, tx);
+    const requestRef = await nextSerial(SERIALS.PAYMENT, tx);
     const pr = await tx.paymentRequest.create({
       data: {
-        requestRef: `pay-${seq}`,
+        requestRef,
         sourceType: "SPOT",
         sourceId: ev.id,
         tradeRef,

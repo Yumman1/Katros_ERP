@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, Check, Pencil } from "lucide-react";
 import { formatCurrency } from "@/lib/formatters/numbers";
 import { invalidateGateOpsCaches } from "@/lib/invalidate-caches";
+import { useDebounced } from "@/lib/use-debounced";
 import { normWarehouseName } from "@/lib/warehouse-allocation";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
@@ -332,6 +333,13 @@ function InvoiceStep({ truck }: { truck: WorkflowTruck }) {
     },
   });
 
+  // Settles after typing stops so the check runs once per number, not per key.
+  const typedInvoiceNo = useDebounced(invoiceNo.trim(), 400);
+  const { data: clash } = trpc.execution.checkGateInvoiceDuplicate.useQuery(
+    { truckId: truck.id, invoiceNo: typedInvoiceNo },
+    { enabled: typedInvoiceNo.length > 0, staleTime: 15_000 },
+  );
+
   const tradeAssigned = truck.status === "ASSIGNED" && Boolean(truck.assignedTradeRef);
   const hasInvoice = Boolean(truck.gateInvoiceNo);
   const wrongInvoicing = hasInvoice && truck.gateInvoiceStage === "WRONG_INVOICING";
@@ -438,7 +446,9 @@ function InvoiceStep({ truck }: { truck: WorkflowTruck }) {
         />
         <button
           type="button"
-          disabled={save.isPending || invoiceNo.trim() === "" || !(Number(amount) > 0)}
+          disabled={
+            save.isPending || invoiceNo.trim() === "" || !(Number(amount) > 0) || Boolean(clash)
+          }
           onClick={() =>
             save.mutate({ truckId: truck.id, invoiceNo: invoiceNo.trim(), amountPkr: Number(amount) })
           }
@@ -456,6 +466,15 @@ function InvoiceStep({ truck }: { truck: WorkflowTruck }) {
           </button>
         )}
       </div>
+      {clash && (
+        <p className="text-[10px] leading-relaxed text-warning">
+          {truck.counterpartyName} already has invoice{" "}
+          <span className="font-mono font-semibold">{clash.invoiceNo}</span> on{" "}
+          <span className="font-mono font-semibold">{clash.tradeRef}</span> (gate entry{" "}
+          <span className="font-mono">{clash.gatepassNo}</span>), which is still open. Paying it
+          here would pay the same invoice twice.
+        </p>
+      )}
       {save.error && <ErrorLine message={save.error.message} />}
     </StepPanel>
   );

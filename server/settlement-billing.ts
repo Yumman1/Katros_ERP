@@ -1,7 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { nextSerial, SERIALS } from "@/server/db/serials";
 import { advanceTaxRateFor } from "@/lib/finance-policy";
 import { appendTradeActivity } from "@/server/trade-activity";
 
@@ -379,8 +379,7 @@ export async function raiseSettlementInvoice(input: {
 
   const now = new Date();
   const dueDate = input.dueDate ?? now;
-  const seq = await nextRef(COUNTER.SETTLEMENT_INVOICE);
-  const invoiceRef = `SIN-${String(seq).padStart(5, "0")}`;
+  const invoiceRef = await nextSerial(SERIALS.SETTLEMENT_INVOICE);
 
   await prisma.$transaction(async (tx) => {
     const invoice = await tx.invoice.create({

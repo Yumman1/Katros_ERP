@@ -1,6 +1,6 @@
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { allocateSerial, SERIALS } from "@/server/db/serials";
 import { listOpenSettlementNotes, markSettlementNotePaid, postCreditForVoucher } from "./ledger";
 
 export type VoucherView = {
@@ -150,24 +150,25 @@ export async function createVoucher(input: {
     // sell side; a purchase voucher must name the settled trade it pays.
     throw new Error("A purchase voucher must be recorded against a settled purchase trade");
   }
-  const seq = await nextRef(COUNTER.VOUCHER);
-  const row = await prisma.voucher.create({
-    data: {
-      voucherNo: `VCH-${String(seq).padStart(5, "0")}`,
-      counterpartyId: input.counterpartyId,
-      side,
-      tradeRef,
-      noteRef,
-      amountPkr: input.amountPkr,
-      method,
-      reference: input.reference?.trim() || null,
-      bankName,
-      voucherDate: input.voucherDate ?? new Date(),
-      note: input.note?.trim() || null,
-      enteredByName: input.enteredByName,
-    },
-    include: VOUCHER_INCLUDE,
-  });
+  const row = await allocateSerial(SERIALS.VOUCHER, (voucherNo) =>
+    prisma.voucher.create({
+      data: {
+        voucherNo,
+        counterpartyId: input.counterpartyId,
+        side,
+        tradeRef,
+        noteRef,
+        amountPkr: input.amountPkr,
+        method,
+        reference: input.reference?.trim() || null,
+        bankName,
+        voucherDate: input.voucherDate ?? new Date(),
+        note: input.note?.trim() || null,
+        enteredByName: input.enteredByName,
+      },
+      include: VOUCHER_INCLUDE,
+    }),
+  );
   return voucherRowToView(row);
 }
 

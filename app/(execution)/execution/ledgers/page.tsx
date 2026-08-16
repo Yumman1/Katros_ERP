@@ -24,7 +24,7 @@ export default function ExecutionLedgersPage() {
           </>
         }
         title="Counterparty Ledgers"
-        subtitle="Buy ledgers (payables to sellers) and sell ledgers (receivables from buyers) — mirrored from Finance; settling happens there."
+        subtitle="Buy and sell ledger accounts per counterparty — debit, credit and balance on both sides; mirrored from Finance."
       />
 
       <div className="kastros-desk-scroll flex flex-col gap-4">

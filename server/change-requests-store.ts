@@ -1,7 +1,7 @@
 import type { ChangeRequest as ChangeRequestRow } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { json } from "@/server/db/convert";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { allocateSerial, SERIALS } from "@/server/db/serials";
 import type {
   ChangeRequestAction,
   ChangeRequestStatus,
@@ -72,22 +72,23 @@ export async function createChangeRequest(input: {
   payload?: Record<string, unknown> | null;
   status?: ChangeRequestStatus;
 }): Promise<ChangeRequest> {
-  const seq = await nextRef(COUNTER.CHANGE_REQUEST);
-  const row = await prisma.changeRequest.create({
-    data: {
-      id: `CR-${seq.toString().padStart(4, "0")}`,
-      department: input.department,
-      entityType: input.entityType,
-      entityRef: input.entityRef,
-      entityLabel: input.entityLabel,
-      action: input.action,
-      comment: input.comment.trim(),
-      requestedById: input.requestedById,
-      requestedByName: input.requestedByName,
-      status: input.status ?? "PENDING",
-      payload: (input.payload ?? undefined) as object | undefined,
-    },
-  });
+  const row = await allocateSerial(SERIALS.CHANGE_REQUEST, (id) =>
+    prisma.changeRequest.create({
+      data: {
+        id,
+        department: input.department,
+        entityType: input.entityType,
+        entityRef: input.entityRef,
+        entityLabel: input.entityLabel,
+        action: input.action,
+        comment: input.comment.trim(),
+        requestedById: input.requestedById,
+        requestedByName: input.requestedByName,
+        status: input.status ?? "PENDING",
+        payload: (input.payload ?? undefined) as object | undefined,
+      },
+    }),
+  );
   return rowToChangeRequest(row);
 }
 

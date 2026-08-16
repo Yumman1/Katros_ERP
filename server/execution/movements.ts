@@ -9,7 +9,7 @@ import { kgToQuantityUnit, openQtyEpsilon } from "@/lib/unit-conversion";
 import { normWarehouseName } from "@/lib/warehouse-allocation";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { nextSerial, SERIALS } from "@/server/db/serials";
 import { loadStockTransfersForStock } from "@/server/execution/stock-transfer-load";
 import {
   INBOUND_INCLUDE,
@@ -204,10 +204,10 @@ export async function submitInboundForFinance(receiptId: string, amountPkr?: num
       where: { tradeRef: r.tradeRef },
       select: { currency: true },
     });
-    const seq = await nextRef(COUNTER.PAYMENT, tx);
+    const requestRef = await nextSerial(SERIALS.PAYMENT, tx);
     const pr = await tx.paymentRequest.create({
       data: {
-        requestRef: `pay-${seq}`,
+        requestRef,
         sourceType: "INBOUND",
         sourceId: r.id,
         tradeRef: r.tradeRef,

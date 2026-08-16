@@ -22,7 +22,7 @@ import {
 } from "@/lib/price-units";
 import { toMt } from "@/lib/unit-registry";
 import { prisma } from "@/server/db";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { nextSerial, SERIALS } from "@/server/db/serials";
 import { getSystemUserId } from "@/server/db/system-user";
 import { TRADE_INCLUDE, mockTradeToColumns, tradeRowToMock } from "@/server/db/trade-map";
 import {
@@ -860,8 +860,7 @@ export async function mockBookTrade(input: {
   /** Session user id booking the trade (falls back to system admin). */
   actorId?: string;
 }): Promise<MockTraderTrade> {
-  const seq = await nextRef(COUNTER.TRADE);
-  const tradeRef = `KAS-${new Date().getFullYear()}-${seq}`;
+  const tradeRef = await nextSerial(SERIALS.TRADE);
 
   // Map the quoted price (any currency + weight unit) into the canonical quantity unit.
   const priceCurrency: PriceCurrency =

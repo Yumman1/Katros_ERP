@@ -15,7 +15,14 @@ import {
 } from "@/lib/warehouse-allocation";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
-import { COUNTER, nextInboundReceiptSeq, nextRef } from "@/server/db/counters";
+import {
+  allocateSerial,
+  nextSerial,
+  SERIALS,
+  serialCounterValue,
+  serialMaxInUse,
+  type SerialSpec,
+} from "@/server/db/serials";
 import {
   CONTRACT_INCLUDE,
   TRUCK_INCLUDE,
@@ -365,12 +372,8 @@ function normWarehouse(s: string): string {
   return normWarehouseName(s);
 }
 
-function formatGatepassNo(movementType: "INBOUND" | "OUTBOUND", seq: number): string {
-  return `GP-${movementType === "INBOUND" ? "IN" : "OUT"}-${seq.toString().padStart(4, "0")}`;
-}
-
-function truckCounterName(movementType: "INBOUND" | "OUTBOUND"): string {
-  return movementType === "INBOUND" ? COUNTER.TRUCK_INBOUND : COUNTER.TRUCK_OUTBOUND;
+function truckSerial(movementType: "INBOUND" | "OUTBOUND"): SerialSpec {
+  return movementType === "INBOUND" ? SERIALS.GATEPASS_INBOUND : SERIALS.GATEPASS_OUTBOUND;
 }
 
 export function inboundNetInvoiceWeightKg(
@@ -408,16 +411,21 @@ async function sanitizeUnassignedGateInvoices(): Promise<void> {
   });
 }
 
-/** Next gatepass number that will be assigned (does not consume the sequence). */
+/**
+ * Next gatepass number that will be assigned (does not consume the sequence).
+ *
+ * Reads the same reconciliation the allocator applies, so the number shown at
+ * the gate matches the one issued even when the counter trails a bulk load.
+ */
 export async function previewNextGatepassNo(
   movementType: "INBOUND" | "OUTBOUND",
 ): Promise<string> {
-  const name = truckCounterName(movementType);
-  const rows = await prisma.$queryRaw<Array<{ value: bigint }>>`
-    SELECT "value" FROM "RefCounter" WHERE "name" = ${name}
-  `;
-  const next = (rows.length ? Number(rows[0]!.value) : 0) + 1;
-  return formatGatepassNo(movementType, next);
+  const spec = truckSerial(movementType);
+  const [counter, maxInUse] = await Promise.all([
+    serialCounterValue(spec.counter),
+    serialMaxInUse(spec),
+  ]);
+  return spec.format(Math.max(counter, maxInUse) + 1);
 }
 
 export async function createPendingTruck(input: {
@@ -449,39 +457,45 @@ export async function createPendingTruck(input: {
     const qtyMt = kgToQuantityUnit(input.weightKg, "MT");
     await assertSufficientOutboundStock(input.warehouseName, input.commodityCode, qtyMt);
   }
-  const seq = await nextRef(truckCounterName(input.movementType));
-  const gatepassNo = input.gatepassNo?.trim() || formatGatepassNo(input.movementType, seq);
-  const row = await prisma.pendingTruck.create({
-    data: {
-      gatepassNo,
-      arrivalDate: input.arrivalDate ?? new Date(),
-      counterpartyName: input.counterpartyName.trim(),
-      movementType: input.movementType,
-      warehouseName: input.warehouseName.trim(),
-      truckNo: input.truckNo.trim().toUpperCase(),
-      transporterName: input.transporterName?.trim() || null,
-      transporterPhone: input.transporterPhone?.trim() || null,
-      builtyDetails: input.builtyDetails.trim(),
-      commodityCode: input.commodityCode.trim(),
-      commodityName: input.commodityName.trim(),
-      recordedByName: input.recordedByName.trim(),
-      quantityAsPerBuilty: input.quantityAsPerBuilty?.trim() || null,
-      weightAsPerBuiltyKg: input.weightAsPerBuiltyKg ?? input.weightKg,
-      weighBridgeName: input.weighBridgeName?.trim() || null,
-      warehouseWeightKg: input.warehouseWeightKg ?? null,
-      qualitySpecs: (input.qualitySpecs ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-      quantityBagsBales: input.quantityBagsBales ?? input.bags ?? null,
-      totalDeductionsKg: input.totalDeductionsKg ?? null,
-      weightKg: input.weightKg,
-      remarks: input.remarks || null,
-      status: "PENDING",
-      assignedTradeRef: null,
-      assignedAt: null,
-      remainingKg: input.weightKg,
-    },
-  });
+  const createWithGatepass = (gatepassNo: string) =>
+    prisma.pendingTruck.create({
+      data: {
+        gatepassNo,
+        arrivalDate: input.arrivalDate ?? new Date(),
+        counterpartyName: input.counterpartyName.trim(),
+        movementType: input.movementType,
+        warehouseName: input.warehouseName.trim(),
+        truckNo: input.truckNo.trim().toUpperCase(),
+        transporterName: input.transporterName?.trim() || null,
+        transporterPhone: input.transporterPhone?.trim() || null,
+        builtyDetails: input.builtyDetails.trim(),
+        commodityCode: input.commodityCode.trim(),
+        commodityName: input.commodityName.trim(),
+        recordedByName: input.recordedByName.trim(),
+        quantityAsPerBuilty: input.quantityAsPerBuilty?.trim() || null,
+        weightAsPerBuiltyKg: input.weightAsPerBuiltyKg ?? input.weightKg,
+        weighBridgeName: input.weighBridgeName?.trim() || null,
+        warehouseWeightKg: input.warehouseWeightKg ?? null,
+        qualitySpecs: (input.qualitySpecs ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        quantityBagsBales: input.quantityBagsBales ?? input.bags ?? null,
+        totalDeductionsKg: input.totalDeductionsKg ?? null,
+        weightKg: input.weightKg,
+        remarks: input.remarks || null,
+        status: "PENDING",
+        assignedTradeRef: null,
+        assignedAt: null,
+        remainingKg: input.weightKg,
+      },
+    });
+
+  // An operator-supplied gatepass is theirs to own; anything else is drawn from
+  // the sequence, which retries if the number turns out to be taken.
+  const explicitGatepassNo = input.gatepassNo?.trim();
+  const row = explicitGatepassNo
+    ? await createWithGatepass(explicitGatepassNo)
+    : await allocateSerial(truckSerial(input.movementType), createWithGatepass);
   if (input.documentRefs?.length) {
-    await writeGatepassDocumentRefs(gatepassNo, input.documentRefs);
+    await writeGatepassDocumentRefs(row.gatepassNo, input.documentRefs);
   }
   const fresh = await prisma.pendingTruck.findUnique({
     where: { id: row.id },
@@ -742,12 +756,12 @@ export async function assignTruckToTrade(
         });
       }
 
-      // The counter must sit above every KCS number already in the table —
-      // a bulk load carries its own refs, so a counter left at the row count
-      // re-issues one that exists and the insert dies on the unique index.
-      // Self-healing beats failing an operator's assignment: take the counter
-      // past the highest ref in use, then draw from it.
-      const seq = await nextInboundReceiptSeq(tx);
+      // Reconciled against the KCS numbers already issued — a bulk load carries
+      // its own refs and leaves the counter behind them, and re-issuing one
+      // would kill the operator's assignment on the unique index. Inside a
+      // transaction there is no retrying a collision, so this is the whole
+      // protection.
+      const kcsNo = await nextSerial(SERIALS.INBOUND, tx);
       const netKg = allocateKg;
       const invoiceWeightKg = truck.gateInvoiceWeightKg ?? netKg;
       const allocatedQtyMt =
@@ -755,7 +769,7 @@ export async function assignTruckToTrade(
       const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
       const receiptRow = await tx.inboundReceipt.create({
         data: {
-          kcsNo: `KCS-${seq}`,
+          kcsNo,
           gatepassNo: truck.gatepassNo,
           tradeRef,
           receiveDate: truck.arrivalDate,
@@ -1057,6 +1071,88 @@ export function revalidateGateInvoiceStage(truck: {
     : "WRONG_INVOICING";
 }
 
+/** A supplier's invoice number, compared the way a person would read it. */
+function normInvoiceNo(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+/** Trades whose invoices are still live. Numbers may be reused past these. */
+const CLOSED_TRADE_STATUSES = ["SETTLED", "CANCELLED"] as const;
+
+export type GateInvoiceClash = {
+  gatepassNo: string;
+  tradeRef: string;
+  invoiceNo: string;
+  amountPkr: number | null;
+};
+
+/**
+ * The open trade, if any, that already carries this supplier invoice number.
+ *
+ * A number reused on a second live trade for the same supplier is a
+ * double-payment path: the approval queue groups trucks by trade and invoice
+ * and totals the group, so the second trade presents its own payable for what
+ * is really the same document.
+ *
+ * Two reuses are legitimate and stay allowed. One invoice covering several
+ * trucks on the same trade is the normal case and the grouping depends on it.
+ * Reuse after a trade closes is how suppliers restart numbering each season.
+ * A truck with no trade yet cannot be told apart from the first case, so it is
+ * left alone rather than blocked on a guess.
+ */
+export async function findOpenTradeInvoiceClash(input: {
+  invoiceNo: string;
+  counterpartyName: string;
+  tradeRef: string | null;
+  /** Gate entry being edited — never clashes with itself. */
+  truckId?: string | null;
+}): Promise<GateInvoiceClash | null> {
+  const target = normInvoiceNo(input.invoiceNo);
+  const ownRef = input.tradeRef?.trim() || null;
+  if (!target || !ownRef) return null;
+
+  const candidates = await prisma.pendingTruck.findMany({
+    where: {
+      counterpartyName: { equals: input.counterpartyName.trim(), mode: "insensitive" },
+      gateInvoiceNo: { not: null },
+      ...(input.truckId ? { id: { not: input.truckId } } : {}),
+    },
+    select: {
+      gatepassNo: true,
+      gateInvoiceNo: true,
+      gateInvoiceAmount: true,
+      assignedTradeRef: true,
+      gateInvoiceTradeRef: true,
+    },
+  });
+
+  const clashes = candidates.flatMap((c) => {
+    if (!c.gateInvoiceNo || normInvoiceNo(c.gateInvoiceNo) !== target) return [];
+    const ref = c.assignedTradeRef ?? c.gateInvoiceTradeRef;
+    if (!ref || ref === ownRef) return [];
+    return [{ ...c, ref }];
+  });
+  if (!clashes.length) return null;
+
+  const openTrades = await prisma.trade.findMany({
+    where: {
+      tradeRef: { in: [...new Set(clashes.map((c) => c.ref))] },
+      tradeStatus: { notIn: [...CLOSED_TRADE_STATUSES] },
+    },
+    select: { tradeRef: true },
+  });
+  const open = new Set(openTrades.map((t) => t.tradeRef));
+
+  const hit = clashes.find((c) => open.has(c.ref));
+  if (!hit) return null;
+  return {
+    gatepassNo: hit.gatepassNo,
+    tradeRef: hit.ref,
+    invoiceNo: hit.gateInvoiceNo!,
+    amountPkr: numOrNull(hit.gateInvoiceAmount),
+  };
+}
+
 /**
  * Enter (or edit) the gate invoice on a truck — invoice number + PKR amount,
  * optionally linked to a trade. The amount is validated against the expected
@@ -1109,6 +1205,20 @@ export async function setManualGateInvoice(
         numOrNull(contractRow.ratePerKg) ?? (numOrNull(contractRow.ratePerMaund) ?? 0) / KG_PER_MAUND;
       if (rateKg > 0) expectedPkr = Math.round(netKg * rateKg * 100) / 100;
     }
+  }
+
+  const clash = await findOpenTradeInvoiceClash({
+    invoiceNo,
+    counterpartyName: row.counterpartyName,
+    tradeRef: effectiveTradeRef,
+    truckId,
+  });
+  if (clash) {
+    throw new Error(
+      `${row.counterpartyName} already has invoice ${clash.invoiceNo} on ${clash.tradeRef} ` +
+        `(gate entry ${clash.gatepassNo}), which is still open — paying it here would pay the ` +
+        `same invoice twice. Use the supplier's number for this trade, or settle ${clash.tradeRef} first.`,
+    );
   }
 
   const stage = revalidateGateInvoiceStage({

@@ -24,7 +24,7 @@ import type { Prisma } from "@prisma/client";
 import { StockTransferStatus } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { allocateSerial, nextSerial, SERIALS } from "@/server/db/serials";
 import { normWarehouseName } from "@/lib/warehouse-allocation";
 import { getSystemUserId } from "@/server/db/system-user";
 import { getAvailableOutboundStockMt } from "@/server/execution/movements";
@@ -112,20 +112,25 @@ export async function ensureInternalCounterparty(): Promise<{ id: string; name: 
   });
   if (existing) return existing;
 
-  const seq = await nextRef(COUNTER.COUNTERPARTY);
-  return prisma.counterparty.create({
-    data: {
-      name: INTERNAL_COUNTERPARTY_NAME,
-      code: String(100000 + seq),
-      // Not a trading partner — this party is us. It exists so a shift
-      // gatepass has someone to be booked against, never to be traded with.
-      type: "INTERNAL",
-      country: "Pakistan",
-      kycStatus: "VERIFIED",
-      createdById: await getSystemUserId(),
-    },
-    select: { id: true, name: true },
-  });
+  // Drawn from the shared counterparty register rather than a bare
+  // 100000 + seq code: two formats on one counter means the sequence that
+  // issues CP-00104 can also reach a legacy numeric code that already exists.
+  const createdById = await getSystemUserId();
+  return allocateSerial(SERIALS.COUNTERPARTY, (code) =>
+    prisma.counterparty.create({
+      data: {
+        name: INTERNAL_COUNTERPARTY_NAME,
+        code,
+        // Not a trading partner — this party is us. It exists so a shift
+        // gatepass has someone to be booked against, never to be traded with.
+        type: "INTERNAL",
+        country: "Pakistan",
+        kycStatus: "VERIFIED",
+        createdById,
+      },
+      select: { id: true, name: true },
+    }),
+  );
 }
 
 export async function listStockTransfers(filter?: {
@@ -202,27 +207,28 @@ export async function createStockTransfer(input: {
   }
 
   await ensureInternalCounterparty();
-  const seq = await nextRef(COUNTER.STOCK_TRANSFER);
-  const row = await prisma.stockTransfer.create({
-    data: {
-      transferRef: `SHF-${String(seq).padStart(5, "0")}`,
-      season: input.season ?? "SUMMER",
-      commodityCode: input.commodityCode.trim(),
-      commodityName: input.commodityName.trim() || input.commodityCode.trim(),
-      fromWarehouseName: from,
-      externalOrigin: from ? null : origin,
-      toWarehouseName: to,
-      dispatchedQtyMt: qty,
-      truckNo: input.truckNo.trim(),
-      driverName: input.driverName?.trim() || null,
-      driverPhone: input.driverPhone?.trim() || null,
-      biltyNo: input.biltyNo?.trim() || null,
-      bags: input.bags ?? null,
-      reason: input.reason?.trim() || null,
-      remarks: input.remarks?.trim() || null,
-      createdByName: input.createdByName?.trim() || null,
-    },
-  });
+  const row = await allocateSerial(SERIALS.STOCK_TRANSFER, (transferRef) =>
+    prisma.stockTransfer.create({
+      data: {
+        transferRef,
+        season: input.season ?? "SUMMER",
+        commodityCode: input.commodityCode.trim(),
+        commodityName: input.commodityName.trim() || input.commodityCode.trim(),
+        fromWarehouseName: from,
+        externalOrigin: from ? null : origin,
+        toWarehouseName: to,
+        dispatchedQtyMt: qty,
+        truckNo: input.truckNo.trim(),
+        driverName: input.driverName?.trim() || null,
+        driverPhone: input.driverPhone?.trim() || null,
+        biltyNo: input.biltyNo?.trim() || null,
+        bags: input.bags ?? null,
+        reason: input.reason?.trim() || null,
+        remarks: input.remarks?.trim() || null,
+        createdByName: input.createdByName?.trim() || null,
+      },
+    }),
+  );
   return toRow(row);
 }
 
@@ -244,13 +250,13 @@ export async function dispatchStockTransfer(
     const qty = overrideQtyMt ?? num(t.dispatchedQtyMt);
     if (!Number.isFinite(qty) || qty <= 0) throw new Error("Quantity must be greater than zero");
 
-    const seq = await nextRef(COUNTER.TRUCK_OUTBOUND, tx);
+    const outGatepassNo = await nextSerial(SERIALS.GATEPASS_OUTBOUND, tx);
     return tx.stockTransfer.update({
       where: { id },
       data: {
         status: StockTransferStatus.IN_TRANSIT,
         dispatchedQtyMt: qty,
-        outGatepassNo: `GP-OUT-${String(seq).padStart(4, "0")}`,
+        outGatepassNo,
         dispatchedAt: new Date(),
         remarks: t.remarks,
         createdByName: t.createdByName ?? actorName,
@@ -285,13 +291,13 @@ export async function receiveStockTransfer(
         `Received ${receivedQtyMt.toFixed(3)} MT is more than the ${num(t.dispatchedQtyMt).toFixed(3)} MT that left — check the weighbridge before booking it in`,
       );
     }
-    const seq = await nextRef(COUNTER.TRUCK_INBOUND, tx);
+    const inGatepassNo = await nextSerial(SERIALS.GATEPASS_INBOUND, tx);
     return tx.stockTransfer.update({
       where: { id },
       data: {
         status: StockTransferStatus.RECEIVED,
         receivedQtyMt,
-        inGatepassNo: `GP-IN-${String(seq).padStart(4, "0")}`,
+        inGatepassNo,
         receivedAt: new Date(),
       },
     });

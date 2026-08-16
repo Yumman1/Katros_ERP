@@ -19,6 +19,7 @@ import {
   getDeskSummary,
   getInboundReceipts,
   getLockedContracts,
+  findOpenTradeInvoiceClash,
   getPendingTradesForExecution,
   getGateInvoiceSummary,
   getPendingTrucks,
@@ -775,6 +776,26 @@ export const executionRouter = router({
     }),
 
   // ─── Gate-invoice workflow ────────────────────────────────────────────────
+
+  // Live check behind the invoice field: does this supplier already have this
+  // invoice number on another open trade? Same rule the save enforces, so the
+  // clash shows while typing instead of on submit.
+  checkGateInvoiceDuplicate: roleProcedure([...execRoles])
+    .input(z.object({ truckId: z.string(), invoiceNo: z.string().trim() }))
+    .query(async ({ input }) => {
+      if (!input.invoiceNo) return null;
+      const truck = await prisma.pendingTruck.findUnique({
+        where: { id: input.truckId },
+        select: { counterpartyName: true, assignedTradeRef: true, gateInvoiceTradeRef: true },
+      });
+      if (!truck) return null;
+      return findOpenTradeInvoiceClash({
+        invoiceNo: input.invoiceNo,
+        counterpartyName: truck.counterpartyName,
+        tradeRef: truck.assignedTradeRef ?? truck.gateInvoiceTradeRef,
+        truckId: input.truckId,
+      });
+    }),
 
   // Enter OR edit a gate invoice — repeated calls update invoiceNo/amount and
   // re-validate the stage against the expected amount (match → pending trade

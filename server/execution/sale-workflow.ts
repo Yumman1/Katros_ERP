@@ -1,6 +1,6 @@
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { nextSerial, SERIALS } from "@/server/db/serials";
 import { traderNamesMatch } from "@/lib/trader-identity";
 import { agingBucketFor } from "@/lib/finance-policy";
 import { availableCreditPkr, canFundTruck } from "@/server/finance/ledger";
@@ -93,8 +93,7 @@ async function issueDeliveryOrderOnly(truckId: string): Promise<string> {
     select: { deliveryOrderNo: true },
   });
   if (!row) throw new Error("Gate entry not found");
-  const deliveryOrderNo =
-    row.deliveryOrderNo ?? `DO-${String(await nextRef(COUNTER.DELIVERY_ORDER)).padStart(5, "0")}`;
+  const deliveryOrderNo = row.deliveryOrderNo ?? (await nextSerial(SERIALS.DELIVERY_ORDER));
   await prisma.pendingTruck.update({
     where: { id: truckId },
     data: { deliveryOrderNo },
@@ -109,8 +108,7 @@ async function issueGateOutSlipOnly(truckId: string): Promise<string> {
     select: { gateOutSlipNo: true },
   });
   if (!row) throw new Error("Gate entry not found");
-  const gateOutSlipNo =
-    row.gateOutSlipNo ?? `GOS-${String(await nextRef(COUNTER.GATE_OUT_SLIP)).padStart(5, "0")}`;
+  const gateOutSlipNo = row.gateOutSlipNo ?? (await nextSerial(SERIALS.GATE_OUT_SLIP));
   await prisma.pendingTruck.update({
     where: { id: truckId },
     data: { gateOutSlipNo },

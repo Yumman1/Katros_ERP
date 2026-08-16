@@ -21,7 +21,7 @@ flowchart TB
 ```
 
 - **All** database access goes through Prisma on the server (tRPC routers + REST routes). The Supabase anon/REST API is not used; RLS is enabled on every table with no policies, so leaked anon keys expose nothing.
-- Business-reference sequences (trade refs, KCS numbers, gatepass numbers, CR ids) come from the `RefCounter` table via an atomic `INSERT … ON CONFLICT … RETURNING` — concurrency-safe across serverless instances.
+- Business-reference sequences (trade refs, KCS numbers, gatepass numbers, CR ids) come from the `RefCounter` table via an atomic `INSERT … ON CONFLICT … RETURNING` — concurrency-safe across serverless instances. Each allocation reconciles the counter against the references already issued (`server/db/serials.ts`), so a bulk load that carries its own numbers cannot leave the counter behind and re-issue one. Run `npm run check:refs` after an import to confirm.
 - Fulfillment recomputation (`refreshContract`) and truck assignment run inside Postgres transactions with `SELECT … FOR UPDATE` row locks so simultaneous operators cannot double-allocate.
 
 ## Supabase project

@@ -30,7 +30,7 @@ import { mergeUnitRegistry, type UnitDefinition } from "@/lib/unit-registry";
 import type { WarehouseLaborLine } from "@/lib/warehouse-costing";
 import { prisma } from "@/server/db";
 import { json, numOrNull } from "@/server/db/convert";
-import { bumpRefTo, COUNTER, nextRef } from "@/server/db/counters";
+import { nextSerial, SERIALS } from "@/server/db/serials";
 import { getSystemUserId } from "@/server/db/system-user";
 
 export type MockCommodityOption = {
@@ -169,21 +169,8 @@ function norm(s: string) {
  * (CP-00101-B / CP-00101-S), not on the counterparty record, so inventory
  * and trades reference a single identity.
  */
-export function formatCounterpartyCode(seq: number): string {
-  return `CP-${String(seq).padStart(5, "0")}`;
-}
-
-async function nextCounterpartyCode(): Promise<string> {
-  for (let attempt = 0; attempt < 10_000; attempt += 1) {
-    const seq = await nextRef(COUNTER.COUNTERPARTY);
-    const code = formatCounterpartyCode(seq + 100);
-    const exists = await prisma.counterparty.findFirst({
-      where: { code: { equals: code, mode: "insensitive" } },
-      select: { id: true },
-    });
-    if (!exists) return code;
-  }
-  throw new Error("Could not allocate a unique counterparty code");
+export async function nextCounterpartyCode(): Promise<string> {
+  return nextSerial(SERIALS.COUNTERPARTY);
 }
 
 function uniqueUnits(values: string[]) {
@@ -585,27 +572,9 @@ export async function getCompanyWarehouses(): Promise<MockLocationOption[]> {
   return (await getMergedLocations()).filter(isCompanyWarehouse);
 }
 
-/** Next free K-code (K001, K002, …) — counter-backed, collision-checked. */
+/** Next free K-code (K001, K002, …) — counter-backed, reconciled on issue. */
 async function nextWarehouseCode(): Promise<string> {
-  const rows = await prisma.location.findMany({
-    where: { code: { not: null } },
-    select: { code: true },
-  });
-  const maxExisting = rows.reduce((max, r) => {
-    const m = /^K(\d+)$/i.exec(r.code?.trim() ?? "");
-    return m ? Math.max(max, parseInt(m[1]!, 10)) : max;
-  }, 0);
-  await bumpRefTo("warehouse", maxExisting);
-  for (let attempt = 0; attempt < 10_000; attempt += 1) {
-    const seq = await nextRef("warehouse");
-    const code = `K${String(seq).padStart(3, "0")}`;
-    const exists = await prisma.location.findFirst({
-      where: { code: { equals: code, mode: "insensitive" } },
-      select: { id: true },
-    });
-    if (!exists) return code;
-  }
-  throw new Error("Could not allocate a unique warehouse code");
+  return nextSerial(SERIALS.WAREHOUSE);
 }
 
 export async function addCustomLocation(input: {

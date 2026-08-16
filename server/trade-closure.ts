@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { TradeStatus } from "@prisma/client";
 import { prisma } from "@/server/db";
-import { COUNTER, nextRef } from "@/server/db/counters";
+import { formatNoteRef, nextSerialSeq, SERIALS } from "@/server/db/serials";
 import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import { freeCloseFloorQty } from "@/lib/contract-closure";
 import { getContractByRef } from "@/server/execution-store";
@@ -192,8 +192,8 @@ async function postSettlementNote(
   const { priced } = input;
   if (priced.amountPkr <= 0.005) return null;
   const isDebit = priced.diffPerMaund > 0;
-  const seq = await nextRef(COUNTER.CANCELLATION_NOTE, tx);
-  const noteRef = `${isDebit ? "DN" : "CN"}-${String(seq).padStart(5, "0")}`;
+  const seq = await nextSerialSeq(SERIALS.CANCELLATION_NOTE, tx);
+  const noteRef = formatNoteRef(isDebit ? "DN" : "CN", seq);
   await tx.counterpartyLedgerEntry.create({
     data: {
       counterpartyId: input.counterpartyId,
