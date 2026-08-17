@@ -75,6 +75,25 @@ fulfillmentPct = fulfilled / contractualQtyMt   // UI
 
 On `refreshContract`: if `shouldAutoCloseContract` → `contractStatus = "Close"`, `tradeStatus = EXECUTED`.
 
+### Outbound assignment absorbable qty
+
+**File:** `lib/contract-closure.ts` — `warehouseAbsorbableQtyMt()`  
+**Used by:** `server/execution/trucks.ts` (outbound `assignTruckToTrade`), contract views, execution UI
+
+Outbound sale trucks may split across trades, but each assignment caps at **absorbable** qty (not strict open):
+
+```
+contractHeadroom = max(0, (contractualQtyMt + toleranceMt) − contractFulfilledMt)
+whHeadroom       = max(0, (whAllocatedMt + toleranceMt) − whFulfilledMt)
+absorbableMt     = min(contractHeadroom, whHeadroom)
+```
+
+Assignment allocates `min(truckRemainingKg, absorbableKg)`. Leftover weight stays on the truck (`PARTIAL`) for the next trade.
+
+The absorbable ceiling matches the auto-close threshold: a trade auto-closes only when **fulfilled > contractual + tolerance** (strict `>`), so deliveries within tolerance stay Open until manually closed.
+
+**Example:** 100 MT contract + 10 MT tolerance, 50.505 MT already dispatched, 50.885 MT truck → full truck accepted (101.39 MT total), trade stays Open.
+
 ---
 
 ## 3. Price units and notional

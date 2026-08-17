@@ -13,9 +13,11 @@ import {
 } from "@/lib/trade-constants";
 import { kgToQuantityUnit, openQtyEpsilon } from "@/lib/unit-conversion";
 import {
+  contractAbsorbableQtyMt,
   DEFAULT_QUANTITY_TOLERANCE_MT,
   parseQuantityToleranceMt,
   shouldAutoCloseContract,
+  warehouseAbsorbableQtyMt,
 } from "@/lib/contract-closure";
 import { defaultKgPerUnit } from "@/lib/price-units";
 import type { MockTraderTrade } from "@/server/dummy-data";
@@ -324,6 +326,8 @@ function assertCanEditWarehouseAllocation(contract: ExecutionContract): void {
 export type WarehouseAllocationProgress = WarehouseAllocationLine & {
   fulfilledQtyMt: number;
   openQtyMt: number;
+  /** Remaining assignable qty incl. booked tolerance (outbound assignment cap). */
+  absorbableQtyMt: number;
 };
 
 /** Pure progress math from allocation lines + a fulfillment-by-warehouse map. */
@@ -333,6 +337,8 @@ function computeWarehouseProgress(
 ): WarehouseAllocationProgress[] {
   const c = normalizeContract(contract);
   const allocated = resolveWarehouseAllocations(c);
+  const toleranceMt = c.quantityToleranceMt ?? DEFAULT_QUANTITY_TOLERANCE_MT;
+  const contractFulfilledMt = c.receivedQtyMt;
   const keys = new Set<string>();
   for (const a of allocated) keys.add(normWarehouse(a.warehouseName));
   for (const key of fulfillment.keys()) keys.add(key);
@@ -354,6 +360,13 @@ function computeWarehouseProgress(
         qtyMt,
         fulfilledQtyMt,
         openQtyMt: Math.max(0, qtyMt - fulfilledQtyMt),
+        absorbableQtyMt: warehouseAbsorbableQtyMt({
+          contractualQtyMt: c.contractualQtyMt,
+          contractFulfilledMt,
+          whAllocatedMt: allocQty,
+          whFulfilledMt: fulfilledQtyMt,
+          toleranceMt,
+        }),
       };
     })
     .filter(
@@ -791,13 +804,25 @@ export async function ensureContractsMirror(): Promise<void> {}
 
 export type ExecutionContractView = ExecutionContract & {
   warehouseAllocationProgress: WarehouseAllocationProgress[];
+  /** Contract-level headroom before contract + tolerance ceiling. */
+  absorbableQtyMt: number;
 };
 
 export async function withWarehouseProgress(
   contract: ExecutionContract,
 ): Promise<ExecutionContractView> {
   const c = normalizeContract(contract);
-  return { ...c, warehouseAllocationProgress: await getWarehouseAllocationProgress(c) };
+  const warehouseAllocationProgress = await getWarehouseAllocationProgress(c);
+  const toleranceMt = c.quantityToleranceMt ?? DEFAULT_QUANTITY_TOLERANCE_MT;
+  return {
+    ...c,
+    warehouseAllocationProgress,
+    absorbableQtyMt: contractAbsorbableQtyMt(
+      c.contractualQtyMt,
+      c.receivedQtyMt,
+      toleranceMt,
+    ),
+  };
 }
 
 /** Batch fulfillment-by-warehouse maps for many contracts (2 queries total). */
@@ -873,13 +898,22 @@ export async function getLockedContracts(filter?: {
     list = list.filter((c) => contractMatchesWarehouse(c, filter.warehouseName!));
   }
   const fulfillment = await batchFulfillmentByWarehouse(list);
-  return list.map((c) => ({
-    ...c,
-    warehouseAllocationProgress: computeWarehouseProgress(
+  return list.map((c) => {
+    const warehouseAllocationProgress = computeWarehouseProgress(
       c,
       fulfillment.get(c.tradeRef) ?? new Map(),
-    ),
-  }));
+    );
+    const toleranceMt = c.quantityToleranceMt ?? DEFAULT_QUANTITY_TOLERANCE_MT;
+    return {
+      ...c,
+      warehouseAllocationProgress,
+      absorbableQtyMt: contractAbsorbableQtyMt(
+        c.contractualQtyMt,
+        c.receivedQtyMt,
+        toleranceMt,
+      ),
+    };
+  });
 }
 
 /** Open warehouse-backed trades still waiting for execution head to assign a warehouse. */

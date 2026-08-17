@@ -40,10 +40,12 @@ export type WorkflowContract = {
   executionProfile: string;
   contractStatus?: string;
   openQtyMt: number;
+  /** Headroom incl. booked tolerance (outbound assignment). */
+  absorbableQtyMt?: number;
   quantityUnit: string;
   /** Head-approved per-warehouse allocation lines with open qty. */
   warehouseAllocationProgress?:
-    | { warehouseName: string; openQtyMt: number }[]
+    | { warehouseName: string; openQtyMt: number; absorbableQtyMt?: number }[]
     | null;
 };
 
@@ -73,16 +75,22 @@ function warehouseMatches(truck: WorkflowTruck, contract: WorkflowContract): boo
   const lines = contract.warehouseAllocationProgress ?? [];
   if (lines.length === 0) return false;
   const wh = normWarehouseName(truck.warehouseName);
-  return lines.some(
-    (l) => normWarehouseName(l.warehouseName) === wh && l.openQtyMt > 0.001,
-  );
+  const outbound = truck.movementType === "OUTBOUND";
+  return lines.some((l) => {
+    if (normWarehouseName(l.warehouseName) !== wh) return false;
+    const qty = outbound ? (l.absorbableQtyMt ?? l.openQtyMt) : l.openQtyMt;
+    return qty > 0.001;
+  });
 }
 
-/** Open quantity of this contract at the truck's warehouse (for the dropdown label). */
-function openQtyAtWarehouse(truck: WorkflowTruck, contract: WorkflowContract): number {
+/** Assignable qty at this warehouse (strict open for inbound, incl. tolerance for outbound). */
+function assignableQtyAtWarehouse(truck: WorkflowTruck, contract: WorkflowContract): number {
   const lines = contract.warehouseAllocationProgress ?? [];
   const wh = normWarehouseName(truck.warehouseName);
   const line = lines.find((l) => normWarehouseName(l.warehouseName) === wh);
+  if (truck.movementType === "OUTBOUND") {
+    return line?.absorbableQtyMt ?? contract.absorbableQtyMt ?? line?.openQtyMt ?? contract.openQtyMt;
+  }
   return line?.openQtyMt ?? contract.openQtyMt;
 }
 
@@ -207,12 +215,16 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
         ? ["PURCHASE_DELIVERED", "PURCHASE_SPOT"]
         : ["SALE_EX_WAREHOUSE"];
     return contracts
-      .filter((c) => (c.contractStatus ?? "Open") === "Open" && c.openQtyMt > 0.001)
+      .filter((c) => {
+        if ((c.contractStatus ?? "Open") !== "Open") return false;
+        if (inbound) return c.openQtyMt > 0.001;
+        return (c.absorbableQtyMt ?? c.openQtyMt) > 0.001;
+      })
       .filter((c) => profiles.includes(c.executionProfile))
       .filter((c) => counterpartyMatches(truck, c) && commodityMatches(truck, c))
       .filter((c) => warehouseMatches(truck, c))
       .sort((a, b) => a.tradeRef.localeCompare(b.tradeRef));
-  }, [contracts, truck]);
+  }, [contracts, truck, inbound]);
 
   if (truck.status === "ASSIGNED" && truck.assignedTradeRef) {
     return (
@@ -280,8 +292,9 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
             )}
             {eligible.map((c) => (
               <option key={c.tradeRef} value={c.tradeRef}>
-                {c.tradeRef} · {c.commodityCode} · open here{" "}
-                {openQtyAtWarehouse(truck, c).toFixed(1)} {c.quantityUnit}
+                {c.tradeRef} · {c.commodityCode} ·{" "}
+                {inbound ? "open" : "absorbable"} here{" "}
+                {assignableQtyAtWarehouse(truck, c).toFixed(1)} {c.quantityUnit}
               </option>
             ))}
           </select>

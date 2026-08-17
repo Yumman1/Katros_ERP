@@ -20,6 +20,7 @@ type ProgressLine = {
   qtyMt: number;
   fulfilledQtyMt: number;
   openQtyMt: number;
+  absorbableQtyMt?: number;
 };
 
 type ContractRow = {
@@ -27,6 +28,7 @@ type ContractRow = {
   contractualQtyMt: number;
   receivedQtyMt?: number;
   openQtyMt?: number;
+  absorbableQtyMt?: number;
   quantityUnit: string;
   contractStatus?: string;
   allocatedWarehouse?: string | null;
@@ -535,4 +537,16 @@ export function warehouseOpenQtyAt(contract: ContractRow, warehouseName: string)
     if (line) return line.openQtyMt;
   }
   return contract.openQtyMt ?? 0;
+}
+
+/** Assignable qty incl. booked tolerance (outbound truck assignment cap). */
+export function warehouseAbsorbableQtyAt(contract: ContractRow, warehouseName: string): number {
+  const progress = contract.warehouseAllocationProgress;
+  if (progress?.length) {
+    const line = progress.find(
+      (p) => p.warehouseName.trim().toLowerCase() === warehouseName.trim().toLowerCase(),
+    );
+    if (line) return line.absorbableQtyMt ?? line.openQtyMt;
+  }
+  return contract.absorbableQtyMt ?? contract.openQtyMt ?? 0;
 }

@@ -1,6 +1,10 @@
 import { Prisma, TradeDirection, type Role } from "@prisma/client";
-import { KG_PER_MAUND, type QualityTolerances } from "@/lib/trade-constants";
+import {
+  DEFAULT_QUANTITY_TOLERANCE_MT,
+  warehouseAbsorbableQtyMt,
+} from "@/lib/contract-closure";
 import type { GateInvoiceStage } from "@/lib/gate-invoice";
+import { KG_PER_MAUND, type QualityTolerances } from "@/lib/trade-constants";
 import { traderNamesMatch } from "@/lib/trader-identity";
 import { kgToQuantityUnit, quantityUnitToKg } from "@/lib/unit-conversion";
 import {
@@ -590,6 +594,35 @@ async function inboundWarehouseOpenMt(
   return Math.max(0, whAllocatedQty - whFulfilledQty);
 }
 
+/** Assignable qty (MT) at a warehouse incl. booked tolerance, capped by contract headroom. */
+async function warehouseAbsorbableMt(
+  db: Prisma.TransactionClient | typeof prisma,
+  contract: ReturnType<typeof normalizeContract>,
+  warehouseName: string,
+): Promise<number> {
+  const toleranceMt = contract.quantityToleranceMt ?? DEFAULT_QUANTITY_TOLERANCE_MT;
+  const whAllocatedQty = contractRequiresWarehouse(contract)
+    ? resolveWarehouseAllocations(contract)
+        .filter((a) => normWarehouse(a.warehouseName) === normWarehouse(warehouseName))
+        .reduce((s, a) => s + a.qtyMt, 0)
+    : contract.contractualQtyMt;
+  const whFulfilledQty = contractRequiresWarehouse(contract)
+    ? await fulfilledQtyForTradeAtWarehouseDb(
+        db as Prisma.TransactionClient,
+        contract.tradeRef,
+        warehouseName,
+        contract.direction,
+      )
+    : contract.receivedQtyMt;
+  return warehouseAbsorbableQtyMt({
+    contractualQtyMt: contract.contractualQtyMt,
+    contractFulfilledMt: contract.receivedQtyMt,
+    whAllocatedMt: whAllocatedQty,
+    whFulfilledMt: whFulfilledQty,
+    toleranceMt,
+  });
+}
+
 export async function assignTruckToTrade(
   truckId: string,
   tradeRef: string,
@@ -686,6 +719,13 @@ export async function assignTruckToTrade(
     }
     const whOpenQty = await inboundWarehouseOpenMt(tx, contract, truck.warehouseName);
     const tradeOpenKg = quantityUnitToKg(whOpenQty, contract.quantityUnit);
+    const tradeAbsorbableKg =
+      truck.movementType === "OUTBOUND"
+        ? quantityUnitToKg(
+            await warehouseAbsorbableMt(tx, contract, truck.warehouseName),
+            contract.quantityUnit,
+          )
+        : tradeOpenKg;
     const unit = contract.quantityUnit;
     const assignedAt = new Date();
 
@@ -701,7 +741,7 @@ export async function assignTruckToTrade(
       truckStatus = "ASSIGNED";
     } else {
       const requestedKg = overrideWeightKg ?? truck.remainingKg;
-      allocateKg = Math.min(requestedKg, truck.remainingKg, Math.max(tradeOpenKg, 0));
+      allocateKg = Math.min(requestedKg, truck.remainingKg, Math.max(tradeAbsorbableKg, 0));
       splitRemainingKg = truck.remainingKg - allocateKg;
       truckStatus = splitRemainingKg > 0.5 ? "PARTIAL" : "ASSIGNED";
     }
@@ -1017,8 +1057,8 @@ export async function assignTruckFifoAuto(truckId: string): Promise<{
       const line = c.warehouseAllocationProgress.find(
         (p) => normWarehouse(p.warehouseName) === wh,
       );
-      const whOpen = line?.openQtyMt ?? c.openQtyMt;
-      return whOpen > 0.001;
+      const whAbsorbable = line?.absorbableQtyMt ?? c.absorbableQtyMt ?? c.openQtyMt;
+      return whAbsorbable > 0.001;
     });
     if (!next) break;
 

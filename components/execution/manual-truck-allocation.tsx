@@ -3,7 +3,7 @@
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { kgToQuantityUnit, quantityUnitToKg } from "@/lib/unit-conversion";
 import { contractMatchesWarehouse, allocationSummaryLabel } from "@/lib/warehouse-allocation";
-import { warehouseOpenQtyAt } from "@/components/execution/warehouse-split-allocation";
+import { warehouseOpenQtyAt, warehouseAbsorbableQtyAt } from "@/components/execution/warehouse-split-allocation";
 import { deliveryWindowStatus, DELIVERY_WINDOW_TONE } from "@/lib/delivery-window";
 import { cn } from "@/lib/utils";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -21,6 +21,7 @@ type Contract = {
   contractualQtyMt: number;
   receivedQtyMt: number;
   openQtyMt: number;
+  absorbableQtyMt?: number;
   warehouseDefault?: string | null;
   allocatedWarehouse?: string | null;
   warehouseAllocations?: { warehouseName: string; qtyMt: number }[] | null;
@@ -29,6 +30,7 @@ type Contract = {
     qtyMt: number;
     fulfilledQtyMt: number;
     openQtyMt: number;
+    absorbableQtyMt?: number;
   }[];
   contractStatus?: string;
   deliveryStart?: Date | string | null;
@@ -126,9 +128,21 @@ export function ManualTruckAllocation({
   const selectedTruck = activeTrucks.find((t) => t.id === selectedTruckId) ?? activeTrucks[0] ?? null;
 
   const openOrders = useMemo(
-    () => contracts.filter((c) => c.openQtyMt > 0.001).sort((a, b) => a.tradeRef.localeCompare(b.tradeRef)),
-    [contracts],
+    () =>
+      contracts
+        .filter((c) => {
+          const headroom = mode === "OUTBOUND" ? (c.absorbableQtyMt ?? c.openQtyMt) : c.openQtyMt;
+          return headroom > 0.001;
+        })
+        .sort((a, b) => a.tradeRef.localeCompare(b.tradeRef)),
+    [contracts, mode],
   );
+
+  function assignableQtyAt(c: Contract, warehouseName: string): number {
+    return mode === "OUTBOUND"
+      ? warehouseAbsorbableQtyAt(c, warehouseName)
+      : warehouseOpenQtyAt(c, warehouseName);
+  }
 
   const matchingOrders = useMemo(() => {
     if (!selectedTruck) return [];
@@ -136,8 +150,14 @@ export function ManualTruckAllocation({
       .filter((c) => counterpartyMatchesTruck(selectedTruck, c))
       .filter((c) => commodityMatchesTruck(selectedTruck, c))
       .filter((c) => warehouseMatchesTruck(selectedTruck, c))
-      .filter((c) => warehouseOpenQtyAt(c, selectedTruck.warehouseName) > 0.001);
-  }, [openOrders, selectedTruck]);
+      .filter((c) => {
+        const qty =
+          mode === "OUTBOUND"
+            ? warehouseAbsorbableQtyAt(c, selectedTruck.warehouseName)
+            : warehouseOpenQtyAt(c, selectedTruck.warehouseName);
+        return qty > 0.001;
+      });
+  }, [openOrders, selectedTruck, mode]);
 
   const visibleOrders = selectedTruck ? matchingOrders : [];
   const ordersPagination = useListPagination(visibleOrders, { resetKey: selectedTruck?.id ?? "none" });
@@ -246,7 +266,7 @@ export function ManualTruckAllocation({
                   <th>Unit</th>
                   <th>Contract</th>
                   <th>{fulfilledLabel}</th>
-                  <th>Open</th>
+                  <th>{mode === "OUTBOUND" ? "Absorbable" : "Open"}</th>
                   {selectedTruck && <th>Allocate</th>}
                 </tr>
               </thead>
@@ -256,8 +276,10 @@ export function ManualTruckAllocation({
                   const unit = c.quantityUnit;
                   const openQty =
                     selectedTruck && canAllocate
-                      ? warehouseOpenQtyAt(c, selectedTruck.warehouseName)
-                      : c.openQtyMt;
+                      ? assignableQtyAt(c, selectedTruck.warehouseName)
+                      : mode === "OUTBOUND"
+                        ? (c.absorbableQtyMt ?? c.openQtyMt)
+                        : c.openQtyMt;
                   const maxQty = canAllocate && selectedTruck ? maxAllocatable(selectedTruck, openQty, unit) : 0;
                   return (
                     <tr

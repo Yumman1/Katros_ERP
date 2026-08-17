@@ -67,3 +67,35 @@ export function shouldAutoCloseContract(input: {
   const { contractualQtyMt, receivedQtyMt, toleranceMt } = input;
   return receivedQtyMt > autoCloseThresholdQty(contractualQtyMt, toleranceMt);
 }
+
+/** Remaining qty a contract can still absorb before hitting contract + tolerance. */
+export function contractAbsorbableQtyMt(
+  contractualQtyMt: number,
+  contractFulfilledMt: number,
+  toleranceMt: number,
+): number {
+  return Math.max(
+    0,
+    autoCloseThresholdQty(contractualQtyMt, toleranceMt) - contractFulfilledMt,
+  );
+}
+
+/** Remaining qty assignable at one warehouse, capped by contract-level tolerance headroom. */
+export function warehouseAbsorbableQtyMt(input: {
+  contractualQtyMt: number;
+  contractFulfilledMt: number;
+  whAllocatedMt: number;
+  whFulfilledMt: number;
+  toleranceMt: number;
+}): number {
+  const contractHeadroom = contractAbsorbableQtyMt(
+    input.contractualQtyMt,
+    input.contractFulfilledMt,
+    input.toleranceMt,
+  );
+  const whHeadroom = Math.max(
+    0,
+    input.whAllocatedMt + input.toleranceMt - input.whFulfilledMt,
+  );
+  return Math.min(contractHeadroom, whHeadroom);
+}
