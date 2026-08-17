@@ -272,39 +272,6 @@ export async function upsertDailyMarketPrice(input: {
   return rowToStored(saved);
 }
 
-/** Publish Corn Summer and Winter position marks in one step (PKR / 40-kg maund). */
-export async function publishCornPositionPrices(input: {
-  summerPkrPerMaund: number;
-  winterPkrPerMaund: number;
-  priceDate?: string;
-  updatedBy?: string;
-}): Promise<{ summer: StoredMarketPrice; winter: StoredMarketPrice }> {
-  const common = {
-    priceDate: input.priceDate,
-    updatedBy: input.updatedBy,
-    yesterdayCurrency: "PKR" as const,
-    yesterdayUnit: "MAUND_40" as const,
-  };
-  const [summer, winter] = await Promise.all([
-    upsertDailyMarketPrice({
-      code: "CORN",
-      season: "SUMMER",
-      yesterdayRate: input.summerPkrPerMaund,
-      ...common,
-    }),
-    upsertDailyMarketPrice({
-      code: "CORN",
-      season: "WINTER",
-      yesterdayRate: input.winterPkrPerMaund,
-      ...common,
-    }),
-  ]);
-  if (!summer || !winter) {
-    throw new Error("Could not publish corn position prices");
-  }
-  return { summer, winter };
-}
-
 export async function getDeskMarketPrice(
   code: string,
   season: TradeSeason = "SUMMER",

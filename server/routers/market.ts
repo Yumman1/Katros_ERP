@@ -6,7 +6,6 @@ import {
   deskMarketUnits,
   getMarketPriceSnapshot,
   listDailyMarketPrices,
-  publishCornPositionPrices,
   upsertDailyMarketPrice,
 } from "@/server/market-prices";
 
@@ -60,31 +59,6 @@ export const marketRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not publish price",
-        });
-      }
-    }),
-
-  /** Corn Summer + Winter marks for the net position mail (PKR / 40-kg maund). */
-  publishCornPositionPrices: roleProcedure([...execRoles])
-    .input(
-      z.object({
-        summerPkrPerMaund: z.number().positive(),
-        winterPkrPerMaund: z.number().positive(),
-        priceDate: z.string().optional(),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      try {
-        return await publishCornPositionPrices({
-          summerPkrPerMaund: input.summerPkrPerMaund,
-          winterPkrPerMaund: input.winterPkrPerMaund,
-          priceDate: input.priceDate,
-          updatedBy: ctx.session.user.name ?? undefined,
-        });
-      } catch (e) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: e instanceof Error ? e.message : "Could not publish corn prices",
         });
       }
     }),

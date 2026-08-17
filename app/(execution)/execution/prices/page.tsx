@@ -4,7 +4,7 @@ import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency } from "@/lib/formatters/numbers";
 
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState } from "react";
 import { formatPkDateTime, pkToday } from "@/lib/formatters/datetime";
 
 type RowDraft = {
@@ -27,25 +27,6 @@ function parseOptionalPositive(raw: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function pkrPerMaundFromRow(row: {
-  yesterdayRate: number | null;
-  yesterdayCurrency: string;
-  yesterdayUnit: string;
-  cnf: number | null;
-  cnfCurrency: string;
-  cnfUnit: string;
-}): number | null {
-  const leg =
-    row.yesterdayRate != null &&
-    row.yesterdayCurrency === "PKR" &&
-    row.yesterdayUnit === "MAUND_40"
-      ? row.yesterdayRate
-      : row.cnf != null && row.cnfCurrency === "PKR" && row.cnfUnit === "MAUND_40"
-        ? row.cnf
-        : null;
-  return leg;
-}
-
 export default function ExecutionDailyPricesPage() {
   const utils = trpc.useUtils();
   const { data: rows, isLoading } = trpc.market.dailyPrices.useQuery(undefined, {
@@ -59,38 +40,10 @@ export default function ExecutionDailyPricesPage() {
       void utils.trader.seasonNetPositions.invalidate();
     },
   });
-  const publishCorn = trpc.market.publishCornPositionPrices.useMutation({
-    onSuccess: () => {
-      void utils.market.dailyPrices.invalidate();
-      void utils.market.snapshot.invalidate();
-      void utils.trader.seasonNetPositions.invalidate();
-    },
-  });
 
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>({});
   const [formError, setFormError] = useState<string | null>(null);
-  const [cornSummerDraft, setCornSummerDraft] = useState("");
-  const [cornWinterDraft, setCornWinterDraft] = useState("");
   const today = pkToday();
-
-  const cornSummerRow = useMemo(
-    () => rows?.find((r) => r.code === "CORN" && r.season === "SUMMER"),
-    [rows],
-  );
-  const cornWinterRow = useMemo(
-    () => rows?.find((r) => r.code === "CORN" && r.season === "WINTER"),
-    [rows],
-  );
-  const publishedCornSummer = cornSummerRow ? pkrPerMaundFromRow(cornSummerRow) : null;
-  const publishedCornWinter = cornWinterRow ? pkrPerMaundFromRow(cornWinterRow) : null;
-  const cornPrefilled = useRef(false);
-
-  useEffect(() => {
-    if (cornPrefilled.current || !rows) return;
-    cornPrefilled.current = true;
-    if (publishedCornSummer != null) setCornSummerDraft(String(publishedCornSummer));
-    if (publishedCornWinter != null) setCornWinterDraft(String(publishedCornWinter));
-  }, [rows, publishedCornSummer, publishedCornWinter]);
 
   const currencies = options?.currencies ?? ["USD", "PKR", "MYR"];
   const units = options?.units ?? ["MT", "KG", "MAUND_40", "MAUND_37"];
@@ -180,27 +133,6 @@ export default function ExecutionDailyPricesPage() {
     });
   };
 
-  const onPublishCorn = () => {
-    const summer = parseOptionalPositive(cornSummerDraft);
-    const winter = parseOptionalPositive(cornWinterDraft);
-    if (!summer) {
-      setFormError("Enter a valid Corn Summer price (PKR / maund).");
-      return;
-    }
-    if (!winter) {
-      setFormError("Enter a valid Corn Winter price (PKR / maund).");
-      return;
-    }
-    setFormError(null);
-    publishCorn.mutate(
-      { summerPkrPerMaund: summer, winterPkrPerMaund: winter, priceDate: today },
-      { onError: (err) => setFormError(err.message) },
-    );
-  };
-
-  const canPublishCorn =
-    parseOptionalPositive(cornSummerDraft) != null && parseOptionalPositive(cornWinterDraft) != null;
-
   const publishedCount = useMemo(
     () => rows?.filter((r) => r.cnf != null || r.yesterdayRate != null).length ?? 0,
     [rows],
@@ -212,74 +144,19 @@ export default function ExecutionDailyPricesPage() {
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Daily Market Prices</h1>
         <p className="text-sm text-muted-foreground">
-          Publish corn Summer and Winter marks for the net position mail, or use the full table below
-          for CNF and other commodities.
+          Enter CNF (optional) and yesterday&apos;s local price per commodity column, then click{" "}
+          <strong className="text-foreground">Publish</strong>. Corn publishes separate Summer and
+          Winter rates for the net position mail.
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           {publishedCount} of {rows?.length ?? 0} price rows published ({today})
         </p>
-        {(formError || upsert.error || publishCorn.error) && (
+        {(formError || upsert.error) && (
           <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {formError ?? upsert.error?.message ?? publishCorn.error?.message}
+            {formError ?? upsert.error?.message}
           </p>
         )}
       </div>
-
-      <section className="exec-panel space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">Corn position prices</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            PKR per 40-kg maund — feeds the Corn Summer and Corn Winter columns on Net Position
-            immediately after publish.
-          </p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block space-y-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Corn Summer</span>
-            <input
-              type="number"
-              step="1"
-              min="0"
-              placeholder={publishedCornSummer != null ? String(publishedCornSummer) : "PKR / maund"}
-              value={cornSummerDraft}
-              onChange={(e) => setCornSummerDraft(e.target.value)}
-              className="kastros-input w-full max-w-xs data-grid"
-            />
-            {cornSummerRow?.updatedAt && (
-              <span className="block text-[11px] text-muted-foreground">
-                Published {formatPkDateTime(cornSummerRow.updatedAt, "")}
-                {cornSummerRow.updatedBy ? ` · ${cornSummerRow.updatedBy}` : ""}
-              </span>
-            )}
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Corn Winter</span>
-            <input
-              type="number"
-              step="1"
-              min="0"
-              placeholder={publishedCornWinter != null ? String(publishedCornWinter) : "PKR / maund"}
-              value={cornWinterDraft}
-              onChange={(e) => setCornWinterDraft(e.target.value)}
-              className="kastros-input w-full max-w-xs data-grid"
-            />
-            {cornWinterRow?.updatedAt && (
-              <span className="block text-[11px] text-muted-foreground">
-                Published {formatPkDateTime(cornWinterRow.updatedAt, "")}
-                {cornWinterRow.updatedBy ? ` · ${cornWinterRow.updatedBy}` : ""}
-              </span>
-            )}
-          </label>
-        </div>
-        <button
-          type="button"
-          disabled={publishCorn.isPending || !canPublishCorn}
-          onClick={onPublishCorn}
-          className="kastros-btn-primary px-4 py-2 text-sm disabled:opacity-40"
-        >
-          {publishCorn.isPending ? "Publishing…" : "Publish corn prices"}
-        </button>
-      </section>
 
       {isLoading ? (
         <div className="text-muted-foreground">Loading commodities…</div>
