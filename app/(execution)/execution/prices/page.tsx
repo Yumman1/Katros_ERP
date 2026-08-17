@@ -5,6 +5,7 @@ import { trpc } from "@/lib/trpc/client";
 import { formatCurrency } from "@/lib/formatters/numbers";
 
 import { useMemo, useState } from "react";
+import { dailyPriceRowSubtitle } from "@/lib/desk-market-price-meta";
 import { formatPkDateTime, pkToday } from "@/lib/formatters/datetime";
 
 type RowDraft = {
@@ -197,7 +198,7 @@ export default function ExecutionDailyPricesPage() {
                     <td>
                       <div className="font-medium text-foreground">{row.name}</div>
                       <div className="text-xs text-muted-foreground">
-                        {row.code} · {row.season.charAt(0) + row.season.slice(1).toLowerCase()}
+                        {dailyPriceRowSubtitle(row.code, row.season)}
                       </div>
                     </td>
                     <td>

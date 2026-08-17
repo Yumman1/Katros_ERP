@@ -8,8 +8,7 @@ import { deskLegsToPkrPerMaund } from "@/lib/desk-mark-price";
 export const DESK_MARKET_CURRENCIES = ["USD", "PKR", "MYR", "EUR", "CNY"] as const;
 export type DeskMarketCurrency = (typeof DESK_MARKET_CURRENCIES)[number];
 
-/** Commodities that publish separate Daily Prices for Summer and Winter columns. */
-export const SEASON_SPLIT_COMMODITIES = new Set(["CORN"]);
+import { isSeasonSplitCommodity } from "@/lib/desk-market-price-meta";
 
 export type DeskPriceLeg = {
   amount: number;
@@ -64,9 +63,7 @@ function deskKey(code: string, season: TradeSeason): string {
 }
 
 function seasonsForCommodity(code: string): TradeSeason[] {
-  return SEASON_SPLIT_COMMODITIES.has(code.trim().toUpperCase())
-    ? ["SUMMER", "WINTER"]
-    : ["SUMMER"];
+  return isSeasonSplitCommodity(code) ? ["SUMMER", "WINTER"] : ["SUMMER"];
 }
 
 function todayKey() {
@@ -125,11 +122,15 @@ function hasPublishedData(row: StoredMarketPrice | undefined | null): row is Sto
 }
 
 function seasonLabel(commodityName: string, code: string, season: TradeSeason): string {
-  if (!SEASON_SPLIT_COMMODITIES.has(code.trim().toUpperCase())) {
+  if (!isSeasonSplitCommodity(code)) {
     return commodityName;
   }
   const s = season.charAt(0) + season.slice(1).toLowerCase();
-  return `${commodityName} ${s}`;
+  const suffix = ` ${s}`;
+  if (commodityName.toLowerCase().endsWith(suffix.toLowerCase())) {
+    return commodityName;
+  }
+  return `${commodityName}${suffix}`;
 }
 
 function toSnapshot(code: string, name: string, season: TradeSeason, row: StoredMarketPrice): MarketPriceSnapshot {
