@@ -459,3 +459,52 @@ valueUsd = valuePkr / fxRate
 
 FX comes from `PositionMarketInput.fxRate` per season column.
 
+---
+
+## 20. Counterparty ledger totals
+
+**File:** `server/finance/ledger.ts` (`getCounterpartyLedgers`)  
+**UI:** `components/ledgers/counterparty-ledgers-panel.tsx`
+
+Every counterparty has two accounts that never mix: **SELL** (receivables) and **BUY** (payables).
+
+### Buy side — the debit follows the money
+
+**No buy debit posts a claim.** An inbound truck bills its expected invoice on assignment and that amount is stored as `CounterpartyLedgerEntry.amountPkr`, but what the row **debits** is only money that has actually moved:
+
+```
+billedPkr = CounterpartyLedgerEntry.amountPkr          // the bill / the claim
+paidPkr   = min(billedPkr, Σ InboundReceipt.paidAmountPkr for the gatepass)
+amountPkr = paidPkr                                    // what hits the debit column
+```
+
+Each part-payment finance approves adds to `paidAmountPkr` (`server/execution/payments.ts`), so successive releases raise the **same** row's debit — 0 → part → full — instead of posting a new entry. The row reads *Unpaid*, *Part paid*, then *Paid* once every receipt of the gatepass is `PAID` and the debit equals the invoice.
+
+Account totals:
+
+```
+totalBilledPkr      = Σ billedPkr (debits)
+totalDebitPkr       = Σ amountPkr (debits)  → money released
+outstandingDebitPkr = totalBilledPkr − Σ paidPkr
+balancePkr          = totalCreditPkr − totalBilledPkr
+```
+
+Payables never age: a purchase is paid outright or deliberately held (`gateInvoiceStage` `PARTIAL_PAYMENT` / `HOLD_OLD_DUES`), and a hold is a decision rather than an overdue bill.
+
+### Settlement notes (DN / CN)
+
+Cancelling or short-closing a trade posts a note on the trade's own account (`server/trade-closure.ts`), side chosen by `settlementNoteEntryType` so the balance always moves the right way:
+
+| Account | DN (settlement above rate) | CN (below rate) |
+|---------|---------------------------|-----------------|
+| BUY | CREDIT — seller owes us, reduces net payable | DEBIT — we owe the seller |
+| SELL | DEBIT — buyer owes us more | CREDIT — we owe the buyer |
+
+A note is a **claim**, `sourceType = ADJUSTMENT` with `noteStatus = UNPAID`, and it settles **in full or not at all** — `createVoucher` rejects a voucher whose amount differs from the note by more than 0.5 PKR. There is no per-receipt payment channel behind it, so unlike a gate invoice it has no partial state to grow through.
+
+It still obeys the same rule on the buy account: a CN debits **nothing** while unpaid and carries its claim in `billedPkr`, which is what puts it in Outstanding. Once a voucher settles it, `markSettlementNotePaid` flips `noteStatus` to `PAID` and the note **and the voucher credit that paid it drop out of every total together** (`noteStatus === "PAID" || settlesNoteRef`). Both rows stay visible for audit. That exclusion is deliberate twice over: the claim is closed, and money raised to settle a note must never read as free credit available to fund another truck (see `NOT_A_NOTE_VOUCHER` in `availableCreditPkr`).
+
+### Sell side
+
+Receivables debit at face value on truck assignment and are settled by voucher credits, so `billedPkr == amountPkr` and every total above collapses to the classic debit / credit / balance reading. Open (unsettled, unheld) debits age by `dueDate` into the buckets in `lib/finance-policy.ts`.
+

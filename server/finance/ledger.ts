@@ -12,8 +12,11 @@ type Db = PrismaClient | Prisma.TransactionClient;
 /**
  * Every counterparty is ONE record with TWO independent ledger accounts:
  *   SELL — receivables: truck debits (receivable incl. 236G), voucher credits.
- *   BUY  — payables: expected-invoice debits from inbound trucks, payment-out
- *          credits when finance approves a payment.
+ *   BUY  — payables: an inbound truck bills its expected invoice, and the row
+ *          debits the account with the money actually released against it, so
+ *          a part-paid truck grows its own debit until the invoice is cleared.
+ *          Settlement notes bill the same way — a claim until a voucher pays
+ *          it — but they settle in one go rather than truck by truck.
  * Balances and totals never mix across sides.
  */
 
@@ -531,7 +534,14 @@ export type LedgerEntryView = {
   id: string;
   entryDate: Date;
   entryType: "DEBIT" | "CREDIT";
+  /**
+   * What this entry has actually posted to its column. Buy debits post the
+   * money that has moved, so a part-paid truck grows the same row as finance
+   * clears the rest; everywhere else this is the full entry amount.
+   */
   amountPkr: number;
+  /** What the entry claims in full — amountPkr plus whatever has not moved yet. */
+  billedPkr: number;
   sourceType: "GATEPASS" | "VOUCHER" | "PAYMENT" | "ADJUSTMENT" | "INVOICE";
   sourceRef: string | null;
   tradeRef: string | null;
@@ -567,13 +577,16 @@ export type CounterpartyLedgerView = {
   side: CounterpartySide;
   /** Display account id, e.g. CP-00101-S / CP-00101-B. */
   ledgerAccountId: string;
+  /** Money posted to the debit column — on buy accounts, what has been paid. */
   totalDebitPkr: number;
   totalCreditPkr: number;
+  /** What every debit claims in full — gate invoices and open note claims alike. */
+  totalBilledPkr: number;
   /** Debits whose money has already moved (buy: receipts PAID; sell: truck paid). */
   settledDebitPkr: number;
   /** Debits still owed — what this account actually has open. */
   outstandingDebitPkr: number;
-  /** credit − debit; negative = money outstanding on this account. */
+  /** credit − billed; negative = money outstanding on this account. */
   balancePkr: number;
   /** SELL side only: credit available for confirming/settling trucks. */
   availableCreditPkr: number;
@@ -675,7 +688,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     // no credit row to wait for; on the sell side it is the truck being paid,
     // or a settlement invoice fully collected.
     const invStatus = (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) ?? null;
-    const amountPkr = num(e.amountPkr);
+    const billedPkr = num(e.amountPkr);
     // A cancellation note answers to its own status, not to a gatepass or a
     // truck stage — it is settled the moment a voucher pays it.
     const settled =
@@ -690,14 +703,20 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     // How much of this debit the money has actually covered. On the buy side
     // that is the amount paid against the gatepass, so a part-released truck
     // shows its paid share rather than all-or-nothing.
+    const isBuyGateInvoice = e.side === "BUY" && e.sourceType === "GATEPASS";
     const paidPkr =
       e.entryType !== "DEBIT"
         ? 0
-        : e.side === "BUY" && e.sourceType === "GATEPASS"
-          ? Math.min(amountPkr, e.sourceRef ? (paidByGatepass.get(e.sourceRef) ?? 0) : 0)
+        : isBuyGateInvoice
+          ? Math.min(billedPkr, e.sourceRef ? (paidByGatepass.get(e.sourceRef) ?? 0) : 0)
           : settled
-            ? amountPkr
+            ? billedPkr
             : 0;
+    // Every buy debit posts money that has moved, never a claim: a gate invoice
+    // grows with each part-payment finance approves, and a credit note we owe
+    // the seller stays at zero until the voucher paying it clears. The bill
+    // behind either one rides along on billedPkr.
+    const postedPkr = e.entryType === "DEBIT" && e.side === "BUY" ? paidPkr : billedPkr;
     // A deliberate hold is a decision, not an overdue payable — it never ages.
     const held = e.side === "BUY" && e.sourceRef != null && heldGatepasses.has(e.sourceRef);
 
@@ -705,7 +724,8 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       id: e.id,
       entryDate: e.entryDate,
       entryType: e.entryType,
-      amountPkr: num(e.amountPkr),
+      amountPkr: postedPkr,
+      billedPkr,
       sourceType: e.sourceType,
       sourceRef: e.sourceRef,
       tradeRef: e.tradeRef,
@@ -750,6 +770,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       // SELL accounts always shown (voucher targets); BUY only when active.
       if (side === "BUY" && list.length === 0) continue;
       let totalDebit = 0;
+      let totalBilled = 0;
       let totalCredit = 0;
       let settledDebit = 0;
       let earmarked = 0;
@@ -757,18 +778,21 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
       for (const e of list) {
         // A settled note and the voucher that paid it cancel each other out.
         // Both rows stay visible for the audit trail, but neither weighs on
-        // what the account owes any more — the claim is closed.
+        // what the account owes any more — the claim is closed. The pair also
+        // has to stay out of the credit total: money raised to close a note is
+        // spoken for, and counting it would read as funding free for a truck.
         if (e.noteStatus === "PAID" || e.settlesNoteRef) continue;
         if (e.entryType === "DEBIT") {
           totalDebit += e.amountPkr;
+          totalBilled += e.billedPkr;
           const stage = e.saleStage;
           if (side === "SELL" && ((stage && earmarkStages.has(stage)) || e.sourceType === "INVOICE")) {
-            earmarked += e.amountPkr;
+            earmarked += e.billedPkr;
           }
           // Paid money is not owed; what is left ages unless it is being held
           // deliberately, and a fully settled debit never ages.
           settledDebit += e.paidPkr;
-          const openPkr = Math.max(0, e.amountPkr - e.paidPkr);
+          const openPkr = Math.max(0, e.billedPkr - e.paidPkr);
           // Payables do not age: a purchase is paid outright and the truck is
           // released, so a buy debit is either paid or deliberately held —
           // neither is an overdue receivable. Aging is a sell-side measure.
@@ -787,9 +811,12 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
         ledgerAccountId: `${cp.code}-${side === "SELL" ? "S" : "B"}`,
         totalDebitPkr: Math.round(totalDebit * 100) / 100,
         totalCreditPkr: Math.round(totalCredit * 100) / 100,
+        totalBilledPkr: Math.round(totalBilled * 100) / 100,
         settledDebitPkr: Math.round(settledDebit * 100) / 100,
-        outstandingDebitPkr: Math.round((totalDebit - settledDebit) * 100) / 100,
-        balancePkr: Math.round((totalCredit - totalDebit) * 100) / 100,
+        // What the account still owes answers to the bill, not to the part of
+        // it that has already been debited.
+        outstandingDebitPkr: Math.round((totalBilled - settledDebit) * 100) / 100,
+        balancePkr: Math.round((totalCredit - totalBilled) * 100) / 100,
         availableCreditPkr:
           side === "SELL" ? Math.round(Math.max(0, totalCredit - earmarked) * 100) / 100 : 0,
         aging,

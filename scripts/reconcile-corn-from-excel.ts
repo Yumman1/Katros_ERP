@@ -2,7 +2,8 @@
  * Reconcile Corn Summer trades against the latest Excel workbooks.
  *
  *   npx tsx scripts/reconcile-corn-from-excel.ts              # dry-run manifest
- *   npx tsx scripts/reconcile-corn-from-excel.ts --apply      # apply fixes
+ *   npx tsx scripts/reconcile-corn-from-excel.ts --apply      # apply trade + payment fixes
+ *   npx tsx scripts/reconcile-corn-from-excel.ts --report       # payment mismatches only
  */
 import "./load-env";
 import * as fs from "node:fs";
@@ -10,8 +11,15 @@ import * as path from "node:path";
 import XLSX from "xlsx";
 import { TradeStatus } from "@prisma/client";
 import { prisma } from "@/server/db";
+import { num as dbNum } from "@/server/db/convert";
 import { closeLockedContract } from "@/server/execution/contracts";
 import { refreshContract } from "@/server/execution/contracts";
+import {
+  resolveInboundPayment,
+  showsInTraderApprovals,
+  type InboundExcelRow,
+  type ResolvedInboundPayment,
+} from "./lib/excel-inbound-payment";
 
 const PURCHASE_XLSX =
   process.env.CORN_PURCHASE_XLSX ??
@@ -20,7 +28,26 @@ const EXECUTION_XLSX =
   process.env.CORN_EXECUTION_XLSX ??
   "C:/Users/HP/Downloads/Corn Summer 26 Execution.xlsx";
 const APPLY = process.argv.includes("--apply");
+const REPORT = process.argv.includes("--report");
 const ACTOR = "corn-excel-sync";
+
+type PaymentManifestItem = {
+  kcsNo: string;
+  gatepassNo: string | null;
+  tradeRef: string;
+  action:
+    | "SYNC_PAYMENT_FULL"
+    | "SYNC_PAYMENT_PARTIAL"
+    | "SYNC_PAYMENT_HOLD"
+    | "DELETE_PENDING_PR"
+    | "LEDGER_MARK_PAID"
+    | "OK";
+  excelStatus: string;
+  excelPaid: number;
+  dbPaid: number;
+  dbGateStage: string | null;
+  dbReceiptStatus: string;
+};
 
 type PurchaseRow = {
   ref: string;
@@ -339,6 +366,228 @@ async function buildManifest(): Promise<{
   return { manifest, purchase, inbound, sales };
 }
 
+function inboundExcelRows(inbound: InboundRow[]): InboundExcelRow[] {
+  return inbound.map((r) => ({
+    kcs: r.kcs,
+    trade: r.trade,
+    status: r.status,
+    amount: r.amount,
+  }));
+}
+
+async function buildPaymentManifest(inbound: InboundRow[]): Promise<PaymentManifestItem[]> {
+  const excelRows = inboundExcelRows(inbound);
+  const dbReceipts = await prisma.inboundReceipt.findMany({
+    select: {
+      kcsNo: true,
+      gatepassNo: true,
+      tradeRef: true,
+      amountDue: true,
+      paidAmountPkr: true,
+      status: true,
+      paymentRequestId: true,
+    },
+  });
+  const receiptByKcs = new Map(dbReceipts.map((r) => [r.kcsNo, r]));
+
+  const dbTrucks = await prisma.pendingTruck.findMany({
+    select: { gatepassNo: true, gateInvoiceStage: true },
+  });
+  const truckByGp = new Map(dbTrucks.map((t) => [t.gatepassNo, t]));
+
+  const pendingPrByReceipt = new Map<string, string>();
+  const pendingPrs = await prisma.paymentRequest.findMany({
+    where: { sourceType: "INBOUND", status: "PENDING" },
+    select: { id: true, requestRef: true, sourceId: true },
+  });
+  for (const pr of pendingPrs) pendingPrByReceipt.set(pr.sourceId, pr.requestRef);
+
+  const items: PaymentManifestItem[] = [];
+
+  for (const xl of excelRows) {
+    const db = receiptByKcs.get(xl.kcs);
+    if (!db) continue;
+
+    const resolved = resolveInboundPayment(xl, excelRows);
+    const truck = db.gatepassNo ? truckByGp.get(db.gatepassNo) : undefined;
+    const dbPaid = dbNum(db.paidAmountPkr);
+    const dbStage = truck?.gateInvoiceStage ?? null;
+    const dbStatus = db.status;
+
+    let action: PaymentManifestItem["action"] = "OK";
+
+    if (resolved.class === "FULL_RELEASE") {
+      const needsReceipt = dbStatus !== "PAID" || Math.abs(dbPaid - dbNum(db.amountDue)) > 0.01;
+      const needsStage = dbStage !== "PAYMENT_APPROVED";
+      if (needsReceipt || needsStage) action = "SYNC_PAYMENT_FULL";
+    } else if (resolved.class === "PARTIAL_HOLD") {
+      const needsPaid = Math.abs(dbPaid - resolved.paidAmountPkr) > 0.01;
+      const needsStage = dbStage !== resolved.gateInvoiceStage;
+      const needsStatus =
+        resolved.receiptStatus === "PARTIALLY_PAID"
+          ? dbStatus !== "PARTIALLY_PAID"
+          : resolved.receiptStatus === "PAID"
+            ? dbStatus !== "PAID"
+            : dbStatus !== "ALLOCATED";
+      if (needsPaid || needsStage || needsStatus) action = "SYNC_PAYMENT_PARTIAL";
+    } else if (resolved.class === "FULL_HOLD") {
+      if (dbStage !== "HOLD_OLD_DUES" || dbPaid > 0.005 || dbStatus === "PAID") {
+        action = "SYNC_PAYMENT_HOLD";
+      }
+    }
+
+    if (
+      db.paymentRequestId &&
+      pendingPrByReceipt.has(db.paymentRequestId) &&
+      resolved.class === "FULL_RELEASE"
+    ) {
+      action = action === "OK" ? "DELETE_PENDING_PR" : action;
+    }
+
+    if (action !== "OK" || resolved.class !== "NO_PAYMENT") {
+      items.push({
+        kcsNo: xl.kcs,
+        gatepassNo: db.gatepassNo,
+        tradeRef: db.tradeRef,
+        action,
+        excelStatus: xl.status,
+        excelPaid: resolved.paidAmountPkr,
+        dbPaid,
+        dbGateStage: dbStage,
+        dbReceiptStatus: dbStatus,
+      });
+    }
+  }
+
+  return items.filter((i) => i.action !== "OK");
+}
+
+async function markLedgerPaid(gatepassNo: string): Promise<void> {
+  const pt = await prisma.pendingTruck.findFirst({
+    where: { gatepassNo },
+    select: { truckNo: true },
+  });
+  if (!pt) return;
+  await prisma.counterpartyLedgerEntry.updateMany({
+    where: { side: "BUY", sourceType: "GATEPASS", sourceRef: gatepassNo },
+    data: { note: `Inbound ${gatepassNo} · ${pt.truckNo} — paid` },
+  });
+}
+
+async function applyPaymentSync(resolved: ResolvedInboundPayment, receiptId: string, gatepassNo: string | null): Promise<void> {
+  const receipt = await prisma.inboundReceipt.findUniqueOrThrow({
+    where: { id: receiptId },
+    select: { amountDue: true, paymentRequestId: true },
+  });
+  const amountDue = dbNum(receipt.amountDue);
+
+  if (resolved.class === "FULL_RELEASE") {
+    if (receipt.paymentRequestId) {
+      await prisma.paymentRequest.updateMany({
+        where: { id: receipt.paymentRequestId, status: "PENDING" },
+        data: { status: "APPROVED", approvedBy: ACTOR, approvedAt: new Date() },
+      });
+    }
+    await prisma.inboundReceipt.update({
+      where: { id: receiptId },
+      data: {
+        paidAmountPkr: amountDue,
+        status: "PAID",
+        paymentRequestId: null,
+      },
+    });
+    if (gatepassNo) {
+      await prisma.pendingTruck.updateMany({
+        where: { gatepassNo },
+        data: { gateInvoiceStage: "PAYMENT_APPROVED", gateInvoiceHoldNote: null },
+      });
+      await markLedgerPaid(gatepassNo);
+    }
+    return;
+  }
+
+  if (resolved.class === "PARTIAL_HOLD" && gatepassNo) {
+    await prisma.inboundReceipt.update({
+      where: { id: receiptId },
+      data: {
+        paidAmountPkr: resolved.paidAmountPkr,
+        status: resolved.receiptStatus,
+      },
+    });
+    await prisma.pendingTruck.updateMany({
+      where: { gatepassNo },
+      data: {
+        gateInvoiceStage: resolved.gateInvoiceStage,
+        gateInvoiceHoldNote: resolved.holdNote,
+      },
+    });
+    return;
+  }
+
+  if (resolved.class === "FULL_HOLD" && gatepassNo) {
+    if (receipt.paymentRequestId) {
+      await prisma.paymentRequest.updateMany({
+        where: { id: receipt.paymentRequestId, status: "PENDING" },
+        data: { status: "APPROVED", approvedBy: ACTOR, approvedAt: new Date() },
+      });
+    }
+    await prisma.inboundReceipt.update({
+      where: { id: receiptId },
+      data: { paidAmountPkr: 0, status: "ALLOCATED", paymentRequestId: null },
+    });
+    await prisma.pendingTruck.updateMany({
+      where: { gatepassNo },
+      data: { gateInvoiceStage: "HOLD_OLD_DUES", gateInvoiceHoldNote: resolved.holdNote },
+    });
+  }
+}
+
+async function applyPaymentManifest(inbound: InboundRow[], items: PaymentManifestItem[]): Promise<void> {
+  const excelRows = inboundExcelRows(inbound);
+  const byKcs = new Map(items.map((i) => [i.kcsNo, i]));
+
+  for (const xl of excelRows) {
+    const item = byKcs.get(xl.kcs);
+    if (!item || item.action === "OK") continue;
+
+    const receipt = await prisma.inboundReceipt.findFirst({ where: { kcsNo: xl.kcs } });
+    if (!receipt) continue;
+
+    const resolved = resolveInboundPayment(xl, excelRows);
+    console.log(
+      `[${item.action}] ${xl.kcs} ${item.gatepassNo ?? "—"} excel="${xl.status}" paid ${item.dbPaid} → ${resolved.paidAmountPkr}`,
+    );
+    await applyPaymentSync(resolved, receipt.id, receipt.gatepassNo);
+  }
+}
+
+async function printPaymentReport(inbound: InboundRow[]): Promise<void> {
+  const mismatches = await buildPaymentManifest(inbound);
+  const approvalRows = await prisma.pendingTruck.findMany({
+    where: {
+      gateInvoiceNo: { not: null },
+      gateInvoiceStage: { in: ["PENDING_TRADE_APPROVAL", "HOLD_OLD_DUES", "PARTIAL_PAYMENT"] },
+    },
+    select: { gatepassNo: true, gateInvoiceStage: true, gateInvoiceNo: true },
+  });
+
+  console.log(`\nPayment mismatches: ${mismatches.length}`);
+  for (const m of mismatches) {
+    console.log(
+      `  [${m.action}] ${m.kcsNo} gp=${m.gatepassNo} stage=${m.dbGateStage} paid=${m.dbPaid} excelPaid=${m.excelPaid} "${m.excelStatus}"`,
+    );
+  }
+
+  const inQueue = approvalRows.filter((r) => showsInTraderApprovals(r.gateInvoiceStage));
+  console.log(`\nTrader approval queue (all traders): ${inQueue.length} trucks`);
+  for (const r of inQueue) {
+    console.log(`  ${r.gatepassNo} inv=${r.gateInvoiceNo} stage=${r.gateInvoiceStage}`);
+  }
+  console.log(
+    `  Expected after sync: 4 PARTIAL_PAYMENT (inv 18 + 21), 0 PENDING_TRADE_APPROVAL`,
+  );
+}
+
 async function ensureCounterparty(input: {
   name: string;
   code?: string | null;
@@ -364,9 +613,13 @@ async function ensureCounterparty(input: {
   return created.id;
 }
 
-async function insertInboundFromExcel(row: InboundRow): Promise<void> {
+async function insertInboundFromExcel(row: InboundRow, allInbound: InboundRow[]): Promise<void> {
   const mt = (row.finalKg ?? row.whKg ?? 0) / 1000;
   const amountDue = row.amount ?? 0;
+  const resolved = resolveInboundPayment(
+    { kcs: row.kcs, trade: row.trade, status: row.status, amount: row.amount },
+    inboundExcelRows(allInbound),
+  );
   await prisma.inboundReceipt.create({
     data: {
       id: `sync_rc_${row.kcs.replace(/-/g, "_").toLowerCase()}`,
@@ -384,8 +637,8 @@ async function insertInboundFromExcel(row: InboundRow): Promise<void> {
       weightDiffKg: 0,
       allocatedQtyMt: mt,
       amountDue,
-      paidAmountPkr: row.status.toLowerCase().includes("payment release") ? amountDue : 0,
-      status: row.status.toLowerCase().includes("payment release") ? "PAID" : "ALLOCATED",
+      paidAmountPkr: resolved.paidAmountPkr,
+      status: resolved.receiptStatus,
     },
   });
 }
@@ -406,7 +659,7 @@ async function applyManifest(
     const row = inboundByKcs.get(kcs);
     if (!row) continue;
     console.log(`Insert inbound ${kcs} → ${row.trade} (${((row.finalKg ?? 0) / 1000).toFixed(3)} MT)`);
-    await insertInboundFromExcel(row);
+    await insertInboundFromExcel(row, inbound);
     await refreshContract(row.trade);
   }
 
@@ -539,19 +792,50 @@ async function main(): Promise<void> {
   if (!fs.existsSync(PURCHASE_XLSX)) throw new Error(`Missing purchase workbook: ${PURCHASE_XLSX}`);
   if (!fs.existsSync(EXECUTION_XLSX)) throw new Error(`Missing execution workbook: ${EXECUTION_XLSX}`);
 
+  const { trades: purchase, inbound } = parsePurchaseWorkbook(PURCHASE_XLSX);
+  const sales = parseExecutionWorkbook(EXECUTION_XLSX);
+
+  if (REPORT) {
+    await printPaymentReport(inbound);
+    return;
+  }
+
   console.log(`Mode: ${APPLY ? "APPLY" : "DRY-RUN"}`);
-  const { manifest, purchase, inbound, sales } = await buildManifest();
+  const { manifest } = await buildManifest();
+  const paymentManifest = await buildPaymentManifest(inbound);
+
   const outPath = path.join(process.cwd(), "scripts", "corn-excel-sync-manifest.json");
-  fs.writeFileSync(outPath, JSON.stringify({ generatedAt: new Date().toISOString(), manifest }, null, 2));
-  console.log(`Manifest: ${manifest.length} items → ${outPath}`);
+  fs.writeFileSync(
+    outPath,
+    JSON.stringify(
+      { generatedAt: new Date().toISOString(), manifest, paymentManifest },
+      null,
+      2,
+    ),
+  );
+  console.log(`Trade manifest: ${manifest.length} items → ${outPath}`);
   for (const m of manifest) {
     console.log(`  [${m.action}] ${m.tradeRef}.${m.field}: excel=${JSON.stringify(m.excelValue)} db=${JSON.stringify(m.dbValue)}`);
   }
 
+  console.log(`Payment manifest: ${paymentManifest.length} mismatches`);
+  for (const m of paymentManifest) {
+    console.log(
+      `  [${m.action}] ${m.kcsNo} gp=${m.gatepassNo} paid ${m.dbPaid}→${m.excelPaid} stage=${m.dbGateStage} "${m.excelStatus}"`,
+    );
+  }
+
+  await printPaymentReport(inbound);
+
   if (APPLY) {
     await applyManifest(manifest, purchase, inbound, sales);
+    if (paymentManifest.length) {
+      console.log("\nApplying payment sync…");
+      await applyPaymentManifest(inbound, paymentManifest);
+    }
     console.log("\nAfter sync:");
     await printNetPosition();
+    await printPaymentReport(inbound);
   } else {
     console.log("\nCurrent position:");
     await printNetPosition();

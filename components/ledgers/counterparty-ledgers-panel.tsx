@@ -11,7 +11,10 @@ export type LedgerEntryRow = {
   id: string;
   entryDate: Date;
   entryType: "DEBIT" | "CREDIT";
+  /** Money posted to the column — buy debits post only what has moved. */
   amountPkr: number;
+  /** What the entry claims in full — amountPkr plus whatever has not moved yet. */
+  billedPkr: number;
   sourceType: "GATEPASS" | "VOUCHER" | "PAYMENT" | "ADJUSTMENT" | "INVOICE";
   sourceRef: string | null;
   tradeRef: string | null;
@@ -46,13 +49,16 @@ export type LedgerRow = {
   side: "BUY" | "SELL";
   /** Display account id, e.g. "CP-00101-S". */
   ledgerAccountId: string;
+  /** Money posted to the debit column — on buy accounts, what has been paid. */
   totalDebitPkr: number;
   totalCreditPkr: number;
+  /** What every debit claims in full — gate invoices and open note claims alike. */
+  totalBilledPkr: number;
   /** Debits whose money has already moved (buy: receipt PAID; sell: truck paid). */
   settledDebitPkr: number;
   /** Debits still owed on this account. */
   outstandingDebitPkr: number;
-  /** credit − debit; negative = money outstanding on this account. */
+  /** credit − invoiced; negative = money outstanding on this account. */
   balancePkr: number;
   /** SELL only — credit available for settling trucks; 0 for BUY. */
   availableCreditPkr: number;
@@ -150,7 +156,7 @@ export function CounterpartyLedgersPanel({
       <SideSection
         side="BUY"
         heading="Buy ledgers (purchases)"
-        description="What we owe sellers and what they owe us — truck debits, payment credits, and debit-note receivables on one account."
+        description="What we owe sellers and what they owe us — invoices billed, the payments released against them, and debit-note receivables on one account."
         accounts={buyRows}
         expanded={expanded}
         setExpanded={setExpanded}
@@ -183,7 +189,9 @@ function SideSection({
   const totals = useMemo(() => {
     const debit = accounts.reduce((s, r) => s + r.totalDebitPkr, 0);
     const credit = accounts.reduce((s, r) => s + r.totalCreditPkr, 0);
-    return { debit, credit, balance: credit - debit };
+    const billed = accounts.reduce((s, r) => s + r.totalBilledPkr, 0);
+    const outstanding = accounts.reduce((s, r) => s + r.outstandingDebitPkr, 0);
+    return { debit, credit, billed, outstanding, balance: credit - billed };
   }, [accounts]);
 
   return (
@@ -193,17 +201,31 @@ function SideSection({
         <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
       </div>
 
-      {/* Both sides read as debit / credit / balance. A buy account can carry
-          receivables too — debit notes post as unpaid claims until settled. */}
-      <div className="grid gap-3 sm:grid-cols-3">
-        <SummaryCell label="Total debit" value={fmtPkr(totals.debit)} tone="text-destructive" />
-        <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
-        <SummaryCell
-          label="Net balance"
-          value={fmtPkr(totals.balance)}
-          tone={totals.balance >= 0 ? "text-success" : "text-destructive"}
-        />
-      </div>
+      {/* A sell account reads as debit / credit / balance. A buy account reads
+          as what was billed against what has been released, since its debit is
+          the money that actually moved — invoices and note claims alike. */}
+      {side === "SELL" ? (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <SummaryCell label="Total debit" value={fmtPkr(totals.debit)} tone="text-destructive" />
+          <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
+          <SummaryCell
+            label="Net balance"
+            value={fmtPkr(totals.balance)}
+            tone={totals.balance >= 0 ? "text-success" : "text-destructive"}
+          />
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-4">
+          <SummaryCell label="Total billed" value={fmtPkr(totals.billed)} tone="text-foreground" />
+          <SummaryCell label="Debited (paid)" value={fmtPkr(totals.debit)} tone="text-destructive" />
+          <SummaryCell
+            label="Outstanding"
+            value={fmtPkr(totals.outstanding)}
+            tone={totals.outstanding > 0 ? "text-warning" : "text-success"}
+          />
+          <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
+        </div>
+      )}
 
       {side === "SELL" ? (
         <p className="text-xs text-muted-foreground">
@@ -212,9 +234,12 @@ function SideSection({
         </p>
       ) : (
         <p className="text-xs text-muted-foreground">
-          Truck debits bill on assignment; payment credits settle when finance marks the receipt paid.
-          Debit notes raise receivables on this account until a voucher settles them. This ledger never
-          mixes with the sell side.
+          A truck bills its invoice on assignment, and the debit follows the money: each payment finance
+          releases raises the same row, so a part-paid invoice debits only what was released and carries
+          the full amount once it clears. Outstanding is the rest of the bill. Credit notes bill the same
+          way and debit nothing until their voucher clears; debit notes raise receivables on this
+          account. A settled note and the voucher that paid it drop out of the totals together. This
+          ledger never mixes with the sell side.
         </p>
       )}
 
@@ -275,13 +300,30 @@ function AccountCard({
           </span>
         </div>
         <div className="flex flex-wrap justify-end gap-x-6 gap-y-2 text-right">
-          <Metric label="Debit" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
-          <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
-          <Metric
-            label="Balance"
-            value={fmtPkr(r.balancePkr)}
-            tone={r.balancePkr >= 0 ? "text-success" : "text-destructive"}
-          />
+          {isSell ? (
+            <>
+              <Metric label="Debit" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
+              <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
+              <Metric
+                label="Balance"
+                value={fmtPkr(r.balancePkr)}
+                tone={r.balancePkr >= 0 ? "text-success" : "text-destructive"}
+              />
+            </>
+          ) : (
+            <>
+              <Metric label="Billed" value={fmtPkr(r.totalBilledPkr)} tone="text-foreground" />
+              <Metric label="Debited (paid)" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
+              <Metric
+                label="Outstanding"
+                value={fmtPkr(r.outstandingDebitPkr)}
+                tone={r.outstandingDebitPkr > 0 ? "text-warning" : "text-success"}
+              />
+              {r.totalCreditPkr > 0 && (
+                <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -379,6 +421,7 @@ function AccountCard({
                                   ? "bg-success/15 text-success"
                                   : "bg-destructive/15 text-destructive",
                               )}
+                              title={`${fmtPkr(e.billedPkr)} claimed — a note settles in full, so nothing is debited until its voucher clears`}
                             >
                               {noteKindLabel(e.sourceRef)}
                             </span>
@@ -397,7 +440,7 @@ function AccountCard({
                         ) : e.paidPkr ? (
                           <span
                             className="ml-1.5 rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-bold uppercase text-warning"
-                            title={`${fmtPkr(e.paidPkr)} paid, ${fmtPkr(e.amountPkr - e.paidPkr)} held`}
+                            title={`${fmtPkr(e.paidPkr)} released and debited, ${fmtPkr(e.billedPkr - e.paidPkr)} of the invoice still outstanding`}
                           >
                             Part paid
                           </span>
@@ -405,9 +448,25 @@ function AccountCard({
                           <span className="ml-1.5 rounded-full bg-foreground/[0.08] px-2 py-0.5 text-[10px] font-bold uppercase text-subtle">
                             Held
                           </span>
+                        ) : e.entryType === "DEBIT" && !isSell && e.sourceType === "GATEPASS" ? (
+                          <span
+                            className="ml-1.5 rounded-full bg-foreground/[0.08] px-2 py-0.5 text-[10px] font-bold uppercase text-subtle"
+                            title={`Invoiced ${fmtPkr(e.billedPkr)} — nothing released yet, so nothing is debited`}
+                          >
+                            Unpaid
+                          </span>
                         ) : null}
                       </td>
-                      <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(e.amountPkr)}</td>
+                      <td className="whitespace-nowrap text-right tabular-nums">
+                        {fmtPkr(e.amountPkr)}
+                        {/* A part-released purchase debits only the money that
+                            moved — the bill behind it stays on the row. */}
+                        {e.billedPkr !== e.amountPkr && (
+                          <div className="text-[10px] font-normal text-subtle">
+                            of {fmtPkr(e.billedPkr)} billed
+                          </div>
+                        )}
+                      </td>
                       <td className="whitespace-nowrap">
                         <span className="text-[10px] uppercase tracking-wider text-subtle">
                           {SOURCE_LABELS[e.sourceType]}

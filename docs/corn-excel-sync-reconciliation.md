@@ -79,10 +79,63 @@ Excel Inbound Details listed **9 KCS rows** totalling **189.055 MT**. The system
 
 ---
 
-## Tools
+---
+
+## Payment / invoice approval sync (17 Aug 2026)
+
+Contract **Close** and gate-invoice **payment approval** are independent. After bulk import + trade close reconciliation, **7 trucks** still appeared on the trader invoice-approvals queue despite Excel showing payment already cleared or correctly held.
+
+Applied via [`scripts/imports/05-corn-summer-payment-reconciliation.sql`](../scripts/imports/05-corn-summer-payment-reconciliation.sql) and [`scripts/lib/excel-inbound-payment.ts`](../scripts/lib/excel-inbound-payment.ts).
+
+### Excel Inbound Details status → DB storage
+
+| Excel status (col K) | `gateInvoiceStage` | `paidAmountPkr` | `InboundReceipt.status` | Trader buy approvals |
+|----------------------|-------------------|-----------------|---------------------------|----------------------|
+| Payment Release | `PAYMENT_APPROVED` | full `amountDue` | `PAID` | Hidden |
+| 1M / 1.1M / 1278000 hold + Remaining Released | `PARTIAL_PAYMENT` | pro-rata released share | `PARTIALLY_PAID` | **Visible** (remainder stuck) |
+| Hold (full) | `HOLD_OLD_DUES` | `0` | `ALLOCATED` | On-hold tab only |
+| DN - Short (KCS-323) | `PAYMENT_APPROVED` | full (treated as cleared) | `PAID` | Hidden |
+| Shifting / FWD to Sufyan | — | `0` | `ALLOCATED` | Hidden |
+
+Historical imports settle on **receipt PAID + gatepass DEBIT** — no buy-side PAYMENT credits ([`scripts/imports/README.md`](../scripts/imports/README.md)).
+
+### Rows fixed (Payment Release stuck in queue)
+
+| KCS | Gatepass | Was | Now |
+|-----|----------|-----|-----|
+| KCS-417 | GP-IN-0411 | `PENDING_TRADE_APPROVAL` | `PAID` / `PAYMENT_APPROVED` |
+| KCS-419 | GP-IN-0413 | `PENDING_TRADE_APPROVAL` | `PAID` / `PAYMENT_APPROVED` |
+| KCS-420 | GP-IN-0414 | `PENDING_TRADE_APPROVAL` | `PAID` / `PAYMENT_APPROVED` |
+| KCS-418 | GP-IN-0412 | `FINANCE_PENDING` + pending `pay-10` | `PAID` / `PAYMENT_APPROVED` |
+| KCS-323 | GP-IN-0280 | `FINANCE_PENDING` + pending `pay-3` | `PAID` / `PAYMENT_APPROVED` |
+
+### Left intentionally in queue (Excel shows remainder held)
+
+| Invoice | Trade | Trucks | Excel status |
+|---------|-------|--------|--------------|
+| 18 | Kas-Cor26-0066 | KCS-406, KCS-407 | 1M Hold / Payment Released |
+| 21 | Kas-Cor26-0058 | KCS-393, KCS-397 | 1278000 Debit note - Remaining Released |
+
+### Post-sync expected counts
+
+| Check | Expected |
+|-------|----------|
+| `PENDING_TRADE_APPROVAL` trucks | **0** |
+| `PARTIAL_PAYMENT` trucks | **4** |
+| Inbound `FINANCE_PENDING` | **0** |
+| Trader buy approval badge | **0** (partials show under "Part paid" only) |
+
+### Tools
+
+- `npx tsx scripts/reconcile-corn-from-excel.ts --report` — payment mismatches vs Excel
+- `npx tsx scripts/reconcile-corn-from-excel.ts --apply` — trade + payment fixes when DB URL configured
+
+---
+
+## Tools (trade sync)
 
 - [`scripts/reconcile-corn-from-excel.ts`](../scripts/reconcile-corn-from-excel.ts) — parse workbooks, emit manifest JSON; `--apply` when `POSTGRES_PRISMA_URL` is configured
-- [`scripts/imports/04-corn-summer-excel-reconciliation.sql`](../scripts/imports/04-corn-summer-excel-reconciliation.sql) — idempotent SQL replay of the sync
+- [`scripts/imports/04-corn-summer-excel-reconciliation.sql`](../scripts/imports/04-corn-summer-excel-reconciliation.sql) — idempotent SQL replay of the trade sync
 
 ---
 
