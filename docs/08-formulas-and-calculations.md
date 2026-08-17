@@ -400,3 +400,62 @@ else → PURCHASE_DELIVERED
 ```
 
 See [05-execution-profiles.md](./05-execution-profiles.md).
+
+---
+
+## 19. Net position — quantities, entry rate, market rate
+
+**File:** `server/net-position.ts`  
+**UI:** `components/position/net-position-panel.tsx`  
+**Daily Prices:** `server/market-prices.ts`, `app/(execution)/execution/prices/page.tsx`
+
+### Quantities (per commodity + season column)
+
+```
+Net Position (MT) = Open Purchases + Inventory (At Warehouse) − Open Sales
+```
+
+| Row | Source |
+|-----|--------|
+| Open Purchases | Sum of `openQtyMt` on **Open** BUY `ExecutionContract` rows in that season |
+| Inventory | Σ buy inbound receipts − Σ sell outbound dispatches + external `StockTransfer` receipts (`externalOrigin` set) |
+| Open Sales | Sum of `openQtyMt` on **Open** SELL contracts in that season |
+
+### Trade entry rate (₨/maund)
+
+Same metric as **Execution → Inventory → Total weighted purchase price**, scoped per commodity + season column:
+
+```
+entryRate = Σ (receipt qty × contract rate PKR/MT) / Σ receipt qty
+            ─────────────────────────────────────────────────────
+                          (for rated BUY inbound only)
+```
+
+Contract rate PKR/MT: `ratePerKg × 1000`, else `ratePerMaund × (1000 / 40)`.
+
+Only **BUY** trades in the same season bucket contribute (inbound receipt qty grouped by `tradeRef`). Open paper and commission are not part of this weighting — only physical receipts with a contract rate.
+
+Implementation: `server/inventory-valuation.ts` (shared with the inventory stat card); net position calls it per season via `server/net-position.ts`.
+
+**Corn Winter blank:** Winter inventory is mostly external `StockTransfer` stock with no inbound receipt / contract rate. The UI shows a note instead of a number until winter BUY receipts exist or transfers carry cost.
+
+### Market rate (₨/maund)
+
+Precedence **per commodity + season**:
+
+1. **Daily Prices** — `DeskMarketPrice` row for `(commodityCode, season)`. Corn publishes **Summer** and **Winter** separately.
+2. **Desk fallback** — `PositionMarketInput.marketRatePkrPerMaund` for that season (Positions panel “fallback / FX”).
+3. Blank — In/(Out) of the money rows show “—”.
+
+Yesterday local is preferred over CNF when normalising to ₨/maund (`lib/desk-mark-price.ts`).
+
+### In/(Out) of the money
+
+```
+perMaund = marketRate − tradeEntryRate
+valuePkr = perMaund × netPositionMt × (1000 / 40)    // maunds per MT
+valueUsd = valuePkr / fxRate
+```
+
+FX comes from `PositionMarketInput.fxRate` per season column.
+

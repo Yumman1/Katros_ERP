@@ -31,6 +31,7 @@ export const marketRouter = router({
     .input(
       z.object({
         code: z.string().min(1),
+        season: z.enum(["SUMMER", "WINTER"]).optional(),
         cnf: optionalPositive,
         cnfCurrency: z.string().trim().optional().nullable(),
         cnfUnit: z.string().trim().optional().nullable(),
@@ -44,6 +45,7 @@ export const marketRouter = router({
       try {
         return await upsertDailyMarketPrice({
           code: input.code,
+          season: input.season,
           cnf: input.cnf,
           cnfCurrency: input.cnfCurrency,
           cnfUnit: input.cnfUnit,

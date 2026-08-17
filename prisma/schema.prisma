@@ -107,7 +107,7 @@ model Commodity {
   inventories         Inventory[]
   prices              MarketPrice[]
   traceabilityRecords TraceabilityRecord[]
-  deskPrice           DeskMarketPrice?
+  deskPrices          DeskMarketPrice[]
   positionAdjustments PositionAdjustment[]
 }
 
@@ -489,20 +489,23 @@ model PositionMarketInput {
   @@unique([commodityCode, season])
 }
 
-/// Execution-desk CNF market price (one live row per commodity).
+/// Execution-desk CNF / yesterday market price — one live row per commodity + season.
 model DeskMarketPrice {
-  id            String    @id @default(cuid())
-  commodityCode String    @unique
-  commodity     Commodity @relation(fields: [commodityCode], references: [code], onDelete: Cascade)
-  cnfAmount    Decimal? @db.Decimal(20, 6)
-  cnfCurrency  String?
-  cnfUnit      String?
-  yestAmount   Decimal? @db.Decimal(20, 6)
-  yestCurrency String?
-  yestUnit     String?
-  priceDate    String
-  updatedAt    DateTime @updatedAt
-  updatedBy    String?
+  id            String       @id @default(cuid())
+  commodityCode String
+  season        TradeSeason  @default(SUMMER)
+  commodity     Commodity    @relation(fields: [commodityCode], references: [code], onDelete: Cascade)
+  cnfAmount     Decimal?     @db.Decimal(20, 6)
+  cnfCurrency   String?
+  cnfUnit       String?
+  yestAmount    Decimal?     @db.Decimal(20, 6)
+  yestCurrency  String?
+  yestUnit      String?
+  priceDate     String
+  updatedAt     DateTime     @updatedAt
+  updatedBy     String?
+
+  @@unique([commodityCode, season])
 }
 
 // ─── Position & MTM (analytics) ──────────────────────────────────────────────

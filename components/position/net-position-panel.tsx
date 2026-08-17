@@ -66,7 +66,7 @@ export function NetPositionPanel({
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-5 py-3">
         <h2 className="text-sm font-semibold text-foreground">Net Position</h2>
         <span className="text-[11px] text-subtle">
-          Net = open purchases + inventory − open sales · market rate comes from Daily Prices
+          Net = open purchases + inventory − open sales · market rate from Daily Prices per season
         </span>
       </div>
 
@@ -113,6 +113,13 @@ export function NetPositionPanel({
               values={cols.map((c) =>
                 c.tradeEntryRatePkrPerMaund != null ? fmtMoney(c.tradeEntryRatePkrPerMaund) : "—",
               )}
+              hint={cols.map(
+                (c) =>
+                  c.entryRateNote ??
+                  (c.tradeEntryRatePkrPerMaund != null
+                    ? "From inventory weighted purchase price (inbound receipts)."
+                    : ""),
+              )}
             />
             <Row
               label="In/(Out) of the money — per maund"
@@ -155,7 +162,7 @@ export function NetPositionPanel({
                       value={marketDraft}
                       onChange={(e) => setMarketDraft(e.target.value)}
                       placeholder="Fallback ₨/maund"
-                      title="Used only until Daily Prices carries this commodity — a published price always wins"
+                      title="Used only until Daily Prices carries this season — a published price always wins"
                       className="kastros-input kastros-input-sm w-32"
                     />
                     <input

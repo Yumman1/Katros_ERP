@@ -16,6 +16,10 @@ type RowDraft = {
   yesterdayUnit: string;
 };
 
+function rowKey(code: string, season: string): string {
+  return `${code}::${season}`;
+}
+
 function parseOptionalPositive(raw: string): number | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -33,7 +37,6 @@ export default function ExecutionDailyPricesPage() {
     onSuccess: () => {
       void utils.market.dailyPrices.invalidate();
       void utils.market.snapshot.invalidate();
-      // The net position values itself at today's rate — republish it too.
       void utils.trader.seasonNetPositions.invalidate();
     },
   });
@@ -46,7 +49,8 @@ export default function ExecutionDailyPricesPage() {
   const units = options?.units ?? ["MT", "KG", "MAUND_40", "MAUND_37"];
 
   const draftFor = (row: NonNullable<typeof rows>[number]): RowDraft => {
-    const existing = drafts[row.code];
+    const key = rowKey(row.code, row.season);
+    const existing = drafts[key];
     if (existing) return existing;
     return {
       cnf: row.cnf != null ? String(row.cnf) : "",
@@ -58,18 +62,15 @@ export default function ExecutionDailyPricesPage() {
     };
   };
 
-  const setDraft = (code: string, patch: Partial<RowDraft>) => {
-    const row = rows?.find((r) => r.code === code);
-    if (!row) return;
+  const setDraft = (row: NonNullable<typeof rows>[number], patch: Partial<RowDraft>) => {
+    const key = rowKey(row.code, row.season);
     setDrafts((prev) => ({
       ...prev,
-      [code]: { ...draftFor(row), ...patch },
+      [key]: { ...draftFor(row), ...patch },
     }));
   };
 
-  const onSave = (code: string) => {
-    const row = rows?.find((r) => r.code === code);
-    if (!row) return;
+  const onSave = (row: NonNullable<typeof rows>[number]) => {
     const d = draftFor(row);
     const cnfRaw = d.cnf.trim();
     const yRaw = d.yesterdayRate.trim();
@@ -78,6 +79,7 @@ export default function ExecutionDailyPricesPage() {
 
     const payload: {
       code: string;
+      season: "SUMMER" | "WINTER";
       priceDate: string;
       cnf?: number | null;
       cnfCurrency?: string | null;
@@ -85,12 +87,12 @@ export default function ExecutionDailyPricesPage() {
       yesterdayRate?: number | null;
       yesterdayCurrency?: string | null;
       yesterdayUnit?: string | null;
-    } = { code, priceDate: today };
+    } = { code: row.code, season: row.season, priceDate: today };
 
     if (cnfRaw !== "") {
       const v = parseOptionalPositive(cnfRaw);
       if (!v) {
-        setFormError(`Enter a valid CNF rate for ${code}.`);
+        setFormError(`Enter a valid CNF rate for ${row.name}.`);
         return;
       }
       payload.cnf = v;
@@ -103,7 +105,7 @@ export default function ExecutionDailyPricesPage() {
     if (yRaw !== "") {
       const v = parseOptionalPositive(yRaw);
       if (!v) {
-        setFormError(`Enter a valid yesterday rate for ${code}.`);
+        setFormError(`Enter a valid yesterday rate for ${row.name}.`);
         return;
       }
       payload.yesterdayRate = v;
@@ -123,7 +125,7 @@ export default function ExecutionDailyPricesPage() {
       onSuccess: () => {
         setDrafts((prev) => {
           const next = { ...prev };
-          delete next[code];
+          delete next[rowKey(row.code, row.season)];
           return next;
         });
       },
@@ -142,12 +144,12 @@ export default function ExecutionDailyPricesPage() {
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Daily Market Prices</h1>
         <p className="text-sm text-muted-foreground">
-          Enter CNF (optional) and yesterday&apos;s local price per commodity, then click{" "}
-          <strong className="text-foreground">Publish</strong> on that row. CNF and yesterday can use
-          different currencies and units.
+          Enter CNF (optional) and yesterday&apos;s local price per commodity column, then click{" "}
+          <strong className="text-foreground">Publish</strong>. Corn publishes separate Summer and
+          Winter rates for the net position mail.
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {publishedCount} of {rows?.length ?? 0} commodities with desk prices ({today})
+          {publishedCount} of {rows?.length ?? 0} price rows published ({today})
         </p>
         {(formError || upsert.error) && (
           <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -168,7 +170,7 @@ export default function ExecutionDailyPricesPage() {
           <table className="kastros-table min-w-[1100px] text-sm">
             <thead>
               <tr>
-                <th rowSpan={2}>Commodity</th>
+                <th rowSpan={2}>Column</th>
                 <th colSpan={3}>CNF (optional)</th>
                 <th colSpan={3}>Yesterday local</th>
                 <th rowSpan={2}>Published</th>
@@ -189,11 +191,14 @@ export default function ExecutionDailyPricesPage() {
                 const hasCnf = row.cnf != null;
                 const hasYesterday = row.yesterdayRate != null;
                 const canSave = d.cnf.trim() !== "" || d.yesterdayRate.trim() !== "";
+                const key = rowKey(row.code, row.season);
                 return (
-                  <tr key={row.code}>
+                  <tr key={key}>
                     <td>
-                      <div className="font-medium text-foreground">{row.code}</div>
-                      <div className="text-xs text-muted-foreground">{row.name}</div>
+                      <div className="font-medium text-foreground">{row.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {row.code} · {row.season.charAt(0) + row.season.slice(1).toLowerCase()}
+                      </div>
                     </td>
                     <td>
                       <input
@@ -201,14 +206,14 @@ export default function ExecutionDailyPricesPage() {
                         step="0.01"
                         placeholder={hasCnf ? String(row.cnf) : "Optional"}
                         value={d.cnf}
-                        onChange={(e) => setDraft(row.code, { cnf: e.target.value })}
+                        onChange={(e) => setDraft(row, { cnf: e.target.value })}
                         className="kastros-input kastros-input-sm w-24 data-grid"
                       />
                     </td>
                     <td>
                       <select
                         value={d.cnfCurrency}
-                        onChange={(e) => setDraft(row.code, { cnfCurrency: e.target.value })}
+                        onChange={(e) => setDraft(row, { cnfCurrency: e.target.value })}
                         className="kastros-select kastros-select-sm"
                       >
                         {currencies.map((c) => (
@@ -221,7 +226,7 @@ export default function ExecutionDailyPricesPage() {
                     <td>
                       <select
                         value={d.cnfUnit}
-                        onChange={(e) => setDraft(row.code, { cnfUnit: e.target.value })}
+                        onChange={(e) => setDraft(row, { cnfUnit: e.target.value })}
                         className="kastros-select kastros-select-sm"
                       >
                         {units.map((u) => (
@@ -237,14 +242,14 @@ export default function ExecutionDailyPricesPage() {
                         step="0.01"
                         placeholder={hasYesterday ? String(row.yesterdayRate) : "Local"}
                         value={d.yesterdayRate}
-                        onChange={(e) => setDraft(row.code, { yesterdayRate: e.target.value })}
+                        onChange={(e) => setDraft(row, { yesterdayRate: e.target.value })}
                         className="kastros-input kastros-input-sm w-24 data-grid"
                       />
                     </td>
                     <td>
                       <select
                         value={d.yesterdayCurrency}
-                        onChange={(e) => setDraft(row.code, { yesterdayCurrency: e.target.value })}
+                        onChange={(e) => setDraft(row, { yesterdayCurrency: e.target.value })}
                         className="kastros-select kastros-select-sm"
                       >
                         {currencies.map((c) => (
@@ -257,7 +262,7 @@ export default function ExecutionDailyPricesPage() {
                     <td>
                       <select
                         value={d.yesterdayUnit}
-                        onChange={(e) => setDraft(row.code, { yesterdayUnit: e.target.value })}
+                        onChange={(e) => setDraft(row, { yesterdayUnit: e.target.value })}
                         className="kastros-select kastros-select-sm"
                       >
                         {units.map((u) => (
@@ -294,7 +299,7 @@ export default function ExecutionDailyPricesPage() {
                       <button
                         type="button"
                         disabled={upsert.isPending || !canSave}
-                        onClick={() => onSave(row.code)}
+                        onClick={() => onSave(row)}
                         className="kastros-btn-primary px-3 py-1.5 text-xs disabled:opacity-40"
                       >
                         Publish

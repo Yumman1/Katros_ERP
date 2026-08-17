@@ -1,4 +1,4 @@
-import type { DeskMarketPrice } from "@prisma/client";
+import type { DeskMarketPrice, TradeSeason } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { numOrNull } from "@/server/db/convert";
 import { getMergedCommodities } from "@/server/trader-master-data";
@@ -8,6 +8,9 @@ import { deskLegsToPkrPerMaund } from "@/lib/desk-mark-price";
 export const DESK_MARKET_CURRENCIES = ["USD", "PKR", "MYR", "EUR", "CNY"] as const;
 export type DeskMarketCurrency = (typeof DESK_MARKET_CURRENCIES)[number];
 
+/** Commodities that publish separate Daily Prices for Summer and Winter columns. */
+export const SEASON_SPLIT_COMMODITIES = new Set(["CORN"]);
+
 export type DeskPriceLeg = {
   amount: number;
   currency: string;
@@ -16,6 +19,7 @@ export type DeskPriceLeg = {
 
 export type StoredMarketPrice = {
   code: string;
+  season: TradeSeason;
   cnf: DeskPriceLeg | null;
   yesterday: DeskPriceLeg | null;
   priceDate: string;
@@ -25,6 +29,7 @@ export type StoredMarketPrice = {
 
 export type MarketPriceSnapshot = {
   code: string;
+  season: TradeSeason;
   name: string;
   cnf: number | null;
   cnfCurrency: string | null;
@@ -37,6 +42,32 @@ export type MarketPriceSnapshot = {
   asOf: string;
   priceDate: string;
 };
+
+export type DailyMarketPriceRow = {
+  commodityId: string;
+  code: string;
+  season: TradeSeason;
+  name: string;
+  cnf: number | null;
+  cnfCurrency: string;
+  cnfUnit: string;
+  yesterdayRate: number | null;
+  yesterdayCurrency: string;
+  yesterdayUnit: string;
+  priceDate: string | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+};
+
+function deskKey(code: string, season: TradeSeason): string {
+  return `${code.trim().toUpperCase()}::${season}`;
+}
+
+function seasonsForCommodity(code: string): TradeSeason[] {
+  return SEASON_SPLIT_COMMODITIES.has(code.trim().toUpperCase())
+    ? ["SUMMER", "WINTER"]
+    : ["SUMMER"];
+}
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -63,6 +94,7 @@ function rowToStored(row: DeskMarketPrice): StoredMarketPrice {
   const yestAmount = numOrNull(row.yestAmount);
   return {
     code: row.commodityCode,
+    season: row.season,
     cnf:
       cnfAmount != null && row.cnfCurrency && row.cnfUnit
         ? { amount: cnfAmount, currency: row.cnfCurrency, unit: row.cnfUnit }
@@ -92,10 +124,19 @@ function hasPublishedData(row: StoredMarketPrice | undefined | null): row is Sto
   return Boolean(row && (row.cnf || row.yesterday));
 }
 
-function toSnapshot(code: string, name: string, row: StoredMarketPrice): MarketPriceSnapshot {
+function seasonLabel(commodityName: string, code: string, season: TradeSeason): string {
+  if (!SEASON_SPLIT_COMMODITIES.has(code.trim().toUpperCase())) {
+    return commodityName;
+  }
+  const s = season.charAt(0) + season.slice(1).toLowerCase();
+  return `${commodityName} ${s}`;
+}
+
+function toSnapshot(code: string, name: string, season: TradeSeason, row: StoredMarketPrice): MarketPriceSnapshot {
   return {
     code,
-    name,
+    season,
+    name: seasonLabel(name, code, season),
     cnf: row.cnf?.amount ?? null,
     cnfCurrency: row.cnf?.currency ?? null,
     cnfUnit: row.cnf?.unit ?? null,
@@ -108,47 +149,58 @@ function toSnapshot(code: string, name: string, row: StoredMarketPrice): MarketP
   };
 }
 
-async function loadStoredByCode(): Promise<Map<string, StoredMarketPrice>> {
+async function loadStoredByKey(): Promise<Map<string, StoredMarketPrice>> {
   const rows = await prisma.deskMarketPrice.findMany();
-  return new Map(rows.map((r) => [r.commodityCode, rowToStored(r)]));
+  return new Map(rows.map((r) => [deskKey(r.commodityCode, r.season), rowToStored(r)]));
 }
 
-/** Commodities with at least CNF or yesterday published. */
+/** Commodities with at least CNF or yesterday published (per season row). */
 export async function getMarketPriceSnapshot(): Promise<MarketPriceSnapshot[]> {
-  const [byCode, commodities] = await Promise.all([loadStoredByCode(), getMergedCommodities()]);
+  const [byKey, commodities] = await Promise.all([loadStoredByKey(), getMergedCommodities()]);
   const rows: MarketPriceSnapshot[] = [];
   for (const c of commodities) {
-    const row = byCode.get(c.code);
-    if (!hasPublishedData(row)) continue;
-    rows.push(toSnapshot(c.code, c.name, row));
+    for (const season of seasonsForCommodity(c.code)) {
+      const row = byKey.get(deskKey(c.code, season));
+      if (!hasPublishedData(row)) continue;
+      rows.push(toSnapshot(c.code, c.name, season, row));
+    }
   }
-  return rows.sort((a, b) => a.code.localeCompare(b.code));
+  return rows.sort(
+    (a, b) => a.code.localeCompare(b.code) || a.season.localeCompare(b.season),
+  );
 }
 
-export async function listDailyMarketPrices() {
-  const [byCode, commodities] = await Promise.all([loadStoredByCode(), getMergedCommodities()]);
-  return commodities.map((c) => {
-    const row = byCode.get(c.code);
-    const defaultUnit = c.unit || "MT";
-    return {
-      commodityId: c.id,
-      code: c.code,
-      name: c.name,
-      cnf: row?.cnf?.amount ?? null,
-      cnfCurrency: row?.cnf?.currency ?? "USD",
-      cnfUnit: row?.cnf?.unit ?? defaultUnit,
-      yesterdayRate: row?.yesterday?.amount ?? null,
-      yesterdayCurrency: row?.yesterday?.currency ?? "PKR",
-      yesterdayUnit: row?.yesterday?.unit ?? defaultUnit,
-      priceDate: row?.priceDate ?? null,
-      updatedAt: row?.updatedAt ?? null,
-      updatedBy: row?.updatedBy ?? null,
-    };
-  });
+export async function listDailyMarketPrices(): Promise<DailyMarketPriceRow[]> {
+  const [byKey, commodities] = await Promise.all([loadStoredByKey(), getMergedCommodities()]);
+  const out: DailyMarketPriceRow[] = [];
+  for (const c of commodities) {
+    for (const season of seasonsForCommodity(c.code)) {
+      const row = byKey.get(deskKey(c.code, season));
+      const defaultUnit = c.unit || "MT";
+      const baseName = c.name;
+      out.push({
+        commodityId: c.id,
+        code: c.code,
+        season,
+        name: seasonLabel(baseName, c.code, season),
+        cnf: row?.cnf?.amount ?? null,
+        cnfCurrency: row?.cnf?.currency ?? "USD",
+        cnfUnit: row?.cnf?.unit ?? defaultUnit,
+        yesterdayRate: row?.yesterday?.amount ?? null,
+        yesterdayCurrency: row?.yesterday?.currency ?? "PKR",
+        yesterdayUnit: row?.yesterday?.unit ?? defaultUnit,
+        priceDate: row?.priceDate ?? null,
+        updatedAt: row?.updatedAt ?? null,
+        updatedBy: row?.updatedBy ?? null,
+      });
+    }
+  }
+  return out;
 }
 
 export async function upsertDailyMarketPrice(input: {
   code: string;
+  season?: TradeSeason;
   cnf?: number | null;
   cnfCurrency?: string | null;
   cnfUnit?: string | null;
@@ -160,9 +212,10 @@ export async function upsertDailyMarketPrice(input: {
 }): Promise<StoredMarketPrice | null> {
   const code = input.code.trim().toUpperCase();
   if (!code) throw new Error("Commodity code required");
+  const season = input.season ?? "SUMMER";
 
   const existingRow = await prisma.deskMarketPrice.findUnique({
-    where: { commodityCode: code },
+    where: { commodityCode_season: { commodityCode: code, season } },
   });
   const existing = existingRow ? rowToStored(existingRow) : null;
   const date = input.priceDate ?? todayKey();
@@ -194,7 +247,9 @@ export async function upsertDailyMarketPrice(input: {
   }
   if (!nextCnf && !nextYesterday) {
     if (existingRow) {
-      await prisma.deskMarketPrice.delete({ where: { commodityCode: code } });
+      await prisma.deskMarketPrice.delete({
+        where: { commodityCode_season: { commodityCode: code, season } },
+      });
     }
     return null;
   }
@@ -210,32 +265,46 @@ export async function upsertDailyMarketPrice(input: {
     updatedBy: input.updatedBy ?? null,
   };
   const saved = await prisma.deskMarketPrice.upsert({
-    where: { commodityCode: code },
+    where: { commodityCode_season: { commodityCode: code, season } },
     update: data,
-    create: { commodityCode: code, ...data },
+    create: { commodityCode: code, season, ...data },
   });
   return rowToStored(saved);
 }
 
-export async function getDeskMarketPrice(code: string): Promise<StoredMarketPrice | null> {
+export async function getDeskMarketPrice(
+  code: string,
+  season: TradeSeason = "SUMMER",
+): Promise<StoredMarketPrice | null> {
   const row = await prisma.deskMarketPrice.findUnique({
-    where: { commodityCode: code.trim().toUpperCase() },
+    where: {
+      commodityCode_season: {
+        commodityCode: code.trim().toUpperCase(),
+        season,
+      },
+    },
   });
   const stored = row ? rowToStored(row) : null;
   return hasPublishedData(stored) ? stored : null;
 }
 
 /** Position marking — yesterday local first, CNF optional fallback. */
-export async function getMarketPriceForCode(code: string): Promise<number | null> {
-  const row = await getDeskMarketPrice(code);
+export async function getMarketPriceForCode(
+  code: string,
+  season: TradeSeason = "SUMMER",
+): Promise<number | null> {
+  const row = await getDeskMarketPrice(code, season);
   if (!row) return null;
   const leg = row.yesterday ?? row.cnf;
   return leg?.amount ?? null;
 }
 
 /** PKR per maund for net-position (yesterday first). */
-export async function getPositionMarkPricePkrPerMaund(code: string): Promise<number | null> {
-  const row = await getDeskMarketPrice(code);
+export async function getPositionMarkPricePkrPerMaund(
+  code: string,
+  season: TradeSeason = "SUMMER",
+): Promise<number | null> {
+  const row = await getDeskMarketPrice(code, season);
   if (!row) return null;
   return deskLegsToPkrPerMaund(row.yesterday, row.cnf);
 }
@@ -254,6 +323,7 @@ export async function marketTickerPayload() {
           : null;
     return {
       code: p.code,
+      season: p.season,
       name: p.name,
       price: headline?.price ?? 0,
       ccy: headline?.ccy ?? "USD",

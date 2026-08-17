@@ -15,7 +15,8 @@
     "db:reset": "prisma migrate reset --force",
     "data:reset": "tsx scripts/data-reset.ts",
     "check:settlement": "tsx scripts/check-settlement-math.ts",
-    "check:refs": "tsx scripts/check-ref-integrity.ts"
+    "check:refs": "tsx scripts/check-ref-integrity.ts",
+    "reconcile:corn": "tsx scripts/reconcile-corn-from-excel.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

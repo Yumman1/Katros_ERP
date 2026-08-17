@@ -1,0 +1,497 @@
+{
+  "generatedAt": "2026-08-17T07:49:40.554Z",
+  "purchaseTrades": 70,
+  "openInExcel": 0,
+  "trades": [
+    {
+      "ref": "Kas-Cor26-0001",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0002",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0003",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0004",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0005",
+      "cqty": 80,
+      "received": 77.04,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0006",
+      "cqty": 120,
+      "received": 118.34,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0007",
+      "cqty": 50,
+      "received": 48.895,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0008",
+      "cqty": 80,
+      "received": 73.96,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0009",
+      "cqty": 100,
+      "received": 108.435,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0010",
+      "cqty": 21,
+      "received": 21.005,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0011",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0012",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0013",
+      "cqty": 100,
+      "received": 90.06,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0014",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0015",
+      "cqty": 200,
+      "received": 199.125,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0016",
+      "cqty": 50,
+      "received": 49.76,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0017",
+      "cqty": 300,
+      "received": 299.745,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0018",
+      "cqty": 20,
+      "received": 21.045,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0019",
+      "cqty": 100,
+      "received": 106.16,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0020",
+      "cqty": 50,
+      "received": 50.52,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0021",
+      "cqty": 200,
+      "received": 200.45,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0022",
+      "cqty": 100,
+      "received": 104.325,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0023",
+      "cqty": 250,
+      "received": 253.5,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0024",
+      "cqty": 250,
+      "received": 248.845,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0025",
+      "cqty": 4,
+      "received": 3.605,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0026",
+      "cqty": 200,
+      "received": 200.855,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0027",
+      "cqty": 100,
+      "received": 100.14,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0028",
+      "cqty": 400,
+      "received": 396.34,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0029",
+      "cqty": 200,
+      "received": 186.645,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0030",
+      "cqty": 100,
+      "received": 95.18,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0031",
+      "cqty": 100,
+      "received": 100.6,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0032",
+      "cqty": 44,
+      "received": 43.52,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0033",
+      "cqty": 100,
+      "received": 105.195,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0034",
+      "cqty": 100,
+      "received": 94.665,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0035",
+      "cqty": 200,
+      "received": 200.774,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0036",
+      "cqty": 100,
+      "received": 100.905,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0037",
+      "cqty": 100,
+      "received": 99.285,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0038",
+      "cqty": 250,
+      "received": 257.295,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0039",
+      "cqty": 200,
+      "received": 208.35,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0040",
+      "cqty": 100,
+      "received": 94.495,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0041",
+      "cqty": 300,
+      "received": 288.23,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0042",
+      "cqty": 300,
+      "received": 300.995,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0043",
+      "cqty": 85,
+      "received": 84.17,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0044",
+      "cqty": 100,
+      "received": 99.42,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0045",
+      "cqty": 59.760000000000005,
+      "received": 59.765,
+      "open": -0.0049999999999954525,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0046",
+      "cqty": 100,
+      "received": 102.005,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0047",
+      "cqty": 250,
+      "received": 247.245,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0048",
+      "cqty": 150,
+      "received": 167.915,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0049",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0050",
+      "cqty": 100,
+      "received": 94.02,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0051",
+      "cqty": 100,
+      "received": 91.54,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0052",
+      "cqty": 100,
+      "received": 99.89,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0053",
+      "cqty": 150,
+      "received": 152.895,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0054",
+      "cqty": 200,
+      "received": 201.125,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0055",
+      "cqty": 100,
+      "received": 93.6,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0056",
+      "cqty": 200,
+      "received": 207.195,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0057",
+      "cqty": 165,
+      "received": 164.765,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0058",
+      "cqty": 59.99,
+      "received": 59.99,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0059",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0060",
+      "cqty": 192,
+      "received": 192.09,
+      "open": "",
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0061",
+      "cqty": 100,
+      "received": 108.17,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0062",
+      "cqty": 100,
+      "received": 96.28,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0063",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0064",
+      "cqty": 0,
+      "received": 0,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0065",
+      "cqty": 131,
+      "received": 131.45,
+      "open": -0.44999999999998863,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0066",
+      "cqty": 104,
+      "received": 103.815,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0067",
+      "cqty": 200,
+      "received": 189.055,
+      "open": 0,
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0068",
+      "cqty": 92,
+      "received": 92.12,
+      "open": "",
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0069",
+      "cqty": 200,
+      "received": 193.045,
+      "open": "",
+      "status": "Close"
+    },
+    {
+      "ref": "Kas-Cor26-0070",
+      "cqty": 11,
+      "received": 11.535,
+      "open": "",
+      "status": "Close"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { Role } from "@prisma/client";
-import { EXECUTION_PROFILES, KG_PER_MAUND_40, TRADE_SCOPES } from "@/lib/trade-constants";
+import { EXECUTION_PROFILES, TRADE_SCOPES } from "@/lib/trade-constants";
 import { headProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import {
   advanceSpotState,
@@ -53,6 +53,10 @@ import { createVoucher, listVouchers } from "@/server/finance/vouchers";
 import { mockTradeByRefGlobal } from "@/server/dummy-data";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
+import {
+  buildRatePkrPerMtByRef,
+  computeWeightedPurchasePrice,
+} from "@/server/inventory-valuation";
 import {
   addCustomLocation,
   deleteWarehouseLocation,
@@ -1180,36 +1184,19 @@ export const executionRouter = router({
       }),
     ]);
 
-    // Contract rate in PKR/MT — prefer ratePerKg × 1000, fall back to ratePerMaund × 25 (1000 kg / 40 kg).
-    const ratePkrPerMtByRef = new Map<string, number>();
-    for (const c of contracts) {
-      const perKg = c.ratePerKg != null ? num(c.ratePerKg) : null;
-      const perMaund = c.ratePerMaund != null ? num(c.ratePerMaund) : null;
-      const rate = perKg != null && perKg > 0 ? perKg * 1000 : perMaund != null && perMaund > 0 ? perMaund * 25 : null;
-      if (rate != null) ratePkrPerMtByRef.set(c.tradeRef, rate);
-    }
+    const ratePkrPerMtByRef = buildRatePkrPerMtByRef(contracts);
+    const inboundQtyByTradeRef = new Map(
+      inboundByTrade
+        .map((g) => [g.tradeRef, num(g._sum.allocatedQtyMt)] as const)
+        .filter(([, qty]) => qty > 0),
+    );
+    const { weightedPurchasePricePkrPerMt, weightedPurchasePricePkrPerMaund, totalQtyMt } =
+      computeWeightedPurchasePrice({ inboundQtyByTradeRef, ratePkrPerMtByRef });
 
-    let totalPurchasedMt = 0;
-    let ratedQtyMt = 0;
-    let ratedValuePkr = 0;
-    for (const g of inboundByTrade) {
-      const qty = num(g._sum.allocatedQtyMt);
-      if (qty <= 0) continue;
-      totalPurchasedMt += qty;
-      const rate = ratePkrPerMtByRef.get(g.tradeRef);
-      if (rate != null) {
-        ratedQtyMt += qty;
-        ratedValuePkr += qty * rate;
-      }
-    }
-
-    const weightedPurchasePricePkrPerMt = ratedQtyMt > 0 ? ratedValuePkr / ratedQtyMt : 0;
     return {
-      weightedPurchasePricePkrPerMt,
-      // The desk quotes corn in ₨/maund, so that is what the stat card shows.
-      weightedPurchasePricePkrPerMaund:
-        weightedPurchasePricePkrPerMt / (1000 / KG_PER_MAUND_40),
-      totalPurchasedMt,
+      weightedPurchasePricePkrPerMt: weightedPurchasePricePkrPerMt ?? 0,
+      weightedPurchasePricePkrPerMaund: weightedPurchasePricePkrPerMaund ?? 0,
+      totalPurchasedMt: totalQtyMt,
       totalSoldMt: num(outboundAgg._sum.allocatedQtyMt),
     };
   }),
