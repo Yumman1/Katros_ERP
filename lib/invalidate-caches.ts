@@ -16,6 +16,7 @@ export function invalidateTradeFlowCaches(utils: Utils, tradeRef?: string) {
   void utils.trader.referenceData.invalidate();
   void utils.execution.sellCounterparties.invalidate();
   void utils.execution.counterpartyLedgers.invalidate();
+  void utils.trader.counterpartyLedgers.invalidate();
   void utils.execution.pendingForLock.invalidate();
   void utils.execution.openTrades.invalidate();
   void utils.execution.lockedContracts.invalidate();
@@ -46,6 +47,7 @@ export function invalidateGateOpsCaches(utils: Utils) {
   void utils.trader.seasonNetPositions.invalidate();
   void utils.execution.inventoryValuation.invalidate();
   void utils.execution.counterpartyLedgers.invalidate();
+  void utils.trader.counterpartyLedgers.invalidate();
   void utils.execution.vouchers.invalidate();
   void utils.policy.overdueLedgerAlerts.invalidate();
 }

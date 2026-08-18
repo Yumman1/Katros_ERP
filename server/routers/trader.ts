@@ -39,6 +39,7 @@ import {
 import { exportTradeFileCsv } from "@/server/trade-file-export";
 import { computePositionLedger } from "@/server/position-ledger";
 import { getSeasonNetPositions, setPositionMarketInput } from "@/server/net-position";
+import { getCounterpartyLedgers } from "@/server/finance/ledger";
 import {
   addCustomCommodity,
   addCustomCounterparty,
@@ -1022,6 +1023,9 @@ export const traderRouter = router({
 
   /** The daily "Net Position" mail, computed live — one column per commodity + season. */
   seasonNetPositions: protectedProcedure.query(() => getSeasonNetPositions()),
+
+  /** Buy and sell counterparty ledger accounts — same view as Execution → Ledgers. */
+  counterpartyLedgers: protectedProcedure.query(() => getCounterpartyLedgers()),
 
   /** Desk sets the day's market rate / FX behind a net-position column. */
   setPositionMarketInput: roleProcedure(["TRADER", "EXECUTION", "CEO", "ADMIN"])
