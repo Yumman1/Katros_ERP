@@ -1,5 +1,6 @@
 "use client";
 
+import { ContractPreviewLink } from "@/components/execution/contract-preview-link";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
@@ -87,10 +88,13 @@ export default function PurchaseSpotDetailPage() {
               {formatQtyWithUnit(c.contractualQtyMt, unit, 2)} · {c.warehouseDefault ?? "—"} · PKR {c.ratePerMaund?.toFixed(0) ?? "—"}/Maund
             </p>
           </div>
-          <div className="text-right">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="text-right">
             <div className="text-xs uppercase tracking-wider" style={{ color: "#52525b" }}>Current Stage</div>
             <div className="mt-1 text-lg font-bold" style={{ color: "#60a5fa" }}>{PIPELINE[currentIdx]?.label ?? currentState}</div>
             <div className="text-xs" style={{ color: "#71717a" }}>{PIPELINE[currentIdx]?.desc}</div>
+            </div>
+            <ContractPreviewLink tradeRef={tradeRef} />
           </div>
         </div>
       </div>

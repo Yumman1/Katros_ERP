@@ -1,5 +1,6 @@
 "use client";
 
+import { ContractPreviewLink } from "@/components/execution/contract-preview-link";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQtyWithUnit } from "@/lib/formatters/numbers";
@@ -74,7 +75,8 @@ export default function PurchaseDeliveredDetailPage() {
               )}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="flex flex-wrap gap-2">
             <StatBadge label="Contract Qty" value={formatQtyWithUnit(c.contractualQtyMt, unit, 2)} />
             <StatBadge label="Received" value={formatQtyWithUnit(c.receivedQtyMt, unit, 2)} color="#34d399" />
             <StatBadge
@@ -82,6 +84,8 @@ export default function PurchaseDeliveredDetailPage() {
               value={formatQtyWithUnit(c.openQtyMt, unit, 2)}
               color={c.openQtyMt > 0 ? "#f59e0b" : "#6b7280"}
             />
+            </div>
+            <ContractPreviewLink tradeRef={tradeRef} />
           </div>
         </div>
         <div className="mt-4">

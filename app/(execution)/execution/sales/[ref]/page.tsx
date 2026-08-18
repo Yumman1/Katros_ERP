@@ -1,5 +1,6 @@
 "use client";
 
+import { ContractPreviewLink } from "@/components/execution/contract-preview-link";
 import { trpc } from "@/lib/trpc/client";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import Link from "next/link";
@@ -63,7 +64,8 @@ export default function SaleContractDetailPage() {
               )}
             </p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="flex gap-3">
             <SBadge label="Contract Qty" value={formatQtyWithUnit(c.contractualQtyMt, unit, 2)} />
             <SBadge label="Released" value={formatQtyWithUnit(c.receivedQtyMt, unit, 2)} color="#a78bfa" />
             <SBadge
@@ -71,6 +73,8 @@ export default function SaleContractDetailPage() {
               value={formatQtyWithUnit(c.openQtyMt, unit, 2)}
               color={c.openQtyMt > 0 ? "#f59e0b" : "#6b7280"}
             />
+            </div>
+            <ContractPreviewLink tradeRef={tradeRef} />
           </div>
         </div>
         <div className="mt-4">

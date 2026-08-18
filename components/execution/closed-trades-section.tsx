@@ -1,5 +1,6 @@
 "use client";
 
+import { ContractPreviewLink } from "@/components/execution/contract-preview-link";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { executionWorkspacePath } from "@/lib/execution-routes";
@@ -92,6 +93,9 @@ export function ClosedTradesSection({
                   <CheckCircle2 className="h-3 w-3" />
                   Closed
                 </span>
+                <div className="mt-1">
+                  <ContractPreviewLink tradeRef={c.tradeRef} variant="compact" />
+                </div>
                 {c.openQtyMt > 0 && (
                   <div className="mt-1 text-[10px] text-muted-foreground">
                     {formatQtyWithUnit(c.openQtyMt, c.quantityUnit, 2)} short

@@ -6,6 +6,7 @@ import { trpc } from "@/lib/trpc/client";
 import { priceUnitLabel } from "@/lib/price-units";
 import { formatQuantityTolerance } from "@/components/trader/quantity-tolerance-field";
 import { formatPkDateTime } from "@/lib/formatters/datetime";
+import { executionWorkspacePath, profileFromTrade } from "@/lib/execution-routes";
 
 const fmtQty = (n: number) => new Intl.NumberFormat("en-PK", { maximumFractionDigits: 3 }).format(n);
 const fmtMoney = (n: number, ccy = "PKR") =>
@@ -59,13 +60,24 @@ export default function ExecutionTradePrintPage() {
     (trade ? formatQuantityTolerance(params_, trade.quantityUnit) : undefined) ??
     (params_.quantityTolerance ? String(params_.quantityTolerance).trim() : "");
 
+  const contractTitle = trade?.direction === "BUY" ? "Purchase Contract" : "Sale Contract";
+  const backHref = trade
+    ? executionWorkspacePath(
+        trade.tradeRef,
+        profileFromTrade(trade.direction, (trade.tradeParams as Record<string, string>)?.buyingCategory),
+      )
+    : "/execution/contracts";
+
   return (
     <div className="min-h-screen bg-white text-black">
       <style>{PRINT_CSS}</style>
       <div className="no-print flex flex-wrap items-center gap-2 border-b border-black/10 px-4 py-3">
-        <Link href={`/execution/contracts`} className="text-sm font-medium text-black underline">
-          ← Reviewed trades
+        <Link href={backHref} className="text-sm font-medium text-black underline">
+          ← Back to contract
         </Link>
+        <span className="text-sm text-neutral-600">
+          {contractTitle} · {tradeRef}
+        </span>
         <button
           type="button"
           onClick={() => window.print()}
@@ -83,7 +95,7 @@ export default function ExecutionTradePrintPage() {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/branding/logo-print.png" alt="Kastros" className="print-logo mx-auto block h-12 w-auto object-contain" />
             <div className="mt-3 text-lg font-bold uppercase tracking-[0.2em]">
-              {trade.direction === "BUY" ? "Purchase Contract" : "Sale Contract"}
+              {contractTitle}
             </div>
           </div>
           <div className="mt-3 flex flex-wrap items-baseline justify-between gap-2 text-sm">

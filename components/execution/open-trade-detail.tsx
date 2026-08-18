@@ -33,6 +33,7 @@ import { trpc } from "@/lib/trpc/client";
 import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
 import { Role } from "@prisma/client";
+import { ContractPreviewLink } from "@/components/execution/contract-preview-link";
 import { Lock, Save } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -311,15 +312,7 @@ export function OpenTradeDetail({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {isLockedMode && (
-              <Link
-                href={`/execution/print/trade/${encodeURIComponent(trade.tradeRef)}`}
-                target="_blank"
-                className="rounded-md border border-kastros-border px-3 py-1.5 text-xs font-medium text-accent-secondary hover:bg-foreground/[0.04]"
-              >
-                Print contract
-              </Link>
-            )}
+            {isLockedMode && <ContractPreviewLink tradeRef={trade.tradeRef} variant="toolbar" />}
           {isLockedMode ? (
             <span className="rounded-md bg-info/20 px-3 py-1 text-sm font-medium text-info">
               Locked — editable with head approval

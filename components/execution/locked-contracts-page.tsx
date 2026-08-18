@@ -1,6 +1,7 @@
 "use client";
 
 import { ClosedTradesSection } from "@/components/execution/closed-trades-section";
+import { ContractPreviewLink } from "@/components/execution/contract-preview-link";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
 import {
@@ -363,6 +364,7 @@ export function LockedContractsPage() {
                                 Edit
                               </Link>
                             )}
+                            <ContractPreviewLink tradeRef={c.tradeRef} variant="compact" />
                           </div>
                         </td>
                       </tr>
