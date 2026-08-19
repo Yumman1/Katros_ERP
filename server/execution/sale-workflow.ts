@@ -860,12 +860,21 @@ export type SaleTruckPrintable = {
   transporterPhone: string | null;
   builtyDetails: string | null;
   warehouseName: string;
+  warehouseLocation: string | null;
+  warehouseAddress: string | null;
   buyerName: string;
   buyerNtn: string | null;
+  buyerAddress: string | null;
   commodityName: string | null;
   commodityCode: string | null;
   weightKg: number;
+  weightMt: number;
   tradeRef: string | null;
+  deliveryTerms: string | null;
+  deliveryOrderDate: Date | null;
+  actualDeliveryDate: Date;
+  doExecutionApprovedBy: string | null;
+  doFinanceApprovedBy: string | null;
   saleBasePkr: number | null;
   saleTaxPkr: number | null;
   saleExpectedPkr: number | null;
@@ -890,14 +899,29 @@ export async function getSaleTruckPrintable(truckId: string): Promise<SaleTruckP
   });
   if (!row) throw new Error("Gate entry not found");
   const truck = truckRowToRuntime(row);
-  let buyerNtn: string | null = null;
-  if (truck.assignedTradeRef) {
-    const trade = await prisma.trade.findUnique({
-      where: { tradeRef: truck.assignedTradeRef },
-      select: { counterparty: { select: { ntn: true } } },
-    });
-    buyerNtn = trade?.counterparty.ntn ?? null;
-  }
+  const weightKg = num(row.weightKg);
+
+  const [trade, warehouse] = await Promise.all([
+    truck.assignedTradeRef
+      ? prisma.trade.findUnique({
+          where: { tradeRef: truck.assignedTradeRef },
+          select: {
+            incoterms: true,
+            counterparty: { select: { ntn: true, address: true, country: true } },
+          },
+        })
+      : Promise.resolve(null),
+    prisma.location.findFirst({
+      where: { name: truck.warehouseName, type: "WAREHOUSE" },
+      select: { city: true, province: true, address: true },
+    }),
+  ]);
+
+  const buyerNtn = trade?.counterparty.ntn ?? null;
+  const buyerAddress =
+    trade?.counterparty.address?.trim() || trade?.counterparty.country?.trim() || null;
+  const warehouseLocation = warehouse?.city?.trim() || warehouse?.province?.trim() || null;
+
   return {
     gatepassNo: truck.gatepassNo,
     gateOutSlipNo: truck.gateOutSlipNo ?? null,
@@ -912,12 +936,21 @@ export async function getSaleTruckPrintable(truckId: string): Promise<SaleTruckP
     transporterPhone: truckTransporterPhone(truck),
     builtyDetails: truck.builtyDetails ?? null,
     warehouseName: truck.warehouseName,
+    warehouseLocation,
+    warehouseAddress: warehouse?.address?.trim() || null,
     buyerName: truck.counterpartyName,
     buyerNtn,
+    buyerAddress,
     commodityName: truck.commodityName ?? null,
     commodityCode: truck.commodityCode ?? null,
-    weightKg: num(row.weightKg),
+    weightKg,
+    weightMt: weightKg / 1000,
     tradeRef: truck.assignedTradeRef ?? null,
+    deliveryTerms: trade?.incoterms?.trim() || "Ex-Warehouse",
+    deliveryOrderDate: truck.doExecutionApprovedAt ?? truck.doFinanceApprovedAt ?? null,
+    actualDeliveryDate: truck.saleReleasedAt ?? truck.arrivalDate,
+    doExecutionApprovedBy: truck.doExecutionApprovedBy ?? null,
+    doFinanceApprovedBy: truck.doFinanceApprovedBy ?? null,
     saleBasePkr: truck.saleBasePkr ?? null,
     saleTaxPkr: truck.saleTaxPkr ?? null,
     saleExpectedPkr: truck.saleExpectedPkr ?? null,

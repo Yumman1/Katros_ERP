@@ -1,18 +1,18 @@
 "use client";
 
-// NOTE: PLACEHOLDER until the official Kastros delivery order template is provided.
-
 import type { SaleTruckPrintable } from "@/server/execution/sale-workflow";
+import { KASTROS_COMPANY_ADDRESS } from "@/lib/company-branding";
 import { cn } from "@/lib/utils";
 
-const fmtKg = (n: number) =>
-  `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(n)} kg`;
+const fmtNum = (n: number, digits = 0) =>
+  new Intl.NumberFormat("en-PK", { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(n);
 
-const fmtDateTime = (d: Date | string) =>
-  new Date(d).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
+const fmtDate = (d: Date | string) =>
+  new Date(d).toLocaleDateString("en-PK", { dateStyle: "medium" });
 
 /** Print CSS: hide the app shell and toolbar, print only the document. */
 export const DELIVERY_ORDER_PRINT_CSS = `
+.print-logo { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 @media print {
   .no-print { display: none !important; }
   body * { visibility: hidden !important; }
@@ -25,6 +25,7 @@ export const DELIVERY_ORDER_PRINT_CSS = `
     max-width: none !important;
     margin: 0 !important;
     box-shadow: none !important;
+    border: none !important;
   }
 }
 `;
@@ -33,13 +34,30 @@ export function DeliveryOrderPrintStyles() {
   return <style>{DELIVERY_ORDER_PRINT_CSS}</style>;
 }
 
-function Field({ label, value, wide }: { label: string; value: string; wide?: boolean }) {
+function LabelValueRow({
+  label,
+  value,
+  labelClassName,
+}: {
+  label: string;
+  value: string;
+  labelClassName?: string;
+}) {
   return (
-    <div className={wide ? "col-span-2" : undefined}>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-        {label}
-      </div>
-      <div className="mt-0.5 text-sm text-black">{value}</div>
+    <div className="grid grid-cols-[140px_1fr] gap-2 text-sm">
+      <span className={cn("font-semibold text-black", labelClassName)}>{label}</span>
+      <span className="text-black">{value || "—"}</span>
+    </div>
+  );
+}
+
+function SignatureBlock({ title, name }: { title: string; name: string | null }) {
+  return (
+    <div className="flex-1 text-center">
+      <div className="mx-auto mt-12 w-full border-t border-black" />
+      <div className="mt-1 text-[11px] font-semibold text-black">Signature &amp; Stamp</div>
+      <div className="mt-0.5 text-[11px] text-black">{title}</div>
+      {name && <div className="mt-1 text-[10px] text-neutral-600">{name}</div>}
     </div>
   );
 }
@@ -60,7 +78,7 @@ export function DeliveryOrderDocument({ data, isLoading, error, className }: Pro
   }
   if (data && !data.deliveryOrderNo) {
     return (
-      <div className={cn("mx-auto max-w-[560px] p-10 text-center", className)}>
+      <div className={cn("mx-auto max-w-[720px] p-10 text-center", className)}>
         <p className="text-base font-semibold text-black">Not issued yet</p>
         <p className="mt-1 text-sm text-neutral-600">
           Generate the delivery order from the truck workflow first.
@@ -70,52 +88,130 @@ export function DeliveryOrderDocument({ data, isLoading, error, className }: Pro
   }
   if (!data?.deliveryOrderNo) return null;
 
+  const productName = data.commodityName ?? "—";
+
   return (
     <div
       className={cn(
-        "print-doc mx-auto w-full max-w-[560px] border border-black bg-white p-6 text-black",
+        "print-doc mx-auto w-full max-w-[720px] border border-black bg-white p-8 text-black",
         className,
       )}
     >
-      <div className="border-b-2 border-black pb-3 text-center">
-        <div className="text-2xl font-bold uppercase tracking-[0.3em]">Kastros</div>
-        <div className="mt-0.5 text-[11px] uppercase tracking-wider text-neutral-600">
-          Agri-commodity trading · Pakistan
+      {/* Header — company address + DO number */}
+      <div className="flex items-start justify-between gap-4 border-b border-black/40 pb-4">
+        <div className="min-w-0 flex-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/branding/logo-print.png"
+            alt="Kastros"
+            className="print-logo mb-2 block h-10 w-auto object-contain"
+          />
+          <p className="text-xs leading-snug text-neutral-700">{KASTROS_COMPANY_ADDRESS}</p>
         </div>
-        <div className="mt-3 text-lg font-bold uppercase tracking-[0.2em]">Delivery Order</div>
+        <div className="shrink-0 text-right text-sm">
+          <div className="font-semibold">DO No.</div>
+          <div className="font-mono text-base font-bold">{data.deliveryOrderNo}</div>
+        </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-baseline justify-between gap-2 text-sm">
-        <span>
-          DO no: <span className="font-mono font-bold">{data.deliveryOrderNo}</span>
-        </span>
-        <span>Issued: {data.issuedAt ? fmtDateTime(data.issuedAt) : "—"}</span>
+      <h1 className="mt-4 text-center text-xl font-bold uppercase tracking-[0.15em]">
+        Delivery Order
+      </h1>
+
+      {/* Buyer / warehouse block */}
+      <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
+        <LabelValueRow label="Buyer Name" value={data.buyerName} />
+        <LabelValueRow label="Warehouse Name" value={data.warehouseName} />
+        <LabelValueRow label="Buyer Address" value={data.buyerAddress ?? "—"} />
+        <LabelValueRow label="Warehouse Location" value={data.warehouseLocation ?? "—"} />
+        <LabelValueRow label="NTN" value={data.buyerNtn ?? "—"} />
+        <LabelValueRow label="Delivery Order No" value={data.deliveryOrderNo} />
+        <div className="col-span-2">
+          <LabelValueRow
+            label="Delivery Order Date"
+            value={data.deliveryOrderDate ? fmtDate(data.deliveryOrderDate) : "—"}
+          />
+        </div>
+        {data.warehouseAddress && (
+          <div className="col-span-2">
+            <LabelValueRow label="Warehouse Address" value={data.warehouseAddress} />
+          </div>
+        )}
       </div>
 
-      <p className="mt-4 border-t border-black/30 pt-4 text-sm italic">
-        To the warehouse incharge, {data.warehouseName}: please deliver to bearer the goods
-        described below, for and on account of <b>{data.buyerName}</b>.
+      <p className="mt-5 text-sm font-medium text-black">
+        We authorize you to take delivery as follows:
       </p>
 
-      <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
-        <Field label="Buyer" value={data.buyerName} />
-        <Field label="NTN" value={data.buyerNtn ?? "—"} />
-        <Field
-          label="Commodity"
-          value={
-            data.commodityName
-              ? `${data.commodityName}${data.commodityCode ? ` (${data.commodityCode})` : ""}`
-              : "—"
-          }
+      <div className="mt-3 space-y-2">
+        <LabelValueRow label="Commodity" value={productName} />
+        <LabelValueRow label="Contract No." value={data.tradeRef ?? "—"} />
+        <LabelValueRow label="Delivery Terms" value={data.deliveryTerms ?? "—"} />
+        <LabelValueRow
+          label="Actual Delivery date"
+          value={fmtDate(data.actualDeliveryDate)}
         />
-        <Field label="Gate weight" value={fmtKg(data.weightKg)} />
-        <Field label="Warehouse" value={data.warehouseName} />
-        <Field label="Truck no" value={data.truckNo} />
-        <Field label="Trade ref" value={data.tradeRef ?? "—"} />
       </div>
 
-      <div className="mt-8 border-t border-black/30 pt-4 text-center text-sm font-semibold uppercase tracking-wider">
-        Approved By Kastros
+      {/* Line items */}
+      <table className="mt-5 w-full border-collapse text-sm">
+        <thead>
+          <tr className="border-b-2 border-black">
+            {["Product", "Lot #", "Weight In KGs", "Weight In MTs", "Remarks"].map((h) => (
+              <th
+                key={h}
+                className={cn(
+                  "px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide",
+                  (h === "Weight In KGs" || h === "Weight In MTs") && "text-right",
+                )}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-b border-black/30">
+            <td className="px-2 py-2">{productName}</td>
+            <td className="px-2 py-2">N/A</td>
+            <td className="px-2 py-2 text-right tabular-nums">{fmtNum(data.weightKg)}</td>
+            <td className="px-2 py-2 text-right tabular-nums">{fmtNum(data.weightMt, 3)}</td>
+            <td className="px-2 py-2">{data.remarks ?? ""}</td>
+          </tr>
+          <tr className="font-semibold">
+            <td className="px-2 py-2">Totals</td>
+            <td className="px-2 py-2" />
+            <td className="px-2 py-2 text-right tabular-nums">{fmtNum(data.weightKg)}</td>
+            <td className="px-2 py-2 text-right tabular-nums">{fmtNum(data.weightMt, 3)}</td>
+            <td className="px-2 py-2" />
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Transporter */}
+      <div className="mt-6">
+        <div className="text-sm font-bold text-black">Transporter Details</div>
+        <div className="mt-2">
+          <LabelValueRow label="Truck No" value={data.truckNo} />
+          {data.transporterName && (
+            <div className="mt-1">
+              <LabelValueRow
+                label="Transporter"
+                value={
+                  data.transporterPhone
+                    ? `${data.transporterName} · ${data.transporterPhone}`
+                    : data.transporterName
+                }
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Signatures */}
+      <div className="mt-10 flex gap-10 border-t border-black/30 pt-2">
+        <SignatureBlock title="Finance" name={data.doFinanceApprovedBy} />
+        <SignatureBlock title="Execution" name={data.doExecutionApprovedBy} />
       </div>
     </div>
   );
