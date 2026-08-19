@@ -2,6 +2,7 @@ import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
 import { nextSerial, SERIALS } from "@/server/db/serials";
 import { traderNamesMatch } from "@/lib/trader-identity";
+import { kgToMt } from "@/lib/unit-registry";
 import { agingBucketFor } from "@/lib/finance-policy";
 import { availableCreditPkr, canFundTruck } from "@/server/finance/ledger";
 import {
@@ -146,13 +147,14 @@ export async function markSaleTruckReleased(
   if (row.saleReleasedAt) {
     throw new Error("This truck is already released");
   }
+  const releasedAt = new Date();
   await prisma.pendingTruck.update({
     where: { id: truckId },
-    data: { saleReleasedAt: new Date(), saleReleasedBy: releasedByName },
+    data: { saleReleasedAt: releasedAt, saleReleasedBy: releasedByName },
   });
   await prisma.outboundDispatch.updateMany({
     where: { gatepassNo: row.gatepassNo },
-    data: { status: "RELEASED" },
+    data: { status: "RELEASED", dispatchDate: releasedAt },
   });
   return freshTruck(truckId);
 }
@@ -872,7 +874,7 @@ export type SaleTruckPrintable = {
   tradeRef: string | null;
   deliveryTerms: string | null;
   deliveryOrderDate: Date | null;
-  actualDeliveryDate: Date;
+  actualDeliveryDate: Date | null;
   doExecutionApprovedBy: string | null;
   doFinanceApprovedBy: string | null;
   saleBasePkr: number | null;
@@ -907,7 +909,9 @@ export async function getSaleTruckPrintable(truckId: string): Promise<SaleTruckP
           where: { tradeRef: truck.assignedTradeRef },
           select: {
             incoterms: true,
-            counterparty: { select: { ntn: true, address: true, country: true } },
+            productOrigin: true,
+            originName: true,
+            counterparty: { select: { ntn: true } },
           },
         })
       : Promise.resolve(null),
@@ -919,7 +923,7 @@ export async function getSaleTruckPrintable(truckId: string): Promise<SaleTruckP
 
   const buyerNtn = trade?.counterparty.ntn ?? null;
   const buyerAddress =
-    trade?.counterparty.address?.trim() || trade?.counterparty.country?.trim() || null;
+    trade?.productOrigin?.trim() || trade?.originName?.trim() || null;
   const warehouseLocation = warehouse?.city?.trim() || warehouse?.province?.trim() || null;
 
   return {
@@ -944,11 +948,15 @@ export async function getSaleTruckPrintable(truckId: string): Promise<SaleTruckP
     commodityName: truck.commodityName ?? null,
     commodityCode: truck.commodityCode ?? null,
     weightKg,
-    weightMt: weightKg / 1000,
+    weightMt: kgToMt(weightKg),
     tradeRef: truck.assignedTradeRef ?? null,
     deliveryTerms: trade?.incoterms?.trim() || "Ex-Warehouse",
-    deliveryOrderDate: truck.doExecutionApprovedAt ?? truck.doFinanceApprovedAt ?? null,
-    actualDeliveryDate: truck.saleReleasedAt ?? truck.arrivalDate,
+    deliveryOrderDate:
+      truck.doFinanceApprovedAt ??
+      truck.doExecutionApprovedAt ??
+      truck.saleFinanceApprovedAt ??
+      null,
+    actualDeliveryDate: truck.saleReleasedAt ?? null,
     doExecutionApprovedBy: truck.doExecutionApprovedBy ?? null,
     doFinanceApprovedBy: truck.doFinanceApprovedBy ?? null,
     saleBasePkr: truck.saleBasePkr ?? null,

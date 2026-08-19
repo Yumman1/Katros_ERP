@@ -2,10 +2,23 @@
 
 import type { SaleTruckPrintable } from "@/server/execution/sale-workflow";
 import { KASTROS_COMPANY_ADDRESS } from "@/lib/company-branding";
+import { kgToMt } from "@/lib/unit-registry";
 import { cn } from "@/lib/utils";
 
-const fmtNum = (n: number, digits = 0) =>
-  new Intl.NumberFormat("en-PK", { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(n);
+/** Whole kilograms — e.g. 10,000 */
+function fmtWeightKg(n: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.round(n));
+}
+
+/** Metric tonnes from kg — e.g. 10 or 50.885 (never grouped like thousands) */
+function fmtWeightMt(kg: number): string {
+  const mt = kgToMt(kg);
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3,
+    useGrouping: false,
+  }).format(mt);
+}
 
 const fmtDate = (d: Date | string) =>
   new Date(d).toLocaleDateString("en-PK", { dateStyle: "medium" });
@@ -149,7 +162,7 @@ export function DeliveryOrderDocument({ data, isLoading, error, className }: Pro
         <LabelValueRow label="Delivery Terms" value={data.deliveryTerms ?? "—"} />
         <LabelValueRow
           label="Actual Delivery date"
-          value={fmtDate(data.actualDeliveryDate)}
+          value={data.actualDeliveryDate ? fmtDate(data.actualDeliveryDate) : "—"}
         />
       </div>
 
@@ -174,15 +187,15 @@ export function DeliveryOrderDocument({ data, isLoading, error, className }: Pro
           <tr className="border-b border-black/30">
             <td className="px-2 py-2">{productName}</td>
             <td className="px-2 py-2">N/A</td>
-            <td className="px-2 py-2 text-right tabular-nums">{fmtNum(data.weightKg)}</td>
-            <td className="px-2 py-2 text-right tabular-nums">{fmtNum(data.weightMt, 3)}</td>
+            <td className="px-2 py-2 text-right tabular-nums">{fmtWeightKg(data.weightKg)}</td>
+            <td className="px-2 py-2 text-right tabular-nums">{fmtWeightMt(data.weightKg)}</td>
             <td className="px-2 py-2">{data.remarks ?? ""}</td>
           </tr>
           <tr className="font-semibold">
             <td className="px-2 py-2">Totals</td>
             <td className="px-2 py-2" />
-            <td className="px-2 py-2 text-right tabular-nums">{fmtNum(data.weightKg)}</td>
-            <td className="px-2 py-2 text-right tabular-nums">{fmtNum(data.weightMt, 3)}</td>
+            <td className="px-2 py-2 text-right tabular-nums">{fmtWeightKg(data.weightKg)}</td>
+            <td className="px-2 py-2 text-right tabular-nums">{fmtWeightMt(data.weightKg)}</td>
             <td className="px-2 py-2" />
           </tr>
         </tbody>
