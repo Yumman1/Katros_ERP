@@ -508,3 +508,53 @@ It still obeys the same rule on the buy account: a CN debits **nothing** while u
 
 Receivables debit at face value on truck assignment and are settled by voucher credits, so `billedPkr == amountPkr` and every total above collapses to the classic debit / credit / balance reading. Open (unsettled, unheld) debits age by `dueDate` into the buckets in `lib/finance-policy.ts`.
 
+---
+
+## 21. Trader desk — counterparty reports
+
+**File:** `server/trader-reports.ts`  
+**UI:** `components/trader/trader-desk-reports.tsx` (My Desk, below open trades)
+
+Scoped to the signed-in trader's book. Filters: counterparty, commodity, direction (BUY/SELL).
+
+### Open quantity (per counterparty)
+
+From locked `ExecutionContract` rows for that trader's trades:
+
+```
+openBuyQtyMt  = Σ openQtyMt  where direction = BUY  and contractStatus = Open
+openSellQtyMt = Σ openQtyMt  where direction = SELL and contractStatus = Open
+fulfilledQtyMt = Σ receivedQtyMt on all locked contracts for that counterparty
+```
+
+### Weighted average cost (WAC)
+
+Receipt-based, same formula as §19 entry rate — scoped to that counterparty's BUY `tradeRef`s only:
+
+```
+WAC PKR/MT = Σ (inbound receipt qty × contract rate PKR/MT) / Σ receipt qty (rated only)
+```
+
+Implementation: `computeWeightedPurchasePrice` in `server/inventory-valuation.ts`.
+
+### Open-paper average rate
+
+When no receipts exist yet, open BUY contracts contribute:
+
+```
+openPaperAvgRate = Σ (openQtyMt × contract rate PKR/MT) / Σ openQtyMt
+```
+
+### MTM (USD)
+
+Sum of per-trade `mtmPnlUsd` on **LOCKED** and **CONFIRMED** trades for that counterparty (same scope as desk summary open MTM). PKR legs convert via desk FX (`PositionMarketInput`).
+
+### Ledger outstanding
+
+From shared counterparty ledger (`getCounterpartyLedgers`):
+
+- **Buy owed** = BUY account `outstandingDebitPkr`
+- **Sell owed** = SELL account `outstandingDebitPkr`
+
+These are global ledger balances for the counterparty (not trader-scoped), mirrored from Finance → Ledgers.
+

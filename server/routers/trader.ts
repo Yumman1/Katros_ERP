@@ -40,6 +40,7 @@ import { exportTradeFileCsv } from "@/server/trade-file-export";
 import { computePositionLedger } from "@/server/position-ledger";
 import { getSeasonNetPositions, setPositionMarketInput } from "@/server/net-position";
 import { getCounterpartyLedgers } from "@/server/finance/ledger";
+import { buildTraderCounterpartyReport } from "@/server/trader-reports";
 import {
   addCustomCommodity,
   addCustomCounterparty,
@@ -1026,6 +1027,26 @@ export const traderRouter = router({
 
   /** Buy and sell counterparty ledger accounts — same view as Execution → Ledgers. */
   counterpartyLedgers: protectedProcedure.query(() => getCounterpartyLedgers()),
+
+  /** Counterparty-wise open qty, WAC, MTM, and ledger outstanding for desk reports. */
+  counterpartyReport: protectedProcedure
+    .input(
+      z
+        .object({
+          counterpartyId: z.string().optional(),
+          commodityCode: z.string().optional(),
+          direction: z.nativeEnum(TradeDirection).optional(),
+        })
+        .optional(),
+    )
+    .query(({ ctx, input }) => {
+      const name = traderNameFromSession(ctx.session.user);
+      return buildTraderCounterpartyReport(name, {
+        counterpartyId: input?.counterpartyId,
+        commodityCode: input?.commodityCode,
+        direction: input?.direction,
+      });
+    }),
 
   /** Desk sets the day's market rate / FX behind a net-position column. */
   setPositionMarketInput: roleProcedure(["TRADER", "EXECUTION", "CEO", "ADMIN"])

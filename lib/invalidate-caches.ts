@@ -9,6 +9,7 @@ export function invalidateTradeFlowCaches(utils: Utils, tradeRef?: string) {
   void utils.trader.actionItems.invalidate();
   void utils.trader.myExposure.invalidate();
   void utils.trader.tradeFulfillment.invalidate();
+  void utils.trader.counterpartyReport.invalidate();
   // Booking, locking, closing or cancelling a trade all move the net position.
   void utils.trader.seasonNetPositions.invalidate();
   // An edit may have corrected the counterparty record, which every trade,
@@ -48,6 +49,7 @@ export function invalidateGateOpsCaches(utils: Utils) {
   void utils.execution.inventoryValuation.invalidate();
   void utils.execution.counterpartyLedgers.invalidate();
   void utils.trader.counterpartyLedgers.invalidate();
+  void utils.trader.counterpartyReport.invalidate();
   void utils.execution.vouchers.invalidate();
   void utils.policy.overdueLedgerAlerts.invalidate();
 }
