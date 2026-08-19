@@ -229,17 +229,16 @@ function SideSection({
 
       {side === "SELL" ? (
         <p className="text-xs text-muted-foreground">
-          Credit-terms trades release within their trade ceiling (balance may run negative within credit
-          days); advance trades need vouchers against the trade or direct advances.
+          All approved sale vouchers share one buyer pool — trade reference on a voucher is for
+          reconciliation only. Credit-terms trucks age by payment due date on the ledger
+          (informational); unfunded release needs trader and CEO approval.
         </p>
       ) : (
         <p className="text-xs text-muted-foreground">
-          A truck bills its invoice on assignment, and the debit follows the money: each payment finance
-          releases raises the same row, so a part-paid invoice debits only what was released and carries
-          the full amount once it clears. Outstanding is the rest of the bill. Credit notes bill the same
-          way and debit nothing until their voucher clears; debit notes raise receivables on this
-          account. A settled note and the voucher that paid it drop out of the totals together. This
-          ledger never mixes with the sell side.
+          A truck bills its invoice on assignment, and the debit follows the money. Purchase vouchers
+          must name a settled trade or open note — settlement closure counts credits for that trade only.
+          Debit notes can be paid in pieces; each approved voucher posts to the ledger until the note is
+          within 500 PKR of fully settled.
         </p>
       )}
 
@@ -417,13 +416,19 @@ function AccountCard({
                             <span
                               className={cn(
                                 "ml-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                                e.entryType === "CREDIT"
-                                  ? "bg-success/15 text-success"
-                                  : "bg-destructive/15 text-destructive",
+                                (e.paidPkr ?? 0) > 0
+                                  ? "bg-warning/15 text-warning"
+                                  : e.entryType === "CREDIT"
+                                    ? "bg-success/15 text-success"
+                                    : "bg-destructive/15 text-destructive",
                               )}
-                              title={`${fmtPkr(e.billedPkr)} claimed — a note settles in full, so nothing is debited until its voucher clears`}
+                              title={
+                                (e.paidPkr ?? 0) > 0
+                                  ? `${fmtPkr(e.paidPkr ?? 0)} collected of ${fmtPkr(e.billedPkr)} — ${fmtPkr(Math.max(0, e.billedPkr - (e.paidPkr ?? 0)))} remaining`
+                                  : `${fmtPkr(e.billedPkr)} claimed — vouchers can pay in pieces until within 500 PKR`
+                              }
                             >
-                              {noteKindLabel(e.sourceRef)}
+                              {(e.paidPkr ?? 0) > 0 ? "Note part paid" : noteKindLabel(e.sourceRef)}
                             </span>
                           )
                         ) : e.settlesNoteRef ? (
@@ -481,7 +486,7 @@ function AccountCard({
                             </span>
                           ) : (
                             <span className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 text-[10px] font-semibold text-subtle">
-                              Direct advance
+                              No trade ref
                             </span>
                           )
                         ) : (

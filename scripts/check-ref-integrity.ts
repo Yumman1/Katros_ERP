@@ -93,19 +93,28 @@ async function checkOpenTradeInvoiceReuse() {
 }
 
 async function checkDuplicateValues() {
-  const vouchers = await prisma.$queryRaw<Array<{ reference: string; n: bigint }>>`
-    SELECT "reference", COUNT(*) AS n
+  const vouchers = await prisma.$queryRaw<Array<{ bank: string; reference: string; n: bigint }>>`
+    SELECT
+      COALESCE(NULLIF(btrim("bankName"), ''), '') AS bank,
+      lower(btrim("reference")) AS reference,
+      COUNT(*) AS n
     FROM "Voucher"
-    WHERE "reference" IS NOT NULL AND btrim("reference") <> ''
-    GROUP BY "counterpartyId", "reference"
+    WHERE "reference" IS NOT NULL
+      AND btrim("reference") <> ''
+      AND "status" IN ('PENDING_FINANCE', 'APPROVED')
+    GROUP BY
+      COALESCE(NULLIF(btrim("bankName"), ''), ''),
+      lower(btrim("reference")),
+      ("voucherDate" AT TIME ZONE 'UTC')::date,
+      "amountPkr"
     HAVING COUNT(*) > 1
   `;
   report(
-    "no counterparty has one bank reference on two vouchers",
+    "no duplicate voucher payment keys (bank + reference + date + amount)",
     vouchers.length === 0,
     vouchers.length
-      ? vouchers.map((v) => `${v.reference} x${Number(v.n)}`).join("; ")
-      : "bank references are unique per counterparty",
+      ? vouchers.map((v) => `${v.bank || "(no bank)"} / ${v.reference} x${Number(v.n)}`).join("; ")
+      : "each payment slip is unique on bank, reference, date, and amount",
   );
 
   const locations = await prisma.$queryRaw<Array<{ code: string; n: bigint }>>`

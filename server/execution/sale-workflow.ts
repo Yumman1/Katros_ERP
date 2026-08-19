@@ -172,14 +172,14 @@ export type SaleWorkflowRow = {
   saleTaxPkr: number | null;
   saleExpectedPkr: number | null;
   saleStage: SaleTruckStage | null;
-  /** Funding available to THIS truck's trade (PKR); null until a trade is assigned. */
+  /** Shared buyer voucher pool available (PKR); null until a trade is assigned. */
   availableCreditPkr: number | null;
-  /** True when the trade's funding (credit ceiling or vouchers) covers this truck. */
+  /** True when the buyer's voucher pool covers this truck. */
   canSendForApproval: boolean;
-  /** CREDIT = releases within the trade's credit line; ADVANCE = needs vouchers. */
+  /** CREDIT = payment due per trade terms; ADVANCE = vouchers required unless released on credit. */
   fundingKind: "CREDIT" | "ADVANCE" | null;
-  /** For credit trades: the trade's total receivable ceiling (PKR). */
-  creditCeilingPkr: number | null;
+  /** For credit trades: payment due date from the truck ledger entry. */
+  paymentDueDate: Date | null;
   fundingReason: string | null;
   gateOutSlipNo: string | null;
   deliveryOrderNo: string | null;
@@ -209,9 +209,10 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
 
   const entries = await prisma.counterpartyLedgerEntry.findMany({
     where: { truckId: { in: rows.map((r) => r.id) } },
-    select: { truckId: true, counterpartyId: true },
+    select: { truckId: true, counterpartyId: true, dueDate: true },
   });
   const cpByTruck = new Map(entries.map((e) => [e.truckId, e.counterpartyId]));
+  const dueDateByTruck = new Map(entries.map((e) => [e.truckId, e.dueDate]));
 
   // Per-truck funding check (trade credit line or vouchers) for the trucks
   // that are still awaiting balance.
@@ -258,7 +259,7 @@ export async function getSaleWorkflowRows(): Promise<SaleWorkflowRow[]> {
       availableCreditPkr: funding?.availablePkr ?? null,
       canSendForApproval: r.saleStage === "AWAITING_BALANCE" && funding?.ok === true,
       fundingKind: funding?.kind ?? null,
-      creditCeilingPkr: funding?.creditCeilingPkr ?? null,
+      paymentDueDate: dueDateByTruck.get(r.id) ?? null,
       fundingReason: funding?.reason ?? null,
       gateOutSlipNo: r.gateOutSlipNo,
       deliveryOrderNo: r.deliveryOrderNo,
@@ -517,23 +518,7 @@ export async function settleSaleTruck(
       { counterpartyId: cp.id, tradeRef: row.assignedTradeRef!, amountPkr: expected },
       tx,
     );
-    // Settling always needs actual money — even for credit-terms trades the
-    // dues are cleared by vouchers, so check the cash pool, not the ceiling.
-    if (funding.kind === "CREDIT") {
-      const { getSellFundingState, availableForAdvanceTrade } = await import(
-        "@/server/finance/ledger"
-      );
-      const state = await getSellFundingState(cp.id, tx);
-      // Force cash semantics for the settle check.
-      state.termsByTrade.set(row.assignedTradeRef!, "ADVANCE");
-      const cash = availableForAdvanceTrade(state, row.assignedTradeRef!);
-      if (cash + 0.005 < expected) {
-        throw new Error(
-          `Insufficient vouchers for ${cp.name}: available ${Math.round(cash).toLocaleString("en-PK")} PKR ` +
-            `< outstanding ${Math.round(expected).toLocaleString("en-PK")} PKR.`,
-        );
-      }
-    } else if (!funding.ok) {
+    if (!funding.ok) {
       throw new Error(funding.reason ?? "Insufficient vouchers to settle this truck");
     }
     const updated = await tx.pendingTruck.updateMany({

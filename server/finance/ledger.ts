@@ -21,9 +21,8 @@ type Db = PrismaClient | Prisma.TransactionClient;
  */
 
 /**
- * Sale-truck stages whose receivable earmarks voucher credit against their trade.
- * In-flight trucks reserve funding once assigned; clear-pending / cleared-unpaid
- * paths use the credit-release workflow instead.
+ * Sale-truck stages whose receivable earmarks voucher credit from the buyer's
+ * shared pool. In-flight trucks reserve funding once assigned.
  */
 export const VOUCHER_EARMARK_STAGES = [
   "AWAITING_BALANCE",
@@ -125,7 +124,7 @@ export async function postCreditForVoucher(
     amountPkr: number;
     /** Ledger account to credit; defaults to the sell account. */
     side?: CounterpartySide;
-    /** Trade the payment is against; null = direct advance. */
+    /** Trade reference for reconciliation; null = no trade tagged. */
     tradeRef?: string | null;
     note?: string | null;
   },
@@ -215,20 +214,71 @@ const NOT_A_NOTE_VOUCHER = {
   OR: [{ voucherId: null }, { voucher: { is: { noteRef: null } } }],
 } satisfies Prisma.CounterpartyLedgerEntryWhereInput;
 
+/** When remaining due on a note is at or below this, treat it as fully settled. */
+export const NOTE_SETTLE_TOLERANCE_PKR = 500;
+
+export function noteRemainingPkr(billedPkr: number, paidPkr: number): number {
+  return Math.max(0, billedPkr - paidPkr);
+}
+
+export function noteShouldClose(remainingPkr: number): boolean {
+  return remainingPkr <= NOTE_SETTLE_TOLERANCE_PKR;
+}
+
+/** Approved voucher total already applied to this note (internal sub-ledger). */
+export async function notePaidPkr(
+  noteRef: string,
+  counterpartyId: string,
+  db: Db = prisma,
+): Promise<number> {
+  const agg = await db.voucher.aggregate({
+    where: { noteRef, counterpartyId, status: "APPROVED" },
+    _sum: { amountPkr: true },
+  });
+  return numOrNull(agg._sum.amountPkr) ?? 0;
+}
+
+/** Full claim, paid so far, and what's still due on an open note. */
+export async function noteBalance(
+  noteRef: string,
+  counterpartyId: string,
+  db: Db = prisma,
+): Promise<{ billedPkr: number; paidPkr: number; remainingPkr: number }> {
+  const row = await db.counterpartyLedgerEntry.findFirst({
+    where: {
+      counterpartyId,
+      sourceType: "ADJUSTMENT",
+      sourceRef: noteRef,
+      noteStatus: "UNPAID",
+    },
+    select: { amountPkr: true },
+  });
+  const billedPkr = row ? num(row.amountPkr) : 0;
+  const paidPkr = await notePaidPkr(noteRef, counterpartyId, db);
+  return {
+    billedPkr,
+    paidPkr,
+    remainingPkr: noteRemainingPkr(billedPkr, paidPkr),
+  };
+}
+
 export type OpenSettlementNote = {
   /** DN-xxxxx (seller owes us) / CN-xxxxx (we owe the seller). */
   noteRef: string;
   side: CounterpartySide;
-  /** Amount still due — a note is settled in full or not at all. */
+  /** Remaining due — use for voucher amount cap and dropdown label. */
   amountPkr: number;
+  billedPkr: number;
+  paidPkr: number;
+  remainingPkr: number;
   tradeRef: string | null;
   entryDate: Date;
   note: string | null;
 };
 
 /**
- * Cancellation / short-close notes on a counterparty's account that no voucher
- * has settled yet — the "against" choices on the voucher form.
+ * Cancellation / short-close notes on a counterparty's account still awaiting
+ * vouchers — the "against" choices on the voucher form.
  */
 export async function listOpenSettlementNotes(
   counterpartyId: string,
@@ -246,14 +296,41 @@ export async function listOpenSettlementNotes(
     orderBy: { entryDate: "desc" },
     select: { side: true, sourceRef: true, amountPkr: true, tradeRef: true, entryDate: true, note: true },
   });
-  return rows.map((r) => ({
-    noteRef: r.sourceRef!,
-    side: r.side,
-    amountPkr: num(r.amountPkr),
-    tradeRef: r.tradeRef,
-    entryDate: r.entryDate,
-    note: r.note,
-  }));
+  const result: OpenSettlementNote[] = [];
+  for (const r of rows) {
+    const noteRef = r.sourceRef!;
+    const billedPkr = num(r.amountPkr);
+    const paidPkr = await notePaidPkr(noteRef, counterpartyId, db);
+    const remainingPkr = noteRemainingPkr(billedPkr, paidPkr);
+    if (noteShouldClose(remainingPkr)) {
+      if (paidPkr > 0) {
+        const lastVoucher = await db.voucher.findFirst({
+          where: { noteRef, counterpartyId, status: "APPROVED" },
+          orderBy: { resolvedAt: "desc" },
+          select: { voucherNo: true },
+        });
+        if (lastVoucher) {
+          await markSettlementNotePaid(
+            { counterpartyId, noteRef, voucherNo: lastVoucher.voucherNo },
+            db,
+          );
+        }
+      }
+      continue;
+    }
+    result.push({
+      noteRef,
+      side: r.side,
+      amountPkr: remainingPkr,
+      billedPkr,
+      paidPkr,
+      remainingPkr,
+      tradeRef: r.tradeRef,
+      entryDate: r.entryDate,
+      note: r.note,
+    });
+  }
+  return result;
 }
 
 /**
@@ -290,209 +367,39 @@ export function tradeTermsKind(paymentType: string): "CREDIT" | "ADVANCE" {
   return paymentType === "CREDIT" || paymentType === "CREDIT_30" ? "CREDIT" : "ADVANCE";
 }
 
-type SellFundingState = {
-  /** Voucher credits linked to a specific sell trade. */
-  creditsByTrade: Map<string, number>;
-  /** Voucher credits with no trade link — direct advances (any-trade pool). */
-  directCredits: number;
-  /** Consuming-stage truck receivables per trade. */
-  consumedByTrade: Map<string, number>;
-  /** Payment-terms kind per trade with consumption or credits. */
-  termsByTrade: Map<string, "CREDIT" | "ADVANCE">;
-};
-
-/**
- * One-shot funding picture of a buyer's sell ledger, attributing voucher
- * credits to their trades. Trade-linked credits fund only their trade;
- * direct advances cover any trade's overflow. Credit-terms trades don't
- * consume cash — their trucks ride on the trade's credit line instead.
- */
-export async function getSellFundingState(
-  counterpartyId: string,
-  db: Db = prisma,
-  options?: { excludeTruckId?: string },
-): Promise<SellFundingState> {
-  const [credits, debits, settlementDebits] = await Promise.all([
-    db.counterpartyLedgerEntry.findMany({
-      // A note voucher pays a cancellation claim, not a delivery — its credit
-      // must never read as funding available for another truck.
-      where: { counterpartyId, side: "SELL", entryType: "CREDIT", ...NOT_A_NOTE_VOUCHER },
-      select: { amountPkr: true, tradeRef: true },
-    }),
-    db.counterpartyLedgerEntry.findMany({
-      where: { counterpartyId, side: "SELL", entryType: "DEBIT", truckId: { not: null } },
-      select: { truckId: true, tradeRef: true, amountPkr: true },
-    }),
-    // Settled trades have no truck — their receivable is the settlement
-    // invoice, and it always consumes the credit collected against it.
-    db.counterpartyLedgerEntry.findMany({
-      where: { counterpartyId, side: "SELL", entryType: "DEBIT", invoiceId: { not: null } },
-      select: { tradeRef: true, amountPkr: true },
-    }),
-  ]);
-
-  const creditsByTrade = new Map<string, number>();
-  let directCredits = 0;
-  for (const c of credits) {
-    if (c.tradeRef) {
-      creditsByTrade.set(c.tradeRef, (creditsByTrade.get(c.tradeRef) ?? 0) + num(c.amountPkr));
-    } else {
-      directCredits += num(c.amountPkr);
-    }
-  }
-
-  const truckIds = debits.map((d) => d.truckId).filter((id): id is string => Boolean(id));
-  const consuming = truckIds.length
-    ? new Set(
-        (
-          await db.pendingTruck.findMany({
-            where: { id: { in: truckIds }, saleStage: { in: [...VOUCHER_EARMARK_STAGES] } },
-            select: { id: true },
-          })
-        ).map((t) => t.id),
-      )
-    : new Set<string>();
-
-  const consumedByTrade = new Map<string, number>();
-  for (const d of debits) {
-    if (!d.truckId || !consuming.has(d.truckId) || !d.tradeRef) continue;
-    if (options?.excludeTruckId && d.truckId === options.excludeTruckId) continue;
-    consumedByTrade.set(d.tradeRef, (consumedByTrade.get(d.tradeRef) ?? 0) + num(d.amountPkr));
-  }
-  const settlementRefs = new Set<string>();
-  for (const d of settlementDebits) {
-    if (!d.tradeRef) continue;
-    settlementRefs.add(d.tradeRef);
-    consumedByTrade.set(d.tradeRef, (consumedByTrade.get(d.tradeRef) ?? 0) + num(d.amountPkr));
-  }
-
-  const refs = [...new Set([...creditsByTrade.keys(), ...consumedByTrade.keys()])];
-  const termsByTrade = new Map<string, "CREDIT" | "ADVANCE">();
-  if (refs.length) {
-    const trades = await db.trade.findMany({
-      where: { tradeRef: { in: refs } },
-      select: { tradeRef: true, paymentType: true, directSettled: true },
-    });
-    // A settled trade's receivable is due in full whatever its booked terms —
-    // there is no delivery left to run on credit, so it always draws cash.
-    for (const t of trades) {
-      termsByTrade.set(
-        t.tradeRef,
-        t.directSettled || settlementRefs.has(t.tradeRef) ? "ADVANCE" : tradeTermsKind(t.paymentType),
-      );
-    }
-  }
-
-  return { creditsByTrade, directCredits, consumedByTrade, termsByTrade };
-}
-
-/**
- * Cash available to fund a truck of the given ADVANCE-terms trade: that
- * trade's linked voucher credits minus what its trucks already consumed,
- * plus whatever remains of the direct-advance pool after every other
- * advance trade's overflow is covered.
- */
-export function availableForAdvanceTrade(state: SellFundingState, tradeRef: string): number {
-  const tradeCredit = state.creditsByTrade.get(tradeRef) ?? 0;
-  const tradeConsumed = state.consumedByTrade.get(tradeRef) ?? 0;
-  const own = tradeCredit - tradeConsumed;
-
-  // Direct pool minus every OTHER advance trade's overflow beyond its own
-  // credits (credit-terms trades never draw cash).
-  let directLeft = state.directCredits;
-  for (const [ref, consumed] of state.consumedByTrade) {
-    if (ref === tradeRef) continue;
-    if (state.termsByTrade.get(ref) === "CREDIT") continue;
-    const covered = state.creditsByTrade.get(ref) ?? 0;
-    directLeft -= Math.max(0, consumed - covered);
-  }
-  directLeft = Math.max(0, directLeft);
-
-  // Own trade-linked surplus adds to the pool; own overflow drains it.
-  return own >= 0 ? own + directLeft : Math.max(0, directLeft + own);
-}
-
 export type TruckFundingCheck = {
   ok: boolean;
   kind: "CREDIT" | "ADVANCE";
   availablePkr: number;
-  /** For credit trades: the trade's total receivable ceiling. */
-  creditCeilingPkr?: number;
   reason?: string;
 };
 
-/**
- * Can this truck's receivable be confirmed/settled from the buyer's funding?
- * CREDIT-terms trade: yes while cumulative consuming receivables stay within
- * the trade's total receivable (ledger goes negative within credit terms).
- * ADVANCE-terms trade: yes only when trade-linked + direct voucher credits
- * cover it — otherwise it needs the trader + CEO release path.
- */
-export async function canFundTruck(
-  input: {
-    counterpartyId: string;
-    tradeRef: string;
-    amountPkr: number;
-    /** Omit this truck's receivable when checking whether it can be funded. */
-    excludeTruckId?: string;
-  },
-  db: Db = prisma,
-): Promise<TruckFundingCheck> {
-  const trade = await db.trade.findUnique({
-    where: { tradeRef: input.tradeRef },
-    select: {
-      paymentType: true,
-      quantity: true,
-      price: true,
-      pricePerCanonicalQty: true,
-      counterparty: { select: { taxFilerStatus: true } },
-    },
-  });
-  if (!trade) return { ok: false, kind: "ADVANCE", availablePkr: 0, reason: "Trade not found" };
-  const kind = tradeTermsKind(trade.paymentType);
-  const state = await getSellFundingState(input.counterpartyId, db, {
-    excludeTruckId: input.excludeTruckId,
-  });
-
-  if (kind === "CREDIT") {
-    const { getFinancePolicy } = await import("./policy");
-    const { advanceTaxRateFor } = await import("@/lib/finance-policy");
-    const policy = await getFinancePolicy();
-    const rate = advanceTaxRateFor(policy, trade.counterparty?.taxFilerStatus);
-    const notional =
-      num(trade.quantity) *
-      (trade.pricePerCanonicalQty != null ? num(trade.pricePerCanonicalQty) : num(trade.price));
-    const ceiling = Math.round(notional * (1 + rate / 100) * 100) / 100;
-    const consumed = state.consumedByTrade.get(input.tradeRef) ?? 0;
-    const ok = consumed + input.amountPkr <= ceiling + 1; // 1 PKR rounding headroom
-    return {
-      ok,
-      kind,
-      availablePkr: Math.max(0, ceiling - consumed),
-      creditCeilingPkr: ceiling,
-      reason: ok
-        ? undefined
-        : `Credit trade ceiling reached: ${Math.round(consumed).toLocaleString("en-PK")} of ${Math.round(ceiling).toLocaleString("en-PK")} PKR already released against this trade`,
-    };
-  }
-
-  const available = availableForAdvanceTrade(state, input.tradeRef);
-  const ok = available + 0.005 >= input.amountPkr;
-  return {
-    ok,
-    kind,
-    availablePkr: available,
-    reason: ok
-      ? undefined
-      : `Insufficient vouchers for ${input.tradeRef}: ${Math.round(available).toLocaleString("en-PK")} PKR remaining after other trucks on this trade — need ${Math.round(input.amountPkr).toLocaleString("en-PK")} PKR`,
-  };
+/** Pure shared-pool balance — used by availableCreditPkr and unit tests. */
+export function computeSharedPoolAvailablePkr(input: {
+  totalCreditPkr: number;
+  settlementEarmarkPkr: number;
+  truckDebits: { truckId: string; amountPkr: number }[];
+  earmarkedTruckIds: Set<string>;
+  excludeTruckId?: string;
+}): number {
+  const earmarked = input.truckDebits.reduce((s, e) => {
+    if (!input.earmarkedTruckIds.has(e.truckId)) return s;
+    if (input.excludeTruckId && e.truckId === input.excludeTruckId) return s;
+    return s + e.amountPkr;
+  }, 0);
+  return Math.max(0, input.totalCreditPkr - earmarked - input.settlementEarmarkPkr);
 }
 
 /**
- * Sell-ledger credit not yet consumed by paid/settled (or in-flight legacy)
- * trucks — the aggregate figure shown on ledger pages.
+ * Sell-ledger credit not yet consumed by in-flight trucks or settlement
+ * invoices — the buyer's shared voucher pool. Trade ref on credits is for
+ * reconciliation only; every approved voucher feeds this one balance.
  */
-export async function availableCreditPkr(counterpartyId: string, db: Db = prisma): Promise<number> {
+export async function availableCreditPkr(
+  counterpartyId: string,
+  db: Db = prisma,
+  options?: { excludeTruckId?: string },
+): Promise<number> {
   const [creditAgg, debitEntries, settlementAgg] = await Promise.all([
     db.counterpartyLedgerEntry.aggregate({
       // Note vouchers pay a cancellation claim — never free credit.
@@ -523,11 +430,50 @@ export async function availableCreditPkr(counterpartyId: string, db: Db = prisma
         ).map((t) => t.id),
       )
     : new Set<string>();
-  const earmarked = debitEntries.reduce(
-    (s, e) => (e.truckId && consuming.has(e.truckId) ? s + num(e.amountPkr) : s),
-    0,
-  );
-  return Math.max(0, credit - earmarked - settlementEarmark);
+  return computeSharedPoolAvailablePkr({
+    totalCreditPkr: credit,
+    settlementEarmarkPkr: settlementEarmark,
+    truckDebits: debitEntries.flatMap((e) =>
+      e.truckId ? [{ truckId: e.truckId, amountPkr: num(e.amountPkr) }] : [],
+    ),
+    earmarkedTruckIds: consuming,
+    excludeTruckId: options?.excludeTruckId,
+  });
+}
+
+/**
+ * Can this truck's receivable be confirmed/settled from the buyer's shared
+ * voucher pool? Both advance- and credit-terms trades use the same pool check;
+ * unfunded release always needs trader + CEO approval regardless of trade type.
+ */
+export async function canFundTruck(
+  input: {
+    counterpartyId: string;
+    tradeRef: string;
+    amountPkr: number;
+    /** Omit this truck's receivable when checking whether it can be funded. */
+    excludeTruckId?: string;
+  },
+  db: Db = prisma,
+): Promise<TruckFundingCheck> {
+  const trade = await db.trade.findUnique({
+    where: { tradeRef: input.tradeRef },
+    select: { paymentType: true },
+  });
+  if (!trade) return { ok: false, kind: "ADVANCE", availablePkr: 0, reason: "Trade not found" };
+  const kind = tradeTermsKind(trade.paymentType);
+  const available = await availableCreditPkr(input.counterpartyId, db, {
+    excludeTruckId: input.excludeTruckId,
+  });
+  const ok = available + 0.005 >= input.amountPkr;
+  return {
+    ok,
+    kind,
+    availablePkr: available,
+    reason: ok
+      ? undefined
+      : `Insufficient vouchers for ${input.tradeRef}: ${Math.round(available).toLocaleString("en-PK")} PKR available for this buyer — need ${Math.round(input.amountPkr).toLocaleString("en-PK")} PKR`,
+  };
 }
 
 export type LedgerEntryView = {
@@ -680,6 +626,17 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
 
   const settledStages = new Set<string>(SETTLED_STAGES);
 
+  const notePaidByKey = new Map<string, number>();
+  const noteVoucherAggs = await prisma.voucher.groupBy({
+    by: ["counterpartyId", "noteRef"],
+    where: { status: "APPROVED", noteRef: { not: null } },
+    _sum: { amountPkr: true },
+  });
+  for (const g of noteVoucherAggs) {
+    if (!g.noteRef) continue;
+    notePaidByKey.set(`${g.counterpartyId}:${g.noteRef}`, numOrNull(g._sum.amountPkr) ?? 0);
+  }
+
   const byAccount = new Map<string, LedgerEntryView[]>();
   for (const e of entries) {
     const stage = (e.truckId ? truckStage.get(e.truckId) : null) ?? null;
@@ -689,6 +646,11 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
     // or a settlement invoice fully collected.
     const invStatus = (e.invoiceId ? invoiceStatus.get(e.invoiceId) : null) ?? null;
     const billedPkr = num(e.amountPkr);
+    const isOpenNote = e.noteStatus === "UNPAID" && e.sourceType === "ADJUSTMENT";
+    const notePaid =
+      isOpenNote && e.sourceRef
+        ? (notePaidByKey.get(`${e.counterpartyId}:${e.sourceRef}`) ?? 0)
+        : 0;
     // A cancellation note answers to its own status, not to a gatepass or a
     // truck stage — it is settled the moment a voucher pays it.
     const settled =
@@ -702,10 +664,12 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
               : stage != null && settledStages.has(stage));
     // How much of this debit the money has actually covered. On the buy side
     // that is the amount paid against the gatepass, so a part-released truck
-    // shows its paid share rather than all-or-nothing.
+    // shows its paid share rather than all-or-nothing. Open notes track partial
+    // vouchers against the same noteRef sub-ledger.
     const isBuyGateInvoice = e.side === "BUY" && e.sourceType === "GATEPASS";
-    const paidPkr =
-      e.entryType !== "DEBIT"
+    const paidPkr = isOpenNote
+      ? notePaid
+      : e.entryType !== "DEBIT"
         ? 0
         : isBuyGateInvoice
           ? Math.min(billedPkr, e.sourceRef ? (paidByGatepass.get(e.sourceRef) ?? 0) : 0)
@@ -713,10 +677,12 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
             ? billedPkr
             : 0;
     // Every buy debit posts money that has moved, never a claim: a gate invoice
-    // grows with each part-payment finance approves, and a credit note we owe
-    // the seller stays at zero until the voucher paying it clears. The bill
-    // behind either one rides along on billedPkr.
-    const postedPkr = e.entryType === "DEBIT" && e.side === "BUY" ? paidPkr : billedPkr;
+    // grows with each part-payment finance approves. Open notes post only what
+    // vouchers have collected so far; the full claim stays on billedPkr.
+    const postedPkr =
+      isOpenNote || (e.entryType === "DEBIT" && e.side === "BUY")
+        ? paidPkr
+        : billedPkr;
     // A deliberate hold is a decision, not an overdue payable — it never ages.
     const held = e.side === "BUY" && e.sourceRef != null && heldGatepasses.has(e.sourceRef);
 

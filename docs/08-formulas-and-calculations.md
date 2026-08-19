@@ -607,3 +607,77 @@ Only **locked** open SELL contracts count. Unlocked and draft trades are exclude
 
 The booking form warns when the quantity being booked exceeds combined `freeToSellMt` across the picked warehouses, but never blocks the booking. Hard stock enforcement happens later in execution via `assertSufficientOutboundStock` (`server/execution/movements.ts`).
 
+---
+
+## 23. Shared buyer voucher pool
+
+**File:** `server/finance/ledger.ts` (`availableCreditPkr`, `canFundTruck`, `computeSharedPoolAvailablePkr`)  
+**UI:** Execution vouchers, gate truck payment step, counterparty ledgers
+
+Every approved **sell-side voucher credit** for a buyer feeds **one shared pool** on that counterparty's SELL account. Optional `tradeRef` on the voucher and ledger row is **reconciliation only** — it does not reserve money for that trade.
+
+### Available balance
+
+```
+totalCreditPkr       = Σ sell CREDIT rows (excluding note-voucher credits)
+settlementEarmark    = Σ sell DEBIT rows linked to settlement invoices
+earmarkedTruckDebits = Σ truck DEBIT rows whose saleStage ∈ VOUCHER_EARMARK_STAGES
+
+availableCreditPkr   = max(0, totalCreditPkr − earmarkedTruckDebits − settlementEarmark)
+```
+
+When checking whether a specific truck can be funded, that truck's own earmark is omitted (`excludeTruckId`) so it does not block itself.
+
+### Truck release
+
+Both **advance-** and **credit-terms** trades use the same pool check in `canFundTruck`:
+
+```
+ok = availableCreditPkr ≥ truck receivable (incl. 236G)
+```
+
+If the pool is short, execution must use **Request release on credit** → trader approval → CEO approval → `CLEARED_UNPAID`. The buyer's ledger runs negative; truck debits age by `dueDate` from trade credit days — **informational only**, no aging-based blocking.
+
+### Backward compatibility
+
+No schema migration. Historical trade-linked credits automatically join the shared pool. In-flight trucks and settlement earmarks behave unchanged.
+
+---
+
+## 24. Partial settlement note vouchers (purchase)
+
+**File:** `server/finance/ledger.ts` (`notePaidPkr`, `noteBalance`, `listOpenSettlementNotes`), `server/finance/vouchers.ts`  
+**UI:** Execution vouchers (purchase side), counterparty ledgers
+
+Purchase vouchers **must** name a settled purchase trade or an open cancellation note — there is no unlinked/direct payment on the BUY side. Settlement trade closure still counts only voucher credits tagged to **that trade** (no cross-trade pooling).
+
+### Note internal sub-ledger
+
+Each open note (`sourceType = ADJUSTMENT`, `noteStatus = UNPAID`) tracks partial payments via approved vouchers sharing its `noteRef`:
+
+```
+billedPkr     = note row amountPkr (full claim)
+paidPkr       = Σ approved Voucher.amountPkr where noteRef matches
+remainingPkr  = max(0, billedPkr − paidPkr)
+```
+
+The note stays in the voucher form **Against trade** dropdown while `remainingPkr > 500`.
+
+### Closure tolerance
+
+```
+NOTE_SETTLE_TOLERANCE_PKR = 500
+
+note closes when remainingPkr ≤ 500
+```
+
+On closure, `markSettlementNotePaid` runs and the note drops from open lists; the note row and its voucher credits remain visible for audit (excluded from balance totals together when paid).
+
+### Voucher rules
+
+- Payment **reference** (slip / cheque / transfer no.) is **required** on every voucher
+- Duplicate guard: same **bank name** (blank when not a bank transfer) + **reference** + **voucher date** + **amount** cannot be submitted if a pending or approved voucher already exists with that combination
+- `createVoucher`: amount must be positive and `≤ remainingPkr + 0.005`
+- `approveVoucher`: posts ledger CREDIT, then closes the note only if remaining is within tolerance
+- Each approved piece hits the ledger immediately; partial progress shows on the note row in counterparty ledgers
+

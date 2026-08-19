@@ -49,7 +49,7 @@ import {
   requestInboundOverDelivery,
 } from "@/server/execution-store";
 import { getCounterpartyLedgers, listOpenSettlementNotes } from "@/server/finance/ledger";
-import { createVoucher, listVouchers } from "@/server/finance/vouchers";
+import { createVoucher, findDuplicateVoucher, listVouchers } from "@/server/finance/vouchers";
 import { mockTradeByRefGlobal } from "@/server/dummy-data";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
@@ -1124,24 +1124,53 @@ export const executionRouter = router({
     )
     .query(({ input }) => listOpenSettlementNotes(input.counterpartyId, input.side)),
 
+  /** True when bank + reference + date + amount match an existing pending/approved voucher. */
+  findVoucherDuplicate: roleProcedure([...execRoles, Role.FINANCE])
+    .input(
+      z.object({
+        bankName: z.string().optional(),
+        reference: z.string().trim().min(1),
+        voucherDate: z.coerce.date(),
+        amountPkr: z.number().positive(),
+      }),
+    )
+    .query(({ input }) =>
+      findDuplicateVoucher({
+        bankName: input.bankName?.trim() || null,
+        reference: input.reference,
+        voucherDate: input.voucherDate,
+        amountPkr: input.amountPkr,
+      }),
+    ),
+
   /** Enter a payment voucher — credits the ledger once finance approves it. */
   createVoucher: roleProcedure([...execRoles])
     .input(
-      z.object({
-        counterpartyId: z.string().min(1),
-        /** Ledger account to credit — SELL (sale) or BUY (purchase settlement). */
-        side: z.enum(["BUY", "SELL"]).optional(),
-        /** Trade the payment is against; omit for a direct advance. */
-        tradeRef: z.string().optional(),
-        /** Cancellation / short-close note being settled — overrides tradeRef. */
-        noteRef: z.string().optional(),
-        amountPkr: z.number().positive(),
-        method: z.string().optional(),
-        reference: z.string().optional(),
-        bankName: z.string().optional(),
-        voucherDate: z.coerce.date().optional(),
-        note: z.string().optional(),
-      }),
+      z
+        .object({
+          counterpartyId: z.string().min(1),
+          /** Ledger account to credit — SELL (sale) or BUY (purchase settlement). */
+          side: z.enum(["BUY", "SELL"]).optional(),
+          /** Trade reference for reconciliation; optional on SELL, required on BUY. */
+          tradeRef: z.string().optional(),
+          /** Cancellation / short-close note being settled — overrides tradeRef. */
+          noteRef: z.string().optional(),
+          amountPkr: z.number().positive(),
+          method: z.string().optional(),
+          reference: z.string().trim().min(1, "Payment reference is required"),
+          bankName: z.string().optional(),
+          voucherDate: z.coerce.date().optional(),
+          note: z.string().optional(),
+        })
+        .superRefine((val, ctx) => {
+          if (val.side === "BUY" && !val.noteRef?.trim() && !val.tradeRef?.trim()) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "A purchase voucher must name a settled purchase trade or an open note",
+              path: ["tradeRef"],
+            });
+          }
+        }),
     )
     .mutation(async ({ ctx, input }) => {
       try {

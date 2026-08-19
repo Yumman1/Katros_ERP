@@ -16,6 +16,9 @@
     "data:reset": "tsx scripts/data-reset.ts",
     "check:settlement": "tsx scripts/check-settlement-math.ts",
     "check:refs": "tsx scripts/check-ref-integrity.ts",
+    "test:ledger-funding": "tsx --test server/finance/ledger-funding.test.ts",
+    "test:ledger-notes": "tsx --test server/finance/ledger-note-settlement.test.ts",
+    "test:voucher-duplicate": "tsx --test server/finance/voucher-duplicate.test.ts",
     "reconcile:corn": "tsx scripts/reconcile-corn-from-excel.ts"
   },
   "prisma": {

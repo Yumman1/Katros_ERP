@@ -5,7 +5,7 @@ import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 import { ReceiptText } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -95,13 +95,35 @@ export default function ExecutionVouchersPage() {
 
   const pagination = useListPagination(vouchers ?? []);
 
-  // A purchase voucher must name the settled trade or the note it pays — there
-  // is no direct-advance pool on the buy side.
+  const duplicateCheckInput = useMemo(
+    () => ({
+      bankName: method === "Bank transfer" ? bankName.trim() : undefined,
+      reference: reference.trim(),
+      voucherDate: new Date(voucherDate),
+      amountPkr: Number(amount),
+    }),
+    [method, bankName, reference, voucherDate, amount],
+  );
+
+  const duplicateCheckReady =
+    duplicateCheckInput.reference !== "" &&
+    Number.isFinite(duplicateCheckInput.amountPkr) &&
+    duplicateCheckInput.amountPkr > 0 &&
+    !(method === "Bank transfer" && !bankName.trim());
+
+  const { data: duplicateVoucher } = trpc.execution.findVoucherDuplicate.useQuery(
+    duplicateCheckInput,
+    { enabled: duplicateCheckReady, staleTime: 5_000 },
+  );
+
+  // A purchase voucher must name a settled trade or open note — no unlinked payment.
   const canSubmit =
     counterpartyId !== "" &&
     Number(amount) > 0 &&
     (side === "SELL" || tradeRef !== "" || noteRef !== "") &&
     !(method === "Bank transfer" && !bankName.trim()) &&
+    reference.trim() !== "" &&
+    !duplicateVoucher &&
     !create.isPending;
 
   if (isLoading && !vouchers) {
@@ -184,7 +206,7 @@ export default function ExecutionVouchersPage() {
               </select>
             </label>
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
-              Against trade
+              {side === "SELL" ? "Trade reference (optional)" : "Against trade (required)"}
               <select
                 value={noteRef ? `note:${noteRef}` : tradeRef ? `trade:${tradeRef}` : ""}
                 onChange={(e) => {
@@ -193,21 +215,23 @@ export default function ExecutionVouchersPage() {
                     const ref = v.slice(5);
                     setNoteRef(ref);
                     setTradeRef("");
-                    // A note settles in full — the due amount is the amount.
                     const n = (openNotes ?? []).find((x) => x.noteRef === ref);
-                    if (n) setAmount(String(n.amountPkr));
+                    if (n) setAmount(String(n.remainingPkr ?? n.amountPkr));
                   } else {
                     setNoteRef("");
                     setTradeRef(v.startsWith("trade:") ? v.slice(6) : "");
                   }
                 }}
                 disabled={counterpartyId === ""}
+                required={side === "BUY"}
                 className="kastros-select kastros-select-sm w-full disabled:opacity-50"
               >
                 {side === "SELL" ? (
-                  <option value="">Direct advance (any trade)</option>
+                  <option value="">No trade reference</option>
                 ) : (
-                  <option value="">Select settled purchase or note…</option>
+                  <option value="" disabled>
+                    Select settled purchase or note (required)
+                  </option>
                 )}
                 {(sellTrades ?? []).map((t) => (
                   <option key={t.tradeRef} value={`trade:${t.tradeRef}`}>
@@ -228,13 +252,24 @@ export default function ExecutionVouchersPage() {
                   >
                     {(openNotes ?? []).map((n) => (
                       <option key={n.noteRef} value={`note:${n.noteRef}`}>
-                        {n.noteRef} · {fmtPkr(n.amountPkr)} due
+                        {n.noteRef} · {fmtPkr(n.remainingPkr ?? n.amountPkr)} due of{" "}
+                        {fmtPkr(n.billedPkr ?? n.amountPkr)}
                         {n.tradeRef ? ` · ${n.tradeRef}` : ""}
                       </option>
                     ))}
                   </optgroup>
                 )}
               </select>
+              {side === "SELL" ? (
+                <span className="text-[10px] leading-snug text-subtle">
+                  Optional — for reconciliation. All approved credits join the buyer&rsquo;s shared pool.
+                </span>
+              ) : (
+                <span className="text-[10px] leading-snug text-subtle">
+                  Required — settled purchase or open note. Debit notes can be paid in pieces until within
+                  500 PKR of the full amount.
+                </span>
+              )}
             </label>
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Amount (PKR)
@@ -243,10 +278,13 @@ export default function ExecutionVouchersPage() {
                 min={0}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                readOnly={noteRef !== ""}
-                title={noteRef ? `${noteRef} is settled in full — the amount is fixed` : undefined}
+                title={
+                  noteRef
+                    ? `Partial payment allowed — remaining due shown when the note was selected`
+                    : undefined
+                }
                 placeholder="0"
-                className="kastros-input kastros-input-sm w-full read-only:opacity-70"
+                className="kastros-input kastros-input-sm w-full"
               />
             </label>
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
@@ -294,11 +332,12 @@ export default function ExecutionVouchersPage() {
               </label>
             )}
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
-              Reference (optional)
+              Reference
               <input
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
-                placeholder="Slip / cheque no."
+                placeholder="Slip / cheque / transfer no."
+                required
                 className="kastros-input kastros-input-sm w-full"
               />
             </label>
@@ -326,7 +365,7 @@ export default function ExecutionVouchersPage() {
                   method,
                   bankName: method === "Bank transfer" ? bankName : undefined,
                   voucherDate: new Date(voucherDate),
-                  reference: reference.trim() || undefined,
+                  reference: reference.trim(),
                   note: note.trim() || undefined,
                 })
               }
@@ -336,6 +375,13 @@ export default function ExecutionVouchersPage() {
             </button>
             {create.error && (
               <span className="text-xs text-destructive">{create.error.message}</span>
+            )}
+            {duplicateVoucher && (
+              <span className="text-xs text-destructive">
+                Duplicate payment — {duplicateVoucher.voucherNo} already exists with the same bank,
+                reference, date, and amount (
+                {duplicateVoucher.status === "APPROVED" ? "approved" : "pending finance"}).
+              </span>
             )}
             {create.isSuccess && !create.isPending && (
               <span className="text-xs text-success">Voucher submitted — pending finance.</span>
@@ -398,7 +444,7 @@ export default function ExecutionVouchersPage() {
                         </span>
                       ) : v.noteRef ? null : (
                         <span className="rounded-full bg-foreground/[0.06] px-2 py-1 text-[10px] font-bold text-muted-foreground">
-                          Direct advance
+                          No trade ref
                         </span>
                       )}
                     </div>

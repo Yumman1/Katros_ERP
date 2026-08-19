@@ -737,15 +737,19 @@ function PaymentStep({ truck }: { truck: WorkflowTruck }) {
                 row.canSendForApproval ? "text-success" : "text-destructive",
               )}
             >
-              {isCredit ? (
-                <>
-                  Credit trade — line {fmtPkr(available)} of {fmtPkr(row.creditCeilingPkr ?? 0)}{" "}
-                  remaining
-                </>
-              ) : (
-                <>Vouchers available for this trade: {fmtPkr(available)}</>
-              )}
+              Buyer vouchers available: {fmtPkr(available)}
             </span>
+            {isCredit && row.paymentDueDate && (
+              <span className="text-[10px] text-warning">
+                Credit terms — payment due{" "}
+                {new Date(row.paymentDueDate).toLocaleDateString("en-PK", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                })}
+                . Aging on the ledger is informational only.
+              </span>
+            )}
             {!row.canSendForApproval && row.fundingReason && (
               <span className="text-[10px] font-medium text-destructive">{row.fundingReason}</span>
             )}

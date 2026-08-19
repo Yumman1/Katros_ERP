@@ -1,7 +1,13 @@
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
 import { allocateSerial, SERIALS } from "@/server/db/serials";
-import { listOpenSettlementNotes, markSettlementNotePaid, postCreditForVoucher } from "./ledger";
+import {
+  listOpenSettlementNotes,
+  markSettlementNotePaid,
+  noteBalance,
+  noteShouldClose,
+  postCreditForVoucher,
+} from "./ledger";
 
 export type VoucherView = {
   id: string;
@@ -11,7 +17,7 @@ export type VoucherView = {
   counterpartyCode: string;
   /** Ledger account credited — SELL for a sale, BUY for a purchase settlement. */
   side: "BUY" | "SELL";
-  /** Trade this payment is against; null = direct advance. */
+  /** Trade reference for reconciliation; null = no trade tagged. */
   tradeRef: string | null;
   /** Cancellation / short-close note this voucher settles; null otherwise. */
   noteRef: string | null;
@@ -34,6 +40,87 @@ const VOUCHER_INCLUDE = {
 } as const;
 
 type VoucherRow = Awaited<ReturnType<typeof prisma.voucher.findMany<{ include: typeof VOUCHER_INCLUDE }>>>[number];
+
+/** Normalize bank for duplicate detection (empty when not a bank transfer). */
+export function normalizeVoucherBankKey(bankName: string | null | undefined): string {
+  return (bankName?.trim() ?? "").toLowerCase();
+}
+
+export function normalizeVoucherReference(reference: string): string {
+  return reference.trim().toLowerCase();
+}
+
+/** Calendar day (UTC) for voucher-date matching. */
+export function voucherDateCalendarKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+export function vouchersSharePaymentKey(
+  a: {
+    bankName: string | null | undefined;
+    reference: string | null | undefined;
+    voucherDate: Date;
+    amountPkr: number | string | { toString(): string };
+  },
+  b: {
+    bankName: string | null | undefined;
+    reference: string | null | undefined;
+    voucherDate: Date;
+    amountPkr: number | string | { toString(): string };
+  },
+): boolean {
+  if (normalizeVoucherReference(a.reference ?? "") !== normalizeVoucherReference(b.reference ?? "")) {
+    return false;
+  }
+  if (normalizeVoucherBankKey(a.bankName) !== normalizeVoucherBankKey(b.bankName)) {
+    return false;
+  }
+  if (voucherDateCalendarKey(a.voucherDate) !== voucherDateCalendarKey(b.voucherDate)) {
+    return false;
+  }
+  return Math.abs(Number(a.amountPkr) - Number(b.amountPkr)) < 0.005;
+}
+
+/**
+ * Another pending or approved voucher with the same bank + reference + date +
+ * amount — blocks double entry of the same payment slip.
+ */
+export async function findDuplicateVoucher(input: {
+  bankName: string | null;
+  reference: string;
+  voucherDate: Date;
+  amountPkr: number;
+}): Promise<{ voucherNo: string; status: string } | null> {
+  const dayStart = new Date(input.voucherDate);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(input.voucherDate);
+  dayEnd.setUTCHours(23, 59, 59, 999);
+
+  const candidates = await prisma.voucher.findMany({
+    where: {
+      status: { in: ["PENDING_FINANCE", "APPROVED"] },
+      voucherDate: { gte: dayStart, lte: dayEnd },
+    },
+    select: {
+      voucherNo: true,
+      status: true,
+      bankName: true,
+      reference: true,
+      voucherDate: true,
+      amountPkr: true,
+    },
+  });
+
+  const probe = {
+    bankName: input.bankName,
+    reference: input.reference,
+    voucherDate: input.voucherDate,
+    amountPkr: input.amountPkr,
+  };
+
+  const dup = candidates.find((v) => vouchersSharePaymentKey(probe, v));
+  return dup ? { voucherNo: dup.voucherNo, status: dup.status } : null;
+}
 
 function voucherRowToView(row: VoucherRow): VoucherView {
   return {
@@ -65,12 +152,13 @@ export async function createVoucher(input: {
   counterpartyId: string;
   /** Ledger account to credit — SELL (a sale) or BUY (a purchase settlement). */
   side?: "BUY" | "SELL";
-  /** Trade the payment is against; null/undefined = direct advance. */
+  /** Trade reference for reconciliation; null/undefined = no trade tagged. */
   tradeRef?: string | null;
   /** Cancellation / short-close note being settled — takes over from tradeRef. */
   noteRef?: string | null;
   amountPkr: number;
   method?: string | null;
+  /** Bank slip, cheque, or transfer reference — required on every voucher. */
   reference?: string | null;
   bankName?: string | null;
   voucherDate?: Date | null;
@@ -79,6 +167,10 @@ export async function createVoucher(input: {
 }): Promise<VoucherView> {
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Voucher amount must be positive");
+  }
+  const reference = input.reference?.trim() || null;
+  if (!reference) {
+    throw new Error("Payment reference is required (slip, cheque, or transfer reference number)");
   }
   const method = input.method?.trim() || null;
   const bankName = input.bankName?.trim() || null;
@@ -95,17 +187,16 @@ export async function createVoucher(input: {
   const noteRef = input.noteRef?.trim() || null;
 
   if (noteRef) {
-    // A note voucher pays a cancellation claim, not a delivery. The note itself
-    // dictates the account and the trade — the operator only confirms the money
-    // moved — and it settles in one go, so the amount must match what is due.
+    // A note voucher pays a cancellation claim in one or more pieces. The note
+    // dictates the account and trade; each approved voucher posts to the ledger.
     const open = await listOpenSettlementNotes(input.counterpartyId);
     const note = open.find((n) => n.noteRef === noteRef);
     if (!note) {
       throw new Error(`${noteRef} is not an open note on this counterparty`);
     }
-    if (Math.abs(note.amountPkr - input.amountPkr) > 0.5) {
+    if (input.amountPkr > note.remainingPkr + 0.005) {
       throw new Error(
-        `${noteRef} is due ${note.amountPkr.toLocaleString("en-PK")} PKR — a note is settled in full, not in parts`,
+        `${noteRef} has ${note.remainingPkr.toLocaleString("en-PK")} PKR remaining of ${note.billedPkr.toLocaleString("en-PK")} PKR — voucher exceeds what is due`,
       );
     }
     side = note.side;
@@ -146,10 +237,24 @@ export async function createVoucher(input: {
       throw new Error(`${tradeRef} is a sale — record it as a sale so it credits the sell ledger`);
     }
   } else if (side !== "SELL") {
-    // A direct advance funds a buyer's future trucks, which only exists on the
-    // sell side; a purchase voucher must name the settled trade it pays.
+    // Sale vouchers without a trade ref still join the buyer's shared pool; purchase
+    // vouchers must name the settled trade they pay.
     throw new Error("A purchase voucher must be recorded against a settled purchase trade");
   }
+
+  const voucherDate = input.voucherDate ?? new Date();
+  const duplicate = await findDuplicateVoucher({
+    bankName,
+    reference,
+    voucherDate,
+    amountPkr: input.amountPkr,
+  });
+  if (duplicate) {
+    throw new Error(
+      `This payment is already recorded as ${duplicate.voucherNo} (${duplicate.status === "APPROVED" ? "approved" : "pending finance"}) — same bank, reference, date, and amount`,
+    );
+  }
+
   const row = await allocateSerial(SERIALS.VOUCHER, (voucherNo) =>
     prisma.voucher.create({
       data: {
@@ -160,9 +265,9 @@ export async function createVoucher(input: {
         noteRef,
         amountPkr: input.amountPkr,
         method,
-        reference: input.reference?.trim() || null,
+        reference,
         bankName,
-        voucherDate: input.voucherDate ?? new Date(),
+        voucherDate,
         note: input.note?.trim() || null,
         enteredByName: input.enteredByName,
       },
@@ -227,17 +332,19 @@ export async function approveVoucher(
       },
       tx,
     );
-    // Closing the claim rides in the same transaction as its credit — a note can
-    // never read as paid without the money, nor the money land without closing it.
+    // Close the note only once the internal sub-ledger is within tolerance.
     if (row!.noteRef) {
-      await markSettlementNotePaid(
-        {
-          counterpartyId: row!.counterpartyId,
-          noteRef: row!.noteRef,
-          voucherNo: row!.voucherNo,
-        },
-        tx,
-      );
+      const { remainingPkr } = await noteBalance(row!.noteRef, row!.counterpartyId, tx);
+      if (noteShouldClose(remainingPkr)) {
+        await markSettlementNotePaid(
+          {
+            counterpartyId: row!.counterpartyId,
+            noteRef: row!.noteRef,
+            voucherNo: row!.voucherNo,
+          },
+          tx,
+        );
+      }
     }
   });
   const fresh = await prisma.voucher.findUnique({

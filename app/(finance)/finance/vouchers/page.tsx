@@ -17,15 +17,18 @@ function fmtPkr(value: number): string {
   return `${pkrFormat.format(value)} PKR`;
 }
 
-/** "Against {tradeRef}" for trade-funded vouchers, subtle "Direct advance" otherwise. */
+/** Trade ref for reconciliation; credits without one still join the buyer pool. */
 function TradeRefChip({ tradeRef }: { tradeRef: string | null }) {
   return tradeRef ? (
     <span className="rounded-full border border-accent-secondary/30 bg-accent-secondary/10 px-2 py-0.5 font-mono text-[10px] font-bold text-accent-secondary">
       Against {tradeRef}
     </span>
   ) : (
-    <span className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 text-[10px] font-semibold text-subtle">
-      Direct advance
+    <span
+      className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 text-[10px] font-semibold text-subtle"
+      title="Approved credit joins the buyer's shared voucher pool"
+    >
+      No trade ref
     </span>
   );
 }
