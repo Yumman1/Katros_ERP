@@ -146,9 +146,22 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
       sidebarTop={
         summary ? (
           <div className="mx-4 mb-2 mt-3 grid grid-cols-3 gap-1.5 rounded-xl border border-border bg-foreground/[0.03] p-2">
-            <MiniStat label="Open" value={summary.lockedOpen} />
-            <MiniStat label="Today" value={summary.vehiclesToday} />
-            <MiniStat label="Pending" value={summary.pendingFinance} warn />
+            <MiniStat
+              label="In progress"
+              title="Reviewed trades still open on the execution book"
+              value={summary.lockedOpen}
+            />
+            <MiniStat
+              label="Trucks today"
+              title="Inbound and outbound truck movements logged today"
+              value={summary.vehiclesToday}
+            />
+            <MiniStat
+              label="Pay pending"
+              title="Gate and spot payment requests awaiting finance approval"
+              value={summary.pendingFinance}
+              warn
+            />
           </div>
         ) : null
       }
@@ -168,9 +181,20 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
   );
 }
 
-function MiniStat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
+function MiniStat({
+  label,
+  value,
+  warn,
+  title,
+}: {
+  label: string;
+  value: number;
+  warn?: boolean;
+  title?: string;
+}) {
   return (
     <div
+      title={title}
       className={cn(
         "flex flex-col items-center gap-0.5 rounded-lg py-1.5",
         warn && value > 0 && "bg-[color-mix(in_srgb,var(--destructive)_10%,transparent)]",
@@ -184,7 +208,9 @@ function MiniStat({ label, value, warn }: { label: string; value: number; warn?:
       >
         {value}
       </span>
-      <span className="text-[9px] uppercase tracking-wider text-subtle">{label}</span>
+      <span className="px-0.5 text-center text-[9px] uppercase leading-tight tracking-wider text-subtle">
+        {label}
+      </span>
     </div>
   );
 }
