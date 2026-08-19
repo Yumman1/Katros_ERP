@@ -569,7 +569,9 @@ Booking a SELL trade shows three numbers per warehouse for the selected commodit
 
 ```
 stockOnHandMt = Σ netQty from buildLocationCommodityInventory
-                (for the selected commodity at that warehouse)
+                (for the selected commodity at that warehouse,
+                 inbound receipts − released dispatches + unassigned gate trucks
+                 + internal/external stock transfers)
 
 bookedQtyMt   = Σ line.openQtyMt
                 over warehouse allocation lines of ExecutionContract rows where
@@ -581,6 +583,8 @@ freeToSellMt  = max(0, stockOnHandMt − bookedQtyMt)
 ```
 
 Per allocation line, `openQtyMt = max(0, qtyMt − fulfilledQtyMt)`. `fulfilledQtyMt` is kept in step with outbound dispatches by `refreshContract` (`server/execution/contracts.ts`).
+
+Stock transfers must be passed to `buildLocationCommodityInventory` (via `loadStockTransfersForStock`), otherwise a warehouse stocked by shifts rather than by inbound receipts reads short of what Execution → Inventory shows for the same warehouse.
 
 ### Why booked and stock never double count
 

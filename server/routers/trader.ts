@@ -37,6 +37,7 @@ import {
   TraderInvoiceOwnershipError,
 } from "@/server/execution-store";
 import { exportTradeFileCsv } from "@/server/trade-file-export";
+import { loadStockTransfersForStock } from "@/server/execution/stock-transfer-load";
 import { computePositionLedger } from "@/server/position-ledger";
 import { getSeasonNetPositions, setPositionMarketInput } from "@/server/net-position";
 import { getCounterpartyLedgers } from "@/server/finance/ledger";
@@ -603,20 +604,25 @@ export const traderRouter = router({
     }));
     const commodity = input?.commodityId ? await getCommodityById(input.commodityId) : null;
 
-    const [inbound, outbound, pendingTrucks] = await Promise.all([
+    const [inbound, outbound, pendingTrucks, transfers] = await Promise.all([
       getInboundReceipts(),
       getOutboundDispatches(),
       getPendingTrucks({}),
+      loadStockTransfersForStock(),
     ]);
 
     // Physical inventory split per warehouse (summed across commodities):
     // allocated = stock from trucks/loads assigned to a trade (inbound receipts − released dispatches);
     // unallocated = gatepassed trucks not yet assigned to any trade.
+    // Shifts belong to no trade but are stock we own, so they count here too —
+    // without them a warehouse fed by transfers reads short of what it holds on
+    // Execution → Inventory.
     const contractByRef = new Map(lockedContracts.map((c) => [c.tradeRef, c]));
     const inventoryRows = buildLocationCommodityInventory({
       inbound,
       outbound,
       pendingTrucks,
+      transfers,
       commodityForTradeRef: (ref) => {
         const c = contractByRef.get(ref);
         if (!c) return null;
