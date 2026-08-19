@@ -558,3 +558,48 @@ From shared counterparty ledger (`getCounterpartyLedgers`):
 
 These are global ledger balances for the counterparty (not trader-scoped), mirrored from Finance → Ledgers.
 
+---
+
+## 22. Warehouse booked quantity at sell booking
+
+**File:** `server/routers/trader.ts` (`warehouseAvailability`)
+**UI:** `components/trader/warehouse-multi-select.tsx`, `app/(trader)/trader/trades/new/page.tsx`
+
+Booking a SELL trade shows three numbers per warehouse for the selected commodity, so stock that is physically present but already promised out is not sold twice.
+
+```
+stockOnHandMt = Σ netQty from buildLocationCommodityInventory
+                (for the selected commodity at that warehouse)
+
+bookedQtyMt   = Σ line.openQtyMt
+                over warehouse allocation lines of ExecutionContract rows where
+                  direction      = SELL
+                  contractStatus = Open
+                  commodityCode  = selected commodity
+
+freeToSellMt  = max(0, stockOnHandMt − bookedQtyMt)
+```
+
+Per allocation line, `openQtyMt = max(0, qtyMt − fulfilledQtyMt)`. `fulfilledQtyMt` is kept in step with outbound dispatches by `refreshContract` (`server/execution/contracts.ts`).
+
+### Why booked and stock never double count
+
+The two ledgers move on the same trigger:
+
+| Event | Inventory (`outboundStockDelta`) | Contract fulfillment (`batchFulfillmentByWarehouse`) |
+|-------|----------------------------------|------------------------------------------------------|
+| Dispatch `AT_GATE` | no change — still in stock | not counted — still booked |
+| Dispatch `WEIGHED` / `FINANCE_PENDING` / `RELEASED` | stock reduced | counted as fulfilled — booked reduced |
+
+A load that leaves the yard drops out of stock and out of booked in the same step, so `freeToSellMt` is unchanged by dispatch. A truck sitting `AT_GATE` counts in both: physically present, already spoken for.
+
+### Unassigned commitment
+
+A locked SELL contract that has not been split across warehouses yet has open quantity with no warehouse to attribute it to. That quantity is summed into `unassignedBookedMt` and surfaced as a note on the booking form rather than silently dropped — booked figures understate the true commitment while it is non-zero.
+
+### Scope and enforcement
+
+Only **locked** open SELL contracts count. Unlocked and draft trades are excluded, since their per-warehouse quantity is not fixed until the execution head splits them at lock.
+
+The booking form warns when the quantity being booked exceeds combined `freeToSellMt` across the picked warehouses, but never blocks the booking. Hard stock enforcement happens later in execution via `assertSufficientOutboundStock` (`server/execution/movements.ts`).
+

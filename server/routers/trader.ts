@@ -639,7 +639,38 @@ export const traderRouter = router({
       }
     }
 
-    return computeWarehouseAvailability(
+    // Sell commitment already promised out of each warehouse but not yet
+    // dispatched. Open SELL contracts only: their allocation lines carry the
+    // qty per warehouse, and fulfilledQtyMt is kept in step with outbound
+    // dispatches, so a load that leaves the yard drops out of stock and out of
+    // booked together. A truck still AT_GATE counts in both — physically
+    // present, already spoken for.
+    const bookedByWarehouse = new Map<string, number>();
+    let unassignedBookedMt = 0;
+    if (commodity) {
+      for (const c of lockedContracts) {
+        if (c.direction !== TradeDirection.SELL) continue;
+        if (c.contractStatus !== "Open") continue;
+        if (c.commodityCode !== commodity.code) continue;
+
+        const lines = c.warehouseAllocationProgress ?? [];
+        if (lines.length === 0) {
+          // Locked but not split across warehouses yet — the commitment is
+          // real, it just cannot be attributed to a warehouse.
+          unassignedBookedMt += Math.max(0, c.openQtyMt);
+          continue;
+        }
+        for (const line of lines) {
+          const key = normWarehouseName(line.warehouseName);
+          bookedByWarehouse.set(
+            key,
+            (bookedByWarehouse.get(key) ?? 0) + Math.max(0, line.openQtyMt),
+          );
+        }
+      }
+    }
+
+    const warehouses = computeWarehouseAvailability(
       locations,
       inbound,
       outbound,
@@ -649,12 +680,24 @@ export const traderRouter = router({
         ? { code: commodity.code, category: commodity.category, unit: commodity.unit }
         : null,
       inventoryByWarehouse,
-    ).map((row) => ({
-      ...row,
-      stockOnHandMt: commodity
-        ? Math.max(0, stockOnHandByWarehouse.get(normWarehouseName(row.name)) ?? 0)
-        : null,
-    }));
+    ).map((row) => {
+      const key = normWarehouseName(row.name);
+      const stockOnHandMt = commodity
+        ? Math.max(0, stockOnHandByWarehouse.get(key) ?? 0)
+        : null;
+      const bookedQtyMt = commodity ? (bookedByWarehouse.get(key) ?? 0) : null;
+      return {
+        ...row,
+        stockOnHandMt,
+        bookedQtyMt,
+        freeToSellMt:
+          stockOnHandMt != null && bookedQtyMt != null
+            ? Math.max(0, stockOnHandMt - bookedQtyMt)
+            : null,
+      };
+    });
+
+    return { warehouses, unassignedBookedMt };
   }),
 
   addCommodity: roleProcedure(["CEO", "ADMIN"])

@@ -43,6 +43,7 @@ import {
   toPricePerCanonicalQty,
   type PriceCurrency,
 } from "@/lib/price-units";
+import { formatQty } from "@/lib/formatters/numbers";
 import {
   formatConversionPreview,
   mergeUnitRegistry,
@@ -532,7 +533,7 @@ function BookTradeForm() {
 
   const warehouseOptions = useMemo(() => {
     const availByName = new Map(
-      (warehouseAvailability ?? []).map((w) => [normWarehouseName(w.name), w]),
+      (warehouseAvailability?.warehouses ?? []).map((w) => [normWarehouseName(w.name), w]),
     );
     return (refData.data?.companyWarehouses ?? []).map((w) => {
       const avail = availByName.get(normWarehouseName(w.name));
@@ -549,10 +550,30 @@ function BookTradeForm() {
         trueAvailableMt: avail?.trueAvailableMt ?? null,
         trueAvailabilityPct: avail?.trueAvailabilityPct ?? null,
         stockOnHandMt: avail?.stockOnHandMt ?? null,
+        bookedQtyMt: avail?.bookedQtyMt ?? null,
+        freeToSellMt: avail?.freeToSellMt ?? null,
         capacityMt: avail?.capacityMt ?? null,
       };
     });
   }, [refData.data?.companyWarehouses, warehouseAvailability, warehouseStorageDivision]);
+
+  // Selling more than the picked warehouses can still cover. Earlier sell
+  // contracts hold stock that is physically present but already promised, so
+  // free-to-sell — not stock on hand — is what this trade can draw on.
+  const sellStockShortfall = useMemo(() => {
+    if (direction !== TradeDirection.SELL) return null;
+    if (storedMt <= 0 || selectedWarehouses.length === 0) return null;
+    const picked = warehouseOptions.filter((w) => selectedWarehouses.includes(w.name));
+    if (picked.length === 0) return null;
+    if (picked.some((w) => w.freeToSellMt == null)) return null;
+    const freeMt = picked.reduce((sum, w) => sum + (w.freeToSellMt ?? 0), 0);
+    if (freeMt >= storedMt) return null;
+    return {
+      freeMt,
+      shortfallMt: storedMt - freeMt,
+      names: picked.map((w) => w.name),
+    };
+  }, [direction, storedMt, selectedWarehouses, warehouseOptions]);
 
   // Map the quoted price into the canonical quantity unit (MT) for notional / downstream preview.
   const canonicalKgPerUnit = canonicalKgPerUnitOf(
@@ -1365,10 +1386,27 @@ function BookTradeForm() {
                 loading={warehouseAvailabilityLoading || !commodityId}
                 storageDivision={warehouseStorageDivision}
                 bookingDirection={direction}
+                requestedQtyMt={storedMt}
               />
+              {sellStockShortfall && (
+                <p className="mt-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+                  Booking {formatQty(storedMt)} MT but only {formatQty(sellStockShortfall.freeMt)} MT
+                  is free to sell at {sellStockShortfall.names.join(", ")} —{" "}
+                  {formatQty(sellStockShortfall.shortfallMt)} MT short. The rest of the stock there
+                  is already booked against earlier sell contracts that have not lifted yet.
+                </p>
+              )}
+              {direction === TradeDirection.SELL &&
+                (warehouseAvailability?.unassignedBookedMt ?? 0) > 0 && (
+                  <p className="mt-2 text-xs text-subtle">
+                    {formatQty(warehouseAvailability?.unassignedBookedMt ?? 0)} MT of open sell
+                    commitment is not split across warehouses yet, so booked figures understate the
+                    true commitment.
+                  </p>
+                )}
               <p className="mt-1 text-xs text-subtle">
                 {direction === TradeDirection.SELL
-                  ? "Physical stock on hand for this commodity at each warehouse."
+                  ? "Stock on hand, quantity already booked on open sell contracts, and what is still free to sell at each warehouse."
                   : warehouseStorageDivision === "grain"
                     ? "Spare grain storage — free capacity in each warehouse's grain division."
                     : warehouseStorageDivision === "bale"

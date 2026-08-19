@@ -23,6 +23,10 @@ export type WarehouseOption = {
   trueAvailabilityPct?: number | null;
   /** Physical stock on hand (MT) for the booked commodity. */
   stockOnHandMt?: number | null;
+  /** Open sell commitment (MT) at this warehouse that has not been dispatched yet. */
+  bookedQtyMt?: number | null;
+  /** max(0, stockOnHandMt − bookedQtyMt) — stock not already promised out. */
+  freeToSellMt?: number | null;
   /** Division capacity (MT) — used for sell stock % when configured. */
   capacityMt?: number | null;
 };
@@ -37,6 +41,8 @@ type Props = {
   storageDivision?: WarehouseStorageDivision | null;
   /** BUY = spare storage capacity; SELL = physical stock on hand. */
   bookingDirection?: TradeDirection;
+  /** Quantity being booked (MT) — colours the sell-side free-to-sell badge. */
+  requestedQtyMt?: number;
 };
 
 const TONE_CLASS = {
@@ -51,6 +57,13 @@ const DIVISION_LABEL: Record<WarehouseStorageDivision, string> = {
   bale: "bale division",
 };
 
+function fmtMt(n: number) {
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+}
+
 export function WarehouseMultiSelect({
   warehouses,
   value,
@@ -59,6 +72,7 @@ export function WarehouseMultiSelect({
   loading,
   storageDivision = null,
   bookingDirection = TradeDirection.BUY,
+  requestedQtyMt = 0,
 }: Props) {
   const selected = new Set(value.map((v) => v.trim()).filter(Boolean));
 
@@ -100,19 +114,23 @@ export function WarehouseMultiSelect({
           (showDivisionScoped ? w.divisionAvailabilityPct : w.availabilityPct);
 
         const stockMt = w.stockOnHandMt ?? 0;
+        const bookedMt = w.bookedQtyMt ?? 0;
+        const freeToSellMt = w.freeToSellMt ?? Math.max(0, stockMt - bookedMt);
+        // Red once the pick cannot cover what is being booked; a warehouse with
+        // nothing left to sell reads red even before a quantity is entered.
+        const freeTone =
+          freeToSellMt <= 0
+            ? "low"
+            : requestedQtyMt > 0 && freeToSellMt < requestedQtyMt
+              ? "low"
+              : "high";
 
-        const badgeMt = isSell ? stockMt : freeMt;
-        const badgePct = isSell ? null : freePct;
-        const badgeTone = isSell
-          ? stockMt > 0
-            ? "high"
-            : "unknown"
-          : availabilityTone(freePct);
-        const badgeTitle = isSell
-          ? "Physical stock on hand for this commodity"
-          : divisionLabel
-            ? `${divisionLabel} — spare storage capacity`
-            : "Spare storage capacity";
+        const badgeMt = freeMt;
+        const badgePct = freePct;
+        const badgeTone = availabilityTone(freePct);
+        const badgeTitle = divisionLabel
+          ? `${divisionLabel} — spare storage capacity`
+          : "Spare storage capacity";
 
         return (
           <label
@@ -146,7 +164,37 @@ export function WarehouseMultiSelect({
                 </p>
               )}
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                {isSell || badgeMt != null ? (
+                {isSell ? (
+                  <>
+                    <span
+                      className={cn(
+                        "rounded-full border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                        TONE_CLASS.unknown,
+                      )}
+                      title="Physical stock on hand for this commodity"
+                    >
+                      Stock {fmtMt(stockMt)} MT
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded-full border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                        bookedMt > 0 ? TONE_CLASS.medium : TONE_CLASS.unknown,
+                      )}
+                      title="Already sold on open contracts from this warehouse, not lifted yet"
+                    >
+                      Booked {fmtMt(bookedMt)} MT
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded-full border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                        TONE_CLASS[freeTone],
+                      )}
+                      title="Stock on hand minus booked — what is still free to sell"
+                    >
+                      Free to sell {fmtMt(freeToSellMt)} MT
+                    </span>
+                  </>
+                ) : badgeMt != null ? (
                   <span
                     className={cn(
                       "rounded-full border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
@@ -154,12 +202,7 @@ export function WarehouseMultiSelect({
                     )}
                     title={badgeTitle}
                   >
-                    Available{" "}
-                    {(badgeMt ?? 0).toLocaleString(undefined, {
-                      minimumFractionDigits: 1,
-                      maximumFractionDigits: 1,
-                    })}{" "}
-                    MT
+                    Available {fmtMt(badgeMt)} MT
                     {badgePct != null ? ` · ${badgePct.toFixed(0)}%` : ""}
                   </span>
                 ) : hasCapacity ? (
