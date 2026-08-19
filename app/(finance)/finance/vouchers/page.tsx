@@ -33,6 +33,8 @@ function TradeRefChip({ tradeRef }: { tradeRef: string | null }) {
   );
 }
 
+const VOUCHER_HISTORY_PAGE_SIZE = 5;
+
 const STATUS_CHIP: Record<string, { className: string; label: string }> = {
   APPROVED: { className: "bg-success/15 text-success", label: "Approved" },
   REJECTED: { className: "bg-destructive/15 text-destructive", label: "Rejected" },
@@ -84,17 +86,16 @@ export default function FinanceVouchersPage() {
         ),
     [vouchers],
   );
-  const historyPagination = useListPagination(resolved);
+  const historyPagination = useListPagination(resolved, { pageSize: VOUCHER_HISTORY_PAGE_SIZE });
 
   return (
-    <div className="kastros-desk-page">
+    <div className="kastros-desk-page space-y-6 pb-6">
       <PageHeader
         title="Voucher approvals"
         subtitle="Payments entered by execution become part of the buyer's ledger only after your approval."
       />
 
-      <div className="kastros-desk-scroll space-y-6 pb-6">
-        <section>
+      <section>
           <div className="mb-2 flex items-center gap-2">
             <h2 className="text-sm font-semibold text-foreground">Pending vouchers</h2>
             <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-bold text-warning">
@@ -195,9 +196,9 @@ export default function FinanceVouchersPage() {
           )}
         </section>
 
-        <section>
-          <h2 className="mb-2 text-sm font-semibold text-foreground">History</h2>
-          <div className="kastros-table-wrap">
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-foreground">History</h2>
+          <div className="kastros-table-wrap min-h-[22rem]">
             {vouchersError ? (
               <div className="px-4 py-6 text-center text-xs text-subtle">
                 You don&apos;t have access to this page.
@@ -250,19 +251,20 @@ export default function FinanceVouchersPage() {
                     })}
                   </tbody>
                 </table>
-                <ListPagination
-                  page={historyPagination.page}
-                  totalPages={historyPagination.totalPages}
-                  totalItems={historyPagination.totalItems}
-                  startIndex={historyPagination.startIndex}
-                  endIndex={historyPagination.endIndex}
-                  onPageChange={historyPagination.setPage}
-                />
               </>
             )}
           </div>
+          {resolved.length > 0 && (
+            <ListPagination
+              page={historyPagination.page}
+              totalPages={historyPagination.totalPages}
+              totalItems={historyPagination.totalItems}
+              startIndex={historyPagination.startIndex}
+              endIndex={historyPagination.endIndex}
+              onPageChange={historyPagination.setPage}
+            />
+          )}
         </section>
-      </div>
     </div>
   );
 }

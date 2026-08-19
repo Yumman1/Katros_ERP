@@ -15,6 +15,7 @@ import { PAKISTAN_BANKS } from "@/lib/pakistan-banks";
 import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 const VOUCHER_METHODS = ["Bank transfer", "Cheque", "Cash", "Other"] as const;
+const VOUCHER_HISTORY_PAGE_SIZE = 5;
 
 const fmtPkr = (n: number) =>
   `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 }).format(n)} PKR`;
@@ -93,7 +94,7 @@ export default function ExecutionVouchersPage() {
     },
   });
 
-  const pagination = useListPagination(vouchers ?? []);
+  const pagination = useListPagination(vouchers ?? [], { pageSize: VOUCHER_HISTORY_PAGE_SIZE });
 
   const duplicateCheckInput = useMemo(
     () => ({
@@ -135,7 +136,7 @@ export default function ExecutionVouchersPage() {
   }
 
   return (
-    <div className="kastros-desk-page">
+    <div className="kastros-desk-page pb-6">
       <PageHeader
         breadcrumb={
           <>
@@ -150,9 +151,8 @@ export default function ExecutionVouchersPage() {
         subtitle="Record money received from a counterparty — finance approval credits it into their ledger, unlocking their trucks and closing settled trades once the full amount is in."
       />
 
-      <div className="kastros-desk-scroll flex flex-col gap-4">
-        {/* ── Voucher entry form ── */}
-        <div className="exec-panel p-4">
+      {/* Form stays compact at the top; history grows below and the whole page scrolls. */}
+      <div className="exec-panel p-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <ReceiptText className="h-4 w-4 text-accent-secondary" />
             New payment voucher
@@ -389,8 +389,16 @@ export default function ExecutionVouchersPage() {
           </div>
         </div>
 
-        {/* ── Vouchers table ── */}
-        <div className="kastros-table-wrap">
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-foreground">Voucher history</h2>
+          {(vouchers ?? []).length > 0 && (
+            <span className="text-xs text-subtle">
+              {pagination.totalItems} voucher{pagination.totalItems === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+        <div className="kastros-table-wrap min-h-[22rem]">
           <table className="kastros-table text-xs">
             <thead>
               <tr>
@@ -499,7 +507,7 @@ export default function ExecutionVouchersPage() {
           endIndex={pagination.endIndex}
           onPageChange={pagination.setPage}
         />
-      </div>
+      </section>
     </div>
   );
 }
