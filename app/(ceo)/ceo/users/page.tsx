@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { KeyRound, ShieldCheck, UserPlus, UserX, Users as UsersIcon, Wifi } from "lucide-react";
+import { AdminResetPasswordModal } from "@/components/account/admin-reset-password-modal";
 import { PageHeader } from "@/components/ui/page-header";
 import { trpc } from "@/lib/trpc/client";
 
@@ -53,6 +54,7 @@ export default function CeoUsersPage() {
   const [showActiveList, setShowActiveList] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetTarget, setResetTarget] = useState<{ id: string; email: string } | null>(null);
 
   const refresh = () => {
     void utils.ceo.users.invalidate();
@@ -70,8 +72,12 @@ export default function CeoUsersPage() {
   });
 
   const updateUser = trpc.ceo.updateUser.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       setError(null);
+      if (variables.password) {
+        setNotice(`Password reset for ${resetTarget?.email ?? "user"}.`);
+        setResetTarget(null);
+      }
       refresh();
     },
     onError: (e) => setError(e.message),
@@ -325,15 +331,7 @@ export default function CeoUsersPage() {
                           type="button"
                           title="Reset password"
                           disabled={updateUser.isPending}
-                          onClick={() => {
-                            const pw = window.prompt(`New password for ${u.email} (min 8 chars):`);
-                            if (pw && pw.length >= 8) {
-                              updateUser.mutate({ id: u.id, password: pw });
-                              setNotice(`Password reset for ${u.email}.`);
-                            } else if (pw) {
-                              setError("Password must be at least 8 characters");
-                            }
-                          }}
+                          onClick={() => setResetTarget({ id: u.id, email: u.email })}
                           className="rounded-md border border-kastros-border px-2 py-1 text-xs text-foreground hover:bg-kastros-bg"
                         >
                           <KeyRound className="h-3.5 w-3.5" />
@@ -359,6 +357,17 @@ export default function CeoUsersPage() {
           </div>
         </section>
       </div>
+
+      <AdminResetPasswordModal
+        open={resetTarget != null}
+        email={resetTarget?.email ?? ""}
+        busy={updateUser.isPending}
+        onClose={() => setResetTarget(null)}
+        onSubmit={(password) => {
+          if (!resetTarget) return;
+          updateUser.mutate({ id: resetTarget.id, password });
+        }}
+      />
     </div>
   );
 }

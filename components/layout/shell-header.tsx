@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import type { ReactNode } from "react";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
@@ -40,6 +41,9 @@ export function ShellHeader({ left, center, className }: Props) {
           </span>
         ) : null}
         <ThemeToggle compact />
+        <Link href="/account" className="kastros-btn-secondary px-3 py-1.5 text-xs">
+          Account
+        </Link>
         <button
           type="button"
           onClick={() => signOut({ callbackUrl: "/login" })}

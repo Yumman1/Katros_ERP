@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   TrendingUp,
   Truck,
+  User,
   UserCheck,
   Warehouse,
   FileEdit,
@@ -136,6 +137,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         { href: "/execution/trade-files", label: "Trade Files", icon: <FileSpreadsheet className="h-4 w-4" /> },
       ],
     },
+    { href: "/account", label: "Account", icon: <User className="h-4 w-4" /> },
   ];
 
   return (

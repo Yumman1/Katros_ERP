@@ -16,6 +16,7 @@ type NavEntry = NavLink | NavGroup;
 
 const nav: NavEntry[] = [
   { href: "/overview", label: "Dashboard" },
+  { href: "/account", label: "Account" },
   {
     label: "Position & P&L",
     children: [
