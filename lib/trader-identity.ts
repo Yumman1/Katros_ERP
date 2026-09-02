@@ -2,6 +2,9 @@
 export const DEMO_TRADER_EMAIL = "trader@kastros.co";
 export const DEMO_TRADER_NAME = "Ayesha Malik";
 
+/** Corn desk owner — all CORN trades and imports use this user for trader UI. */
+export const CORN_TRADER_EMAIL = "fahad.ahmed@kastros.co";
+
 /** Normalize session/form trader keys so lists and bookTrade use the same name. */
 export function canonicalTraderName(nameOrEmail: string): string {
   const raw = nameOrEmail.trim();

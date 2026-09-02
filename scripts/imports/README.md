@@ -20,6 +20,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f 05-corn-summer-payment-reconciliation
 | `04-reseed-ref-counters.sql` | Moves `RefCounter` past the reference numbers the load carried, so the app stops re-issuing refs that already exist. Run last, after **any** bulk load. |
 | `04-corn-summer-excel-reconciliation.sql` | Aug 2026 trade qty/close fixes and missing KCS-424 (separate from ref reseed). |
 | `05-corn-summer-payment-reconciliation.sql` | Clears Payment Release rows stuck in trader/finance queues; marks historical receipts PAID. Run after 02. |
+| `06-corn-summer-missing-sales.sql` | Missing Execution workbook sale contracts (SAL-0003–0007) + outbound dispatches. Regenerate with `npx tsx scripts/generate-missing-sales-sql.ts`. |
 
 Both are idempotent — re-running sets the same absolute values rather than
 accumulating, so a partial or repeated run is safe to redo from the top.

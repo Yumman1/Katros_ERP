@@ -17,18 +17,13 @@ import {
   ceoResolveInboundOverDelivery,
   getCeoClearApprovals,
   getCeoInboundOverDeliveries,
-  getInboundReceipts,
   getLockedContracts,
-  getOutboundDispatches,
-  getPendingTrucks,
 } from "@/server/execution-store";
-import { buildLocationCommodityInventory } from "@/lib/inventory-stock";
 import {
   addCustomCommodity,
   deleteCustomCommodity,
   getCommodityById,
   getMergedCommodities,
-  getMergedLocations,
 } from "@/server/trader-master-data";
 import { mockAllTraderTrades, mockTradeByRefGlobal } from "@/server/dummy-data";
 import {
@@ -37,11 +32,7 @@ import {
   getCeoTradeSettlements,
 } from "@/server/trade-settlement";
 import { commodityCreateInputSchema } from "@/lib/commodity-registration";
-import {
-  aggregateWarehouseStorageMetrics,
-  computeWarehouseCosting,
-  costingInputFromLocation,
-} from "@/lib/warehouse-costing";
+import { getCompanyInventorySnapshot } from "@/server/inventory-snapshot";
 
 function actorName(user: { name?: string | null; email?: string | null }) {
   return user.name ?? user.email ?? "user";
@@ -292,33 +283,11 @@ export const ceoRouter = router({
     }),
 
   dashboardSummary: ceoProcedure().query(async () => {
-    const contracts = await getLockedContracts({});
-    const openLocked = contracts.filter((c) => c.contractStatus === "Open");
-    const locations = await getMergedLocations();
-    const storageSummaries = locations
-      .map((loc) => computeWarehouseCosting(costingInputFromLocation(loc)))
-      .filter((s): s is NonNullable<typeof s> => s != null);
-    const storageNetwork = aggregateWarehouseStorageMetrics(storageSummaries);
-
-    const [inbound, outbound, pendingTrucks] = await Promise.all([
-      getInboundReceipts(),
-      getOutboundDispatches(),
-      getPendingTrucks({}),
+    const [contracts, inventory] = await Promise.all([
+      getLockedContracts({}),
+      getCompanyInventorySnapshot(),
     ]);
-    const contractByRef = new Map(contracts.map((c) => [c.tradeRef, c]));
-    const inventoryRows = buildLocationCommodityInventory({
-      inbound,
-      outbound,
-      pendingTrucks,
-      commodityForTradeRef: (ref) => {
-        const c = contractByRef.get(ref);
-        if (!c) return null;
-        return { code: c.commodityCode, name: c.commodityName, unit: c.quantityUnit };
-      },
-    });
-
-    const totalNetMt = inventoryRows.reduce((s, r) => s + r.netQty, 0);
-    const totalUnallocatedMt = inventoryRows.reduce((s, r) => s + r.unallocatedQty, 0);
+    const openLocked = contracts.filter((c) => c.contractStatus === "Open");
     const avgFulfillment =
       openLocked.length > 0
         ? openLocked.reduce((s, c) => {
@@ -328,15 +297,15 @@ export const ceoRouter = router({
         : 0;
 
     return {
-      warehouseCount: locations.length,
+      warehouseCount: inventory.warehouseCount,
       lockedTradeCount: contracts.length,
       openLockedCount: openLocked.length,
       pendingApprovals: await countPendingCeoApprovals(),
-      totalNetMt,
-      totalUnallocatedMt,
+      totalNetMt: inventory.totalNetMt,
+      totalUnallocatedMt: inventory.totalUnallocatedMt,
       avgFulfillmentPct: avgFulfillment,
-      storageNetwork,
-      inventoryRows,
+      storageNetwork: inventory.storageNetwork,
+      inventoryRows: inventory.inventoryRows,
     };
   }),
 

@@ -35,7 +35,15 @@ export function LocationCommodityTable({
             </tr>
           </thead>
           <tbody>
-            {pagination.items.map((row) => (
+            {loading && (
+              <tr>
+                <td colSpan={6} className="px-5 py-8 text-center text-sm text-subtle">
+                  Loading inventory…
+                </td>
+              </tr>
+            )}
+            {!loading &&
+              pagination.items.map((row) => (
               <tr
                 key={`${row.warehouseName}-${row.commodityCode}-${row.quantityUnit}`}
                 className="border-b border-border/60 last:border-0 hover:bg-foreground/[0.02]"
@@ -52,7 +60,11 @@ export function LocationCommodityTable({
                 <td className="px-4 py-3 tabular-nums text-emerald-400">
                   {formatQtyWithUnit(row.allocatedQty, row.quantityUnit, 2)}
                 </td>
-                <td className="px-4 py-3 tabular-nums font-semibold text-brand">
+                <td
+                  className={`px-4 py-3 tabular-nums font-semibold ${
+                    row.netQty < -0.001 ? "text-destructive" : "text-brand"
+                  }`}
+                >
                   {formatQtyWithUnit(row.netQty, row.quantityUnit, 2)}
                 </td>
               </tr>

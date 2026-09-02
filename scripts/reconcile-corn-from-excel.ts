@@ -26,7 +26,7 @@ const PURCHASE_XLSX =
   "C:/Users/HP/Downloads/Corn Summer - Purchase (2).xlsx";
 const EXECUTION_XLSX =
   process.env.CORN_EXECUTION_XLSX ??
-  "C:/Users/HP/Downloads/Corn Summer 26 Execution.xlsx";
+  "C:/Users/HP/Downloads/Corn Summer 26 Execution (1).xlsx";
 const APPLY = process.argv.includes("--apply");
 const REPORT = process.argv.includes("--report");
 const ACTOR = "corn-excel-sync";
@@ -194,14 +194,18 @@ function parseExecutionWorkbook(filePath: string): SaleRow[] {
   return sales;
 }
 
-/** System refs for execution workbook rows (live DB mapping). */
-const SALE_SYSTEM_REF: Record<string, string> = {
+const EXISTING_REF: Record<string, string> = {
   "KAS-COR27-SAL-0001": "KAS-2026-73",
   "KAS-COR27-SAL-0002": "KAS-2026-75",
+  "KAS-COR27-SAL-0003": "KAS-2026-76",
+  "KAS-COR27-SAL-0004": "KAS-2026-77",
+  "KAS-COR27-SAL-0005": "KAS-2026-78",
+  "KAS-COR27-SAL-0006": "KAS-2026-79",
+  "KAS-COR27-SAL-0007": "KAS-2026-80",
 };
 
-/** Excel rows intentionally not synced to the system. */
-const SKIP_SALE_CONTRACTS = new Set(["KAS-COR27-SAL-0003"]);
+/** @deprecated Use import-missing-sales-from-execution-excel.ts for new contracts. */
+const SKIP_SALE_CONTRACTS = new Set<string>();
 
 async function buildManifest(): Promise<{
   manifest: ManifestItem[];
@@ -287,7 +291,7 @@ async function buildManifest(): Promise<{
 
   for (const xl of sales) {
     if (SKIP_SALE_CONTRACTS.has(xl.contractNo)) continue;
-    const sysRef = SALE_SYSTEM_REF[xl.contractNo] ?? xl.contractNo;
+    const sysRef = EXISTING_REF[xl.contractNo] ?? xl.contractNo;
     const db = await prisma.trade.findUnique({
       where: { tradeRef: sysRef },
       include: { counterparty: true },

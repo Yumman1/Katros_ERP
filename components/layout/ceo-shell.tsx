@@ -8,6 +8,7 @@ import { trpc } from "@/lib/trpc/client";
 
 const nav = [
   { href: "/ceo", label: "Overview", exact: true },
+  { href: "/ceo/positions", label: "Position" },
   { href: "/ceo/commodities", label: "Commodities" },
   { href: "/ceo/approvals", label: "Approvals" },
   { href: "/ceo/rejections", label: "Rejections" },

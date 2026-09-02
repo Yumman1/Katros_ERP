@@ -56,8 +56,12 @@ export default function CeoOverviewPage() {
         <h2 className="mb-3 text-sm font-semibold text-foreground">Network storage capacity</h2>
         {isLoading ? (
           <p className="text-sm text-subtle">Loading storage metrics…</p>
+        ) : data?.storageNetwork ? (
+          <WarehouseStorageMetricsPreview summary={data.storageNetwork} />
         ) : (
-          <WarehouseStorageMetricsPreview summary={data?.storageNetwork ?? null} />
+          <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+            No storage capacity configured on company warehouses yet.
+          </div>
         )}
       </div>
 
