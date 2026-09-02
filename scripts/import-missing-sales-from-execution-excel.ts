@@ -23,11 +23,11 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { prisma } from "@/server/db";
-import { KG_PER_MAUND } from "@/lib/unit-registry";
+import { KG_PER_MAUND } from "@/lib/trade-constants";
 import { closeLockedContract } from "@/server/execution/contracts";
 import { mockBookTrade } from "@/server/dummy-data";
 import { lockTradeInStore } from "@/server/execution/contracts";
-import { prisma } from "@/server/db";
+import { getSystemUserId } from "@/server/db/system-user";
 import { CORN_TRADER_EMAIL } from "./lib/corn-trader";
 
 const EXECUTION_XLSX =
@@ -281,25 +281,26 @@ async function importOutboundForContract(
   return created;
 }
 
-async function getCornTrader() {
+async function getCornTrader(): Promise<{ id: string; name: string; email: string }> {
   const user = await prisma.user.findFirst({
     where: { email: { equals: CORN_TRADER_EMAIL, mode: "insensitive" } },
     select: { id: true, name: true, email: true },
   });
-  if (!user?.name) {
+  if (!user?.name || !user.email) {
     throw new Error(`Corn trader user not found or missing name: ${CORN_TRADER_EMAIL}`);
   }
-  return user;
+  return { id: user.id, name: user.name, email: user.email };
 }
 
 async function createAndLockSale(row: SaleContractRow, commodityId: string): Promise<string> {
   const cornTrader = await getCornTrader();
+  const traderName = cornTrader.name;
   const cp = await resolveCounterparty(row);
   const deliveryEnd = row.deliveryEnd ?? new Date(row.tradeDate.getTime() + 14 * 86400000);
   const ratePerKg = row.netRateMd / KG_PER_MAUND;
 
   const booked = await mockBookTrade({
-    traderName: cornTrader.name,
+    traderName,
     actorId: cornTrader.id,
     commodityId,
     commodityCode: "CORN",
@@ -354,7 +355,7 @@ async function createAndLockSale(row: SaleContractRow, commodityId: string): Pro
     },
   });
 
-  await lockTradeInStore(cornTrader.name, booked.tradeRef, {
+  await lockTradeInStore(traderName, booked.tradeRef, {
     lockedBy: ACTOR,
     ratePerMaund: row.netRateMd,
     commissionPerMaund: Math.max(0, row.netRateMd - row.rateMd),
