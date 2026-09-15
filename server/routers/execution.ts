@@ -15,7 +15,6 @@ import {
   exportLockedContractsCsv,
   exportMovementsCsv,
   getContractByRef,
-  getContractsPendingWarehouseAllocation,
   getDeskSummary,
   getInboundReceipts,
   getLockedContracts,
@@ -178,6 +177,8 @@ const openTradePatchSchema = z.object({
 const execRoles: Role[] = [Role.EXECUTION, Role.ADMIN];
 
 const tradeFileFilterSchema = z.object({
+  fromDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  toDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   commodityCode: z.string().optional(),

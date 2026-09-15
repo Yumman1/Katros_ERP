@@ -1,4 +1,6 @@
 "use client";
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields } from "@/lib/record-filters";
 
 import { useState } from "react";
 
@@ -55,7 +57,8 @@ function OverDeliverySection() {
     },
   });
 
-  const items = rows ?? [];
+  const listFilters = useRecordFilters("over-delivery", rows, { fields: [tradeFields[3], field("commodity", "Commodity", "commodityName"), field("trader", "Trader", "traderName")], date: { label: "Arrival date", paths: ["arrivalDate"] } });
+  const items = listFilters.rows;
 
   return (
     <section className="rounded-xl border border-kastros-border bg-kastros-card">
@@ -69,6 +72,7 @@ function OverDeliverySection() {
         </span>
       </div>
 
+      {listFilters.controls}
       <div className="divide-y divide-kastros-border">
         {items.length === 0 && (
           <div className="flex items-center gap-2 px-5 py-8 text-sm text-subtle">
@@ -184,7 +188,8 @@ function TradeSettlementSection() {
     },
   });
 
-  const items = rows ?? [];
+  const listFilters = useRecordFilters("settlements", rows, { fields: [tradeFields[3], field("commodity", "Commodity", "commodityName"), field("trader", "Trader", "traderName")], date: { label: "Request date", paths: ["requestedAt"] } });
+  const items = listFilters.rows;
 
   return (
     <section className="rounded-xl border border-kastros-border bg-kastros-card">
@@ -198,6 +203,7 @@ function TradeSettlementSection() {
         </span>
       </div>
 
+      {listFilters.controls}
       <div className="divide-y divide-kastros-border">
         {items.length === 0 && (
           <div className="flex items-center gap-2 px-5 py-8 text-sm text-subtle">
@@ -319,7 +325,8 @@ function ClearWithoutPaymentSection() {
     },
   });
 
-  const items = rows ?? [];
+  const listFilters = useRecordFilters("release", rows, { fields: [tradeFields[3], field("commodity", "Commodity", "commodityName"), field("trader", "Trader", "traderName")], date: { label: "Arrival date", paths: ["arrivalDate"] } });
+  const items = listFilters.rows;
 
   return (
     <section className="rounded-xl border border-kastros-border bg-kastros-card">
@@ -333,6 +340,7 @@ function ClearWithoutPaymentSection() {
         </span>
       </div>
 
+      {listFilters.controls}
       <div className="divide-y divide-kastros-border">
         {items.length === 0 && (
           <div className="flex items-center gap-2 px-5 py-8 text-sm text-subtle">

@@ -29,7 +29,7 @@ const TABS = [
  */
 export default function RejectionsLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { data: rows } = trpc.policy.rejections.useQuery(undefined, {
+  const { data: rows } = trpc.policy.rejections.useQuery({ fullHistory: true }, {
     refetchInterval: 60_000,
   });
 

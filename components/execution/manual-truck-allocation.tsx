@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields, tradeFilterConfig } from "@/lib/record-filters";
+
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { kgToQuantityUnit, quantityUnitToKg } from "@/lib/unit-conversion";
 import { contractMatchesWarehouse, allocationSummaryLabel } from "@/lib/warehouse-allocation";
@@ -160,8 +163,10 @@ export function ManualTruckAllocation({
   }, [openOrders, selectedTruck, mode]);
 
   const visibleOrders = selectedTruck ? matchingOrders : [];
-  const ordersPagination = useListPagination(visibleOrders, { resetKey: selectedTruck?.id ?? "none" });
-  const trucksPagination = useListPagination(activeTrucks);
+  const orderFilters = useRecordFilters("allocation-orders", visibleOrders, { ...tradeFilterConfig, fields: [tradeFields[3], field("trader", "Trader", "traderName"), field("warehouse", "Warehouse", "warehouseAllocationProgress.warehouseName", "warehouseDefault", "allocatedWarehouse") ] });
+  const truckFilters = useRecordFilters("allocation-trucks", activeTrucks, { fields: [tradeFields[3], field("warehouse", "Warehouse", "warehouseName"), field("status", "Status")], date: { label: "Arrival date", paths: ["arrivalDate"] } });
+  const ordersPagination = useListPagination(orderFilters.rows, { resetKey: (selectedTruck?.id ?? "none") + orderFilters.resetKey });
+  const trucksPagination = useListPagination(truckFilters.rows, { resetKey: truckFilters.resetKey });
   const fulfilledLabel = mode === "INBOUND" ? "Received" : "Dispatched";
 
   function qtyForTrade(tradeRef: string) {
@@ -240,6 +245,7 @@ export function ManualTruckAllocation({
             ? `Matching orders for ${selectedTruck.counterpartyName} (${visibleOrders.length})`
             : `Open ${mode === "INBOUND" ? "purchase" : "sale"} orders`}
         </h3>
+        {orderFilters.controls}
         {!selectedTruck ? (
           <div className="exec-empty">
             Select a truck below to see open orders for the same counterparty and commodity.
@@ -394,6 +400,7 @@ export function ManualTruckAllocation({
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">
           Trucks at gate ({activeTrucks.length})
         </h3>
+        {truckFilters.controls}
         {activeTrucks.length === 0 ? (
           <div className="exec-empty">
             No trucks waiting for assignment. Open orders above stay listed — add a gatepass when the next truck

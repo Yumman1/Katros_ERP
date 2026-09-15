@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { tradeFilterConfig } from "@/lib/record-filters";
+
 import { trpc } from "@/lib/trpc/client";
 import { priceUnitLabel } from "@/lib/price-units";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
@@ -24,11 +27,13 @@ export default function TraderDeskPage() {
   const { data: actions } = trpc.trader.actionItems.useQuery();
   const { data: exposure } = trpc.trader.myExposure.useQuery();
 
+  const listFilters = useRecordFilters("desk-trades", (trades ?? []).filter(isActiveTraderTrade), tradeFilterConfig);
+
   if (isLoading || !summary) {
     return <div className="animate-pulse text-subtle">Loading your desk…</div>;
   }
 
-  const openTrades = (trades ?? []).filter(isActiveTraderTrade).slice(0, 8);
+  const openTrades = listFilters.rows.slice(0, 8);
 
   return (
     <DeskPage>
@@ -97,6 +102,8 @@ export default function TraderDeskPage() {
                 View all →
               </Link>
             </div>
+            {listFilters.controls}
+            {listFilters.rows.length > 8 && <p className="px-3 text-xs text-subtle">Showing the first 8 matches. Use My Trades for the full list.</p>}
             <div className="overflow-x-auto text-sm">
               <table className="w-full border-collapse">
                 <thead className="text-left text-xs uppercase text-subtle">

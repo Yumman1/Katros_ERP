@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
+
 import { useMemo, useState } from "react";
 import { KeyRound, ShieldCheck, UserPlus, UserX, Users as UsersIcon, Wifi } from "lucide-react";
 import { AdminResetPasswordModal } from "@/components/account/admin-reset-password-modal";
@@ -91,6 +94,8 @@ export default function CeoUsersPage() {
       heads: all.filter((u) => u.isHead && !u.disabled).length,
     };
   }, [users.data]);
+
+  const listFilters = useRecordFilters("users", users.data, { fields: [field("role", "Role"), field("disabled", "Disabled"), field("isHead", "Department head")], searchPaths: ["name", "email"] });
 
   return (
     <div className="kastros-desk-page mx-auto max-w-5xl">
@@ -267,6 +272,7 @@ export default function CeoUsersPage() {
         {/* ── All users ── */}
         <section className="rounded-xl border border-kastros-border bg-kastros-card p-5">
           <h2 className="text-sm font-semibold text-foreground">All users</h2>
+            {listFilters.controls}
           <div className="kastros-table-wrap mt-3">
             <table className="w-full border-collapse text-sm">
               <thead className="text-left text-xs uppercase text-subtle">
@@ -281,7 +287,7 @@ export default function CeoUsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {(users.data ?? []).map((u) => (
+                {listFilters.rows.map((u) => (
                   <tr key={u.id} className={`border-b border-kastros-border/60 ${u.disabled ? "opacity-50" : ""}`}>
                     <td className="px-2 py-1.5">
                       {isActiveNow(u.lastSeenAt) && (

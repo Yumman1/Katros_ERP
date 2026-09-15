@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
+
 import { WarehouseSubnav } from "@/components/execution/warehouse-subnav";
 import {
   emptyCostingForm,
@@ -68,7 +71,8 @@ export default function WarehouseSetupPage() {
   const isExecutionHead = role != null && canActOnDepartment(role, isHead, "EXECUTION");
 
   const { data: locations, isLoading } = trpc.execution.warehouseLocations.useQuery();
-  const locationsPagination = useListPagination(locations ?? []);
+  const listFilters = useRecordFilters("warehouses", locations, { fields: [field("city", "City"), field("province", "Province")], searchPaths: ["name", "code", "city", "province"] });
+  const locationsPagination = useListPagination(listFilters.rows, { resetKey: listFilters.resetKey });
   const [form, setForm] = useState<FormState>(emptyForm);
   const [costing, setCosting] = useState<WarehouseCostingFormState>(emptyCostingForm);
   const [comment, setComment] = useState("");
@@ -279,6 +283,7 @@ export default function WarehouseSetupPage() {
 
       <section className="exec-panel">
         <h2 className="mb-3 text-sm font-semibold text-foreground">Registered warehouses</h2>
+          {listFilters.controls}
         {isLoading ? (
           <p className="text-sm text-subtle">Loading…</p>
         ) : (

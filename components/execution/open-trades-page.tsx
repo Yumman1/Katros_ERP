@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { tradeFilterConfig, tradeFields, field } from "@/lib/record-filters";
+
 import { PageHeader } from "@/components/ui/page-header";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
@@ -12,12 +15,11 @@ import { cn } from "@/lib/utils";
 import { Lock } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 export function OpenTradesPage() {
   const router = useRouter();
   const utils = trpc.useUtils();
-  const [search, setSearch] = useState("");
   const [lockingRef, setLockingRef] = useState<string | null>(null);
   const { data: openTrades } = trpc.execution.openTrades.useQuery(undefined, { refetchInterval: 30000 });
 
@@ -30,20 +32,9 @@ export function OpenTradesPage() {
     onError: () => setLockingRef(null),
   });
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return openTrades ?? [];
-    return (openTrades ?? []).filter(
-      (t) =>
-        t.tradeRef.toLowerCase().includes(q) ||
-        t.traderName.toLowerCase().includes(q) ||
-        t.counterpartyName.toLowerCase().includes(q) ||
-        t.commodityCode.toLowerCase().includes(q),
-    );
-  }, [openTrades, search]);
-
-  const pagination = useListPagination(filtered, { resetKey: search });
-  const awaitingTrader = filtered.filter((t) => t.pendingTraderReview).length;
+  const listFilters = useRecordFilters("open-trades", openTrades, { ...tradeFilterConfig, fields: [...tradeFields, field("trader", "Trader", "traderName"), field("review", "Awaiting trader review", "pendingTraderReview")] });
+  const pagination = useListPagination(listFilters.rows, { resetKey: listFilters.resetKey });
+  const awaitingTrader = (openTrades ?? []).filter((t) => t.pendingTraderReview).length;
 
   return (
     <div className="kastros-desk-page">
@@ -62,17 +53,11 @@ export function OpenTradesPage() {
       />
 
       <div className="flex flex-wrap gap-3">
-        <StatChip label="Unreviewed" value={filtered.length} variant="accent" />
+        <StatChip label="Unreviewed" value={openTrades?.length ?? 0} variant="accent" />
         <StatChip label="Awaiting trader review" value={awaitingTrader} variant="danger" />
       </div>
 
-      <input
-        placeholder="Search contract, trader, counterparty, commodity…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="kastros-input w-full max-w-md rounded-xl py-2.5"
-      />
-
+      {listFilters.controls}
       <div className="kastros-table-wrap">
         <table className="kastros-table text-xs">
           <thead>
@@ -170,7 +155,7 @@ export function OpenTradesPage() {
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {listFilters.rows.length === 0 && (
               <tr>
                 <td colSpan={12} className="py-12 text-center text-sm text-subtle">
                   No unreviewed trades match your search.

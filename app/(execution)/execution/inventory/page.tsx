@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
+
 import { trpc } from "@/lib/trpc/client";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { summarizeQtyByUnit } from "@/lib/formatters/execution-units";
@@ -107,8 +110,10 @@ export default function ExecutionInventoryPage() {
     return Array.from(map.values()).sort((a, b) => b.netMt - a.netMt);
   }, [locationCommodityRows]);
 
-  const warehousePagination = useListPagination(warehouses);
-  const locationPagination = useListPagination(locationCommodityRows);
+  const warehouseFilters = useRecordFilters("warehouse-balances", warehouses, { fields: [field("warehouse", "Warehouse", "name")], searchPaths: ["name"] });
+  const locationFilters = useRecordFilters("inventory", locationCommodityRows, { fields: [field("warehouse", "Warehouse", "warehouseName"), field("commodity", "Commodity", "commodityCode")], searchPaths: ["warehouseName", "commodityCode", "commodityName"] });
+  const warehousePagination = useListPagination(warehouseFilters.rows, { resetKey: warehouseFilters.resetKey });
+  const locationPagination = useListPagination(locationFilters.rows, { resetKey: locationFilters.resetKey });
 
   const totalStockLabel = useMemo(() => {
     const items: { qty: number; unit: string }[] = locationCommodityRows
@@ -199,6 +204,7 @@ export default function ExecutionInventoryPage() {
       <section className="rounded-2xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
         <div className="border-b px-5 py-4" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
           <h2 className="text-sm font-semibold text-foreground">Inventory by Location & Commodity</h2>
+          {locationFilters.controls}
           <p className="mt-0.5 text-xs text-muted-foreground">
             Quantities by warehouse and commodity — unallocated vs allocated only.
           </p>
@@ -261,6 +267,7 @@ export default function ExecutionInventoryPage() {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-foreground">Warehouse Balances</h2>
+          {warehouseFilters.controls}
           <div className="flex items-center gap-3">
             <Link href="/execution/warehouses" className="text-xs font-medium text-brand hover:underline">
               Setup capacity

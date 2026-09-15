@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { requestFilterConfig } from "@/lib/record-filters";
+
 import { useMemo } from "react";
 import { Clock, XCircle } from "lucide-react";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -35,7 +38,8 @@ export function ExecutionMyApprovalsPanel({ filter }: { filter: "approvals" | "r
       : list.filter((r) => r.status === "REJECTED");
   }, [mine, filter]);
 
-  const pagination = useListPagination(items);
+  const listFilters = useRecordFilters("my-approvals", items, requestFilterConfig);
+  const pagination = useListPagination(listFilters.rows, { resetKey: listFilters.resetKey });
 
   if (isLoading && !mine) {
     return (
@@ -53,6 +57,7 @@ export function ExecutionMyApprovalsPanel({ filter }: { filter: "approvals" | "r
 
   return (
     <div className="kastros-desk-scroll pt-4">
+        {listFilters.controls}
       <section className="rounded-xl border border-kastros-border bg-kastros-card">
         <div className="flex items-center gap-2 border-b border-kastros-border px-5 py-3 text-sm font-semibold text-foreground">
           {filter === "approvals" ? (

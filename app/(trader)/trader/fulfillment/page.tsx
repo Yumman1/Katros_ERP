@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { tradeFilterConfig, tradeFields, field } from "@/lib/record-filters";
+
 import { PageHeader } from "@/components/ui/page-header";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { useListPagination } from "@/lib/use-list-pagination";
@@ -9,8 +12,8 @@ import { trpc } from "@/lib/trpc/client";
 import { TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { FileMinus2, Search, Send, X } from "lucide-react";
+import { useState } from "react";
+import { FileMinus2, Send, X } from "lucide-react";
 
 const fmtNum = (n: number) => n.toLocaleString("en-PK", { maximumFractionDigits: 2 });
 
@@ -69,19 +72,8 @@ export default function TraderFulfillmentPage() {
 
   const openCount = trades?.filter((t) => t.contractStatus === "Open").length ?? 0;
 
-  // Search narrows the whole list; the pager then works on what is left, so a
-  // match on page 4 is reachable by typing instead of clicking through.
-  const [search, setSearch] = useState("");
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return trades ?? [];
-    return (trades ?? []).filter((t) =>
-      [t.tradeRef, t.counterpartyName, t.commodityCode, t.commodityName, t.incoterms]
-        .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(q)),
-    );
-  }, [trades, search]);
-  const pagination = useListPagination(filtered, { pageSize: 10, resetKey: search });
+  const listFilters = useRecordFilters("fulfillment", trades, { ...tradeFilterConfig, fields: [...tradeFields, field("status", "Contract status", "contractStatus"), field("warehouse", "Warehouse", "warehouseAllocationProgress.warehouseName")] });
+  const pagination = useListPagination(listFilters.rows, { pageSize: 10, resetKey: listFilters.resetKey });
 
   return (
     <div className="kastros-desk-page">
@@ -95,16 +87,7 @@ export default function TraderFulfillmentPage() {
         <Stat label="Open" value={String(openCount)} accent="warning" />
       </div>
 
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by trade ref, counterparty, commodity, incoterm…"
-          className="kastros-input w-full pl-9"
-        />
-      </div>
-
+      {listFilters.controls}
       <div className="kastros-desk-scroll space-y-4 pb-6">
       {isLoading ? (
         <div className="py-12 text-center text-sm text-subtle">Loading fulfillment…</div>
@@ -112,9 +95,9 @@ export default function TraderFulfillmentPage() {
         <div className="rounded-xl border border-border bg-card px-6 py-12 text-center text-sm text-subtle">
           No locked trades yet. Book and lock a trade to track fulfillment here.
         </div>
-      ) : !filtered.length ? (
+      ) : !listFilters.rows.length ? (
         <div className="rounded-xl border border-border bg-card px-6 py-12 text-center text-sm text-subtle">
-          No trades match “{search.trim()}”.
+          No trades match the selected filters.
         </div>
       ) : (
         <div className="space-y-4">

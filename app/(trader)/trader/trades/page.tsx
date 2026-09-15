@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { tradeFilterConfig } from "@/lib/record-filters";
+
 import { TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
 import { priceUnitLabel } from "@/lib/price-units";
 import { trpc } from "@/lib/trpc/client";
@@ -83,6 +86,16 @@ export default function MyTradesPage() {
   const { data: cancelled, isLoading: cancelledLoading } =
     trpc.trader.myCancelledTrades.useQuery(undefined, { enabled: filter === "CANCELLED" });
 
+  const draftRows = (drafts ?? []).map((d) => ({ ...d,
+    commodityCode: d.summary?.commodityLabel?.split(" — ")[0],
+    counterpartyName: d.summary?.counterpartyLabel?.split(" — ").slice(1).join(" — ") || undefined,
+  }));
+  const activeRecords = filter === "UNFINISHED" ? draftRows : filter === "CANCELLED" ? cancelled : trades;
+  const listFilters = useRecordFilters<unknown>("trades", activeRecords, filter === "UNFINISHED" ? { ...tradeFilterConfig, quantityPaths: undefined } : tradeFilterConfig);
+  const visibleTrades = listFilters.apply(trades ?? []);
+  const visibleDrafts = listFilters.apply(draftRows);
+  const visibleCancelled = listFilters.apply(cancelled ?? []);
+
   return (
     <div className="kastros-desk-page">
       <TradeEditModal tradeRef={editRef} open={editRef != null} onClose={() => setEditRef(null)} />
@@ -150,16 +163,17 @@ export default function MyTradesPage() {
         ))}
       </div>
 
+      {listFilters.controls}
       {filter === "UNFINISHED" ? (
         draftsLoading ? (
           <div className="text-subtle">Loading unfinished bookings…</div>
-        ) : !drafts?.length ? (
+        ) : !visibleDrafts.length ? (
           <div className="rounded-xl border border-kastros-border bg-kastros-card px-6 py-10 text-center text-sm text-subtle">
-            No unfinished bookings. Booking forms autosave here while you fill them in.
+            No unfinished bookings match. Clear filters to see all saved drafts.
           </div>
         ) : (
           <div className="space-y-3">
-            {drafts.map((d) => {
+            {visibleDrafts.map((d) => {
               const label =
                 [
                   d.summary?.commodityLabel,
@@ -211,17 +225,16 @@ export default function MyTradesPage() {
       ) : filter === "CANCELLED" ? (
         cancelledLoading ? (
           <div className="text-subtle">Loading cancelled trades…</div>
-        ) : !cancelled?.length ? (
+        ) : !visibleCancelled.length ? (
           <div className="rounded-xl border border-kastros-border bg-kastros-card px-6 py-10 text-center text-sm text-subtle">
-            No cancelled trades. Cancelling a locked trade raises a debit or credit note, and it
-            lands here.
+            No cancelled trades match. Clear filters to see all cancellation records.
           </div>
         ) : (
-          <CancelledTradesTable rows={cancelled} />
+          <CancelledTradesTable rows={visibleCancelled} />
         )
       ) : isLoading ? (
         <div className="text-subtle">Loading trades…</div>
-      ) : !trades?.length ? (
+      ) : !visibleTrades.length ? (
         <div className="rounded-xl border border-kastros-border bg-kastros-card px-6 py-10 text-center text-sm text-subtle">
           No trades match this filter.
         </div>
@@ -251,7 +264,7 @@ export default function MyTradesPage() {
                 </tr>
               </thead>
               <tbody>
-                {trades?.map((t) => (
+                {visibleTrades.map((t) => (
                   <tr key={t.id} className="border-b border-kastros-border/60 hover:bg-foreground/[0.02]">
                     <td className="px-2 py-2">
                       <div className="flex items-center gap-1">

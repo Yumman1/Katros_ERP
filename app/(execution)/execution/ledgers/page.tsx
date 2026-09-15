@@ -28,7 +28,7 @@ export default function ExecutionLedgersPage() {
       />
 
       <div className="kastros-desk-scroll flex flex-col gap-4">
-        <CounterpartyLedgersPanel rows={data} isLoading={isLoading} />
+        <CounterpartyLedgersPanel enableFilters rows={data} isLoading={isLoading} />
       </div>
     </div>
   );

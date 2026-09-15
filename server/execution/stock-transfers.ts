@@ -39,6 +39,7 @@ export type StockTransferRow = {
   id: string;
   transferRef: string;
   commodityCode: string;
+  season: "SUMMER" | "WINTER";
   commodityName: string;
   fromWarehouseName: string | null;
   externalOrigin: string | null;
@@ -74,6 +75,7 @@ function toRow(t: TransferRecord): StockTransferRow {
     id: t.id,
     transferRef: t.transferRef,
     commodityCode: t.commodityCode,
+    season: t.season,
     commodityName: t.commodityName,
     fromWarehouseName: t.fromWarehouseName,
     externalOrigin: t.externalOrigin,

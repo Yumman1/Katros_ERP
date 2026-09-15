@@ -86,13 +86,15 @@ export const policyRouter = router({
    * Rejections page data — traders see rejections on their own trades,
    * every other role sees everything.
    */
-  rejections: protectedProcedure.query(({ ctx }) => {
+  rejections: protectedProcedure.input(z.object({ fullHistory: z.boolean().optional() }).optional()).query(({ ctx, input }) => {
     const user = ctx.session.user;
+    const fullHistory = input?.fullHistory === true && ["TRADER", "EXECUTION", "CEO"].includes(user.role);
     if (user.role === "TRADER") {
       return listRejections({
         traderName: canonicalTraderName(traderDisplayName({ user } as never)),
+        fullHistory,
       });
     }
-    return listRejections();
+    return listRejections({ fullHistory });
   }),
 });

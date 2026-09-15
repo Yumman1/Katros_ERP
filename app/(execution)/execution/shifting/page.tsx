@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
+
 /**
  * Internal stock shifting — moving grain we already own between warehouses.
  *
@@ -90,6 +93,8 @@ export default function ExecutionShiftingPage() {
     [rows],
   );
 
+  const listFilters = useRecordFilters("shifts", rows, { fields: [field("from", "Origin", "fromWarehouseName", "externalOrigin"), field("to", "Destination", "toWarehouseName"), field("commodity", "Commodity", "commodityCode"), field("season", "Season"), field("status", "Status")], date: { label: "Booking date", paths: ["createdAt"] } });
+
   if (isLoading) return <PageLoadingSkeleton />;
 
   return (
@@ -127,6 +132,7 @@ export default function ExecutionShiftingPage() {
         />
       </div>
 
+      {listFilters.controls}
       {error ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
@@ -165,7 +171,7 @@ export default function ExecutionShiftingPage() {
                   </td>
                 </tr>
               ) : (
-                rows.map((r) => (
+                listFilters.rows.map((r) => (
                   <ShiftRow
                     key={r.id}
                     row={r}

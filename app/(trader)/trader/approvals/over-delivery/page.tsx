@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields } from "@/lib/record-filters";
+
 import Link from "next/link";
 import { useState } from "react";
 
@@ -33,7 +36,7 @@ function fmtQty(v: number, unit: string) {
 
 export default function TraderOverDeliveryApprovalsPage() {
   const utils = trpc.useUtils();
-  const { data: rows, isLoading } = trpc.trader.overDeliveryApprovals.useQuery(undefined, {
+  const { data: sourceRows, isLoading } = trpc.trader.overDeliveryApprovals.useQuery(undefined, {
     refetchInterval: 20_000,
   });
 
@@ -45,11 +48,14 @@ export default function TraderOverDeliveryApprovalsPage() {
     },
   });
 
+  const listFilters = useRecordFilters("approvals", sourceRows, { fields: [tradeFields[3], field("warehouse", "Warehouse", "warehouseName"), field("commodity", "Commodity", "commodityName")], date: { label: "Arrival date", paths: ["arrivalDate"] } });
+  const rows = listFilters.rows;
   const items = rows ?? [];
 
   // Page shell, header and tabs come from the layout — this renders one tab.
   return (
       <div className="kastros-desk-scroll space-y-4 pb-6">
+      {listFilters.controls}
         <p className="text-xs text-subtle">
           Inbound trucks delivering more than a trade can absorb — your approval sends them to the
           CEO for final clearance.

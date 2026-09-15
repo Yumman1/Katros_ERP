@@ -39,7 +39,7 @@ export function ExecutionApprovalsTabs() {
     refetchInterval: DESK_REFETCH_MS,
     staleTime: DESK_REFETCH_MS,
   });
-  const { data: rejections } = trpc.policy.rejections.useQuery(undefined, {
+  const { data: rejections } = trpc.policy.rejections.useQuery({ fullHistory: true }, {
     refetchInterval: DESK_REFETCH_MS,
     staleTime: DESK_REFETCH_MS,
   });

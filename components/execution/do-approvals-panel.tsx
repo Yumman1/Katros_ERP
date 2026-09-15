@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields } from "@/lib/record-filters";
+
 import Link from "next/link";
 import { useState } from "react";
 import { Check, X } from "lucide-react";
@@ -33,7 +36,8 @@ export function DoApprovalsPanel() {
     onSuccess: () => invalidateApprovalCaches(utils),
   });
 
-  const pagination = useListPagination(rows ?? []);
+  const listFilters = useRecordFilters("do-approvals", rows ?? [], { fields: [tradeFields[3], field("warehouse", "Warehouse", "warehouseName")], date: { label: "Arrival date", paths: ["arrivalDate"] } });
+  const pagination = useListPagination(listFilters.rows, { resetKey: listFilters.resetKey });
   const busy = approve.isPending || reject.isPending;
 
   if (isLoading && !rows) {
@@ -42,6 +46,7 @@ export function DoApprovalsPanel() {
 
   return (
     <div className="kastros-desk-scroll pt-4">
+        {listFilters.controls}
       {!rows?.length ? (
         <p className="text-sm text-subtle">No delivery orders awaiting execution approval.</p>
       ) : (

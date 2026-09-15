@@ -1,7 +1,10 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { rejectionFilterConfig } from "@/lib/record-filters";
+
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ListPagination } from "@/components/ui/list-pagination";
 import { trpc } from "@/lib/trpc/client";
@@ -25,16 +28,19 @@ export function RejectionsTable({
   kinds?: readonly string[];
   emptyMessage: string;
 }) {
-  const { data: rows, isLoading } = trpc.policy.rejections.useQuery(undefined, {
+  const { data: rows, isLoading } = trpc.policy.rejections.useQuery({ fullHistory: true }, {
     refetchInterval: 60_000,
   });
   const [page, setPage] = useState(1);
 
-  const all = useMemo(() => {
+  const categoryRows = useMemo(() => {
     const list = rows ?? [];
     return kinds ? list.filter((r) => kinds.includes(r.kind)) : list;
   }, [rows, kinds]);
 
+  const listFilters = useRecordFilters("rejections", categoryRows, rejectionFilterConfig);
+  const all = listFilters.rows;
+  useEffect(() => setPage(1), [listFilters.resetKey, kinds]);
   const totalPages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const startIndex = (safePage - 1) * PAGE_SIZE;
@@ -42,6 +48,7 @@ export function RejectionsTable({
 
   return (
     <div className="kastros-desk-scroll pb-6">
+      {listFilters.controls}
       {isLoading ? (
         <div className="rounded-xl border border-border bg-card px-6 py-12 text-center text-sm text-subtle">
           Loading rejections…

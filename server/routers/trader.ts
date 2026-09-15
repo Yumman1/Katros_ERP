@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { CounterpartyType, TradeDirection, TradeStatus } from "@prisma/client";
 import type { Session } from "next-auth";
 import { prisma } from "@/server/db";
-import { headProcedure, protectedProcedure, roleProcedure, router } from "@/server/trpc/trpc";
+import { protectedProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import { traderDisplayName } from "@/lib/trader-display-name";
 import { canonicalTraderName, traderNamesMatch } from "@/lib/trader-identity";
 import {
@@ -334,6 +334,9 @@ export const traderRouter = router({
         quantity: t.quantity,
         quantityUnit: t.quantityUnit ?? t.commodity.unit,
         counterpartyName: t.counterparty.name,
+        tradeDate: t.tradeDate,
+        tradeScope: t.tradeScope,
+        deliveryStart: t.deliveryStart,
         /** When the trade was cancelled — the note's date, else the activity's. */
         cancelledAt: note?.entryDate ?? activity?.at ?? t.tradeDate,
         noteRef: note?.sourceRef ?? null,
@@ -1139,6 +1142,7 @@ export const traderRouter = router({
         fulfillmentPct:
           c.contractualQtyMt > 0 ? Math.min(1, c.receivedQtyMt / c.contractualQtyMt) : 0,
         warehouseAllocationProgress: c.warehouseAllocationProgress,
+        contractDate: c.contractDate,
         deliveryStart: c.deliveryStart,
         deliveryEnd: c.deliveryEnd,
         lockedAt: c.lockedAt,

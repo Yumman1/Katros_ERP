@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields } from "@/lib/record-filters";
+
 import Link from "next/link";
 import { useState } from "react";
 import { CheckCircle2, PauseCircle, Scissors } from "lucide-react";
@@ -31,7 +34,7 @@ type ApprovalRow = {
 
 export default function TraderInvoiceApprovalsPage() {
   const utils = trpc.useUtils();
-  const { data: rows, isLoading } = trpc.trader.invoiceApprovals.useQuery(undefined, {
+  const { data: sourceRows, isLoading } = trpc.trader.invoiceApprovals.useQuery(undefined, {
     refetchInterval: 20000,
   });
 
@@ -42,6 +45,8 @@ export default function TraderInvoiceApprovalsPage() {
     },
   });
 
+  const listFilters = useRecordFilters("approvals", sourceRows, { fields: [tradeFields[3], field("stage", "Stage"), field("warehouse", "Warehouse", "warehouseName")], date: { label: "Arrival date", paths: ["arrivalDate"] } });
+  const rows = listFilters.rows;
   const pending = (rows ?? []).filter((r) => r.stage === "PENDING_TRADE_APPROVAL");
   const partial = (rows ?? []).filter((r) => r.stage === "PARTIAL_PAYMENT");
   const held = (rows ?? []).filter((r) => r.stage === "HOLD_OLD_DUES");
@@ -49,6 +54,7 @@ export default function TraderInvoiceApprovalsPage() {
   // Page shell, header and tabs come from the layout — this renders the buy tab.
   return (
       <div className="kastros-desk-scroll space-y-6 pb-6">
+      {listFilters.controls}
         {isLoading ? (
           <div className="py-12 text-center text-sm text-subtle">Loading invoice approvals…</div>
         ) : !rows?.length ? (

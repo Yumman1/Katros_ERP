@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields, tradeFilterConfig } from "@/lib/record-filters";
+
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CommodityFilterBar } from "@/components/execution/commodity-filter-bar";
 import { ManualTruckAllocation } from "@/components/execution/manual-truck-allocation";
@@ -145,7 +148,8 @@ export function ExecutionProfileDesk({
     () => spotPending.filter((t) => matchesCommodityFilter(t.commodityCode, commodityFilter)),
     [spotPending, commodityFilter],
   );
-  const spotPendingPagination = useListPagination(filteredSpotPending, { resetKey: commodityFilter });
+  const lockFilters = useRecordFilters("pending-lock", filteredSpotPending, { date: tradeFilterConfig.date, fields: [tradeFields[3], field("trader", "Trader", "traderName")] });
+  const spotPendingPagination = useListPagination(lockFilters.rows, { resetKey: commodityFilter + lockFilters.resetKey });
 
   const filteredPipeline = useMemo(() => {
     if (!config.showSpotExtras) return [];
@@ -213,6 +217,7 @@ export function ExecutionProfileDesk({
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-destructive">
             Awaiting lock from trader
           </h2>
+          {lockFilters.controls}
           <div className="space-y-2">
             {spotPendingPagination.items.map((t) => (
               <div key={t.tradeRef} className="exec-panel">

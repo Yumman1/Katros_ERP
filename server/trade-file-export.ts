@@ -1,7 +1,10 @@
+import { calendarDay } from "@/lib/record-filters";
 import { mockAllTraderTrades } from "@/server/dummy-data";
 import type { MockTraderTrade } from "@/server/dummy-data";
 
 export type TradeFileFilter = {
+  fromDay?: string;
+  toDay?: string;
   from?: Date;
   to?: Date;
   commodityCode?: string;
@@ -40,6 +43,9 @@ export function filterTradesForTradeFile(
   const to = filter.to ? endOfDay(filter.to) : null;
   return trades.filter((t) => {
     const booked = new Date(t.tradeDate);
+    const day = calendarDay(t.tradeDate);
+    if (filter.fromDay && (!day || day < filter.fromDay)) return false;
+    if (filter.toDay && (!day || day > filter.toDay)) return false;
     if (filter.from && booked < filter.from) return false;
     if (to && booked > to) return false;
     if (filter.commodityCode && t.commodity.code !== filter.commodityCode) return false;

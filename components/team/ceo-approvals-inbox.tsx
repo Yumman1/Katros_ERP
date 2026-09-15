@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { requestFilterConfig } from "@/lib/record-filters";
+
 import { useMemo, useState } from "react";
 import { Check, Inbox, ShieldCheck, X } from "lucide-react";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -47,7 +50,8 @@ export function CeoApprovalsInbox() {
   });
 
   const items = useMemo(() => queue.data ?? [], [queue.data]);
-  const pagination = useListPagination(items);
+  const listFilters = useRecordFilters("ceo-queue", items, requestFilterConfig);
+  const pagination = useListPagination(listFilters.rows, { resetKey: listFilters.resetKey });
 
   return (
       <section className="rounded-xl border border-kastros-border bg-kastros-card">
@@ -62,6 +66,7 @@ export function CeoApprovalsInbox() {
         </div>
 
         <div className="divide-y divide-kastros-border">
+        {listFilters.controls}
           {/* A failed query must not read as an empty queue — pending approvals
               going quiet is exactly the failure nobody notices. */}
           {queue.isError && (

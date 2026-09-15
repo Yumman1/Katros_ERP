@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { rejectionFilterConfig } from "@/lib/record-filters";
+
 import { ListPagination } from "@/components/ui/list-pagination";
 import { PageHeader } from "@/components/ui/page-header";
 import { useListPagination } from "@/lib/use-list-pagination";
@@ -26,11 +29,12 @@ function humanizeKind(kind: string): string {
 }
 
 export default function CeoRejectionsPage() {
-  const { data: rows, isLoading } = trpc.policy.rejections.useQuery(undefined, {
+  const { data: rows, isLoading } = trpc.policy.rejections.useQuery({ fullHistory: true }, {
     refetchInterval: 60_000,
     retry: false,
   });
-  const pagination = useListPagination(rows ?? []);
+  const listFilters = useRecordFilters("rejections", rows ?? [], rejectionFilterConfig);
+  const pagination = useListPagination(listFilters.rows, { resetKey: listFilters.resetKey });
 
   return (
     <div className="kastros-desk-page">
@@ -40,6 +44,7 @@ export default function CeoRejectionsPage() {
       />
 
       <div className="kastros-desk-scroll pb-6">
+        {listFilters.controls}
         {isLoading ? (
           <div className="py-12 text-center text-sm text-subtle">Loading rejections…</div>
         ) : !rows?.length ? (

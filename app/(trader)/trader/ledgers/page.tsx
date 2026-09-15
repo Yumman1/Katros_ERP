@@ -29,7 +29,7 @@ export default function TraderLedgersPage() {
       />
 
       <DeskScroll className="flex flex-col gap-4 pb-6">
-        <CounterpartyLedgersPanel rows={data} isLoading={isLoading} />
+        <CounterpartyLedgersPanel enableFilters rows={data} isLoading={isLoading} />
       </DeskScroll>
     </DeskPage>
   );

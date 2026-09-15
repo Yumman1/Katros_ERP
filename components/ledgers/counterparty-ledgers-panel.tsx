@@ -1,4 +1,6 @@
 "use client";
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields } from "@/lib/record-filters";
 
 import { useMemo, useState } from "react";
 
@@ -122,16 +124,20 @@ export function CounterpartyLedgersPanel({
   isLoading,
   onSettle,
   settlingTruckId,
+  enableFilters = false,
 }: {
   rows: LedgerRow[] | undefined;
   isLoading?: boolean;
   onSettle?: (truckId: string) => void;
   settlingTruckId?: string | null;
+  enableFilters?: boolean;
 }): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  const sellRows = useMemo(() => (rows ?? []).filter((r) => r.side === "SELL"), [rows]);
-  const buyRows = useMemo(() => (rows ?? []).filter((r) => r.side === "BUY"), [rows]);
+  const accounts = (rows ?? []).map((r) => ({ ...r, balanceState: r.outstandingDebitPkr > 0 ? "Outstanding" : "No outstanding debit" }));
+  const listFilters = useRecordFilters("ledger-accounts", accounts, { fields: [tradeFields[0], tradeFields[3], field("balance", "Account status", "balanceState")], searchPaths: ["counterpartyName", "counterpartyCode", "ledgerAccountId"] }, enableFilters);
+  const sellRows = listFilters.rows.filter((r) => r.side === "SELL");
+  const buyRows = listFilters.rows.filter((r) => r.side === "BUY");
 
   if (isLoading) {
     return <div className="py-12 text-center text-sm text-subtle">Loading counterparty ledgers…</div>;
@@ -143,6 +149,8 @@ export function CounterpartyLedgersPanel({
 
   return (
     <div className="space-y-8">
+      {listFilters.controls}
+      {listFilters.active && <p className="text-xs text-subtle">Totals below cover matching accounts. Each account balance includes its full history.</p>}
       <SideSection
         side="SELL"
         heading="Sell ledgers (receivables)"
@@ -152,6 +160,7 @@ export function CounterpartyLedgersPanel({
         setExpanded={setExpanded}
         onSettle={onSettle}
         settlingTruckId={settlingTruckId}
+        enableFilters={enableFilters}
       />
       <SideSection
         side="BUY"
@@ -162,6 +171,7 @@ export function CounterpartyLedgersPanel({
         setExpanded={setExpanded}
         onSettle={onSettle}
         settlingTruckId={settlingTruckId}
+        enableFilters={enableFilters}
       />
     </div>
   );
@@ -176,6 +186,7 @@ function SideSection({
   setExpanded,
   onSettle,
   settlingTruckId,
+  enableFilters = false,
 }: {
   side: "BUY" | "SELL";
   heading: string;
@@ -185,6 +196,7 @@ function SideSection({
   setExpanded: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onSettle?: (truckId: string) => void;
   settlingTruckId?: string | null;
+  enableFilters?: boolean;
 }) {
   const totals = useMemo(() => {
     const debit = accounts.reduce((s, r) => s + r.totalDebitPkr, 0);
@@ -257,6 +269,7 @@ function SideSection({
             }
             onSettle={onSettle}
             settlingTruckId={settlingTruckId}
+            enableFilters={enableFilters}
           />
         ))
       )}
@@ -270,13 +283,16 @@ function AccountCard({
   onToggle,
   onSettle,
   settlingTruckId,
+  enableFilters = false,
 }: {
   account: LedgerRow;
   open: boolean;
   onToggle: () => void;
   onSettle?: (truckId: string) => void;
   settlingTruckId?: string | null;
+  enableFilters?: boolean;
 }) {
+  const entryFilters = useRecordFilters(`ledger-${r.ledgerAccountId}`, r.entries, { fields: [field("source", "Source type", "sourceType"), field("entry", "Debit / Credit", "entryType"), field("aging", "Aging bucket", "agingBucket")], date: { label: "Entry date", paths: ["entryDate"] }, searchPaths: ["tradeRef", "sourceRef", "voucherNo", "note"] }, enableFilters && open);
   const isSell = r.side === "SELL";
   return (
     <section className="exec-panel">
@@ -357,6 +373,8 @@ function AccountCard({
 
       {open && (
         <div className="kastros-table-wrap mt-3">
+          {entryFilters.controls}
+          {entryFilters.active && <p className="px-3 py-2 text-xs text-subtle">Matching entries: debit {fmtPkr(entryFilters.rows.filter((e) => e.entryType === "DEBIT").reduce((sum, e) => sum + e.amountPkr, 0))}; credit {fmtPkr(entryFilters.rows.filter((e) => e.entryType === "CREDIT").reduce((sum, e) => sum + e.amountPkr, 0))}. Account balances above include all entries.</p>}
           {r.entries.length === 0 ? (
             <div className="px-4 py-6 text-center text-xs text-subtle">No ledger entries yet.</div>
           ) : (
@@ -377,7 +395,7 @@ function AccountCard({
                 </tr>
               </thead>
               <tbody>
-                {r.entries.map((e) => {
+                {entryFilters.rows.map((e) => {
                   const settleable =
                     !!onSettle && e.entryType === "DEBIT" && e.saleStage === "CLEARED_UNPAID" && !!e.truckId;
                   const settling = settleable && settlingTruckId === e.truckId;

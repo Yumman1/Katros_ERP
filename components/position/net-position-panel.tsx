@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
+
 import { useState } from "react";
 import { Pencil } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
@@ -33,10 +36,12 @@ export function NetPositionPanel({
   const { data: all, isLoading } = trpc.trader.seasonNetPositions.useQuery(undefined, {
     refetchInterval: 30000,
   });
-  const cols =
+  const commodityCols =
     commodityFilter === "ALL"
       ? all
       : all?.filter((c) => c.commodityCode === commodityFilter);
+  const listFilters = useRecordFilters("position-seasons", commodityCols, { fields: [field("season", "Season")], searchPaths: ["commodityCode", "label"] });
+  const cols = listFilters.rows;
   const save = trpc.trader.setPositionMarketInput.useMutation({
     onSuccess: () => {
       setEditing(null);
@@ -55,6 +60,7 @@ export function NetPositionPanel({
   if (!cols?.length) {
     return (
       <section className="rounded-xl border border-border bg-card px-5 py-6 text-sm text-subtle">
+        {listFilters.controls}
         No position in {commodityFilter === "ALL" ? "any commodity" : commodityFilter} yet — book a
         trade or take stock in and the net position builds itself.
       </section>
@@ -63,6 +69,7 @@ export function NetPositionPanel({
 
   return (
     <section className="rounded-xl border border-border bg-card">
+      {listFilters.controls}
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-5 py-3">
         <h2 className="text-sm font-semibold text-foreground">Net Position</h2>
         <span className="text-[11px] text-subtle">

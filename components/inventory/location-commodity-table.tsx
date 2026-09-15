@@ -1,3 +1,7 @@
+"use client";
+
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
 import type { LocationCommodityInventoryRow } from "@/lib/inventory-stock";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -10,7 +14,8 @@ export function LocationCommodityTable({
   rows: LocationCommodityInventoryRow[];
   loading?: boolean;
 }) {
-  const pagination = useListPagination(rows);
+  const listFilters = useRecordFilters("inventory", rows, { fields: [field("warehouse", "Warehouse", "warehouseName"), field("commodity", "Commodity", "commodityCode")], searchPaths: ["warehouseName", "commodityCode", "commodityName"] });
+  const pagination = useListPagination(listFilters.rows, { resetKey: listFilters.resetKey });
 
   return (
     <section className="rounded-xl border border-border bg-card">
@@ -20,6 +25,7 @@ export function LocationCommodityTable({
           Current stock across all warehouses — unallocated vs allocated.
         </p>
       </div>
+      {listFilters.controls}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>

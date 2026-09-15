@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
+
 import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency } from "@/lib/formatters/numbers";
@@ -9,6 +12,8 @@ export default function TraderMarketPage() {
   const { data: prices, isLoading } = trpc.market.snapshot.useQuery(undefined, {
     refetchInterval: 30_000,
   });
+
+  const listFilters = useRecordFilters("prices", prices, { fields: [field("commodity", "Commodity", "code"), field("season", "Season")], searchPaths: ["code", "name"] });
 
   return (
     <DeskPage>
@@ -21,6 +26,7 @@ export default function TraderMarketPage() {
         </p>
       </div>
 
+      {listFilters.controls}
       {isLoading ? (
         <div className="text-subtle">Loading desk prices…</div>
       ) : !prices?.length ? (
@@ -29,7 +35,7 @@ export default function TraderMarketPage() {
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {prices.map((p) => {
+          {listFilters.rows.map((p) => {
             const chg = p.chgPct;
             return (
               <div key={p.code} className="rounded-lg border border-kastros-border bg-kastros-card p-4">

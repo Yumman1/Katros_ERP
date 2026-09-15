@@ -21,7 +21,6 @@ import {
   allocationsSumMatchesContract,
   EXECUTION_WAREHOUSE_SPLIT_KEY,
   parseExecutionWarehouseSplit,
-  parseTraderWarehouseSelections,
   serializeExecutionWarehouseSplit,
   serializeTraderWarehouseSelections,
   type WarehouseOpenAllocationLine,
@@ -41,6 +40,7 @@ import { traderNamesMatch, canonicalTraderName } from "@/lib/trader-identity";
 export type OpenTradeSummary = {
   tradeRef: string;
   tradeDate: Date;
+  deliveryStart: Date;
   traderName: string;
   direction: TradeDirection;
   commodityCode: string;
@@ -155,6 +155,7 @@ function toSummary(t: MockTraderTrade): OpenTradeSummary {
   return {
     tradeRef: t.tradeRef,
     tradeDate: t.tradeDate,
+    deliveryStart: t.deliveryStart,
     traderName: t.traderName,
     direction: t.direction,
     commodityCode: t.commodity.code,

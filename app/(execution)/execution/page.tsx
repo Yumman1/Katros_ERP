@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields, tradeFilterConfig } from "@/lib/record-filters";
+
 import { PendingWarehousePanel } from "@/components/execution/pending-warehouse-panel";
 import { OverdueAlertsCard } from "@/components/ledgers/overdue-alerts-card";
 import { PageHeader } from "@/components/ui/page-header";
@@ -75,6 +78,7 @@ export default function ExecutionDeskPage() {
     return (openTradesQueue ?? []).filter((t) => t.commodityCode === commodityFilter);
   }, [openTradesQueue, commodityFilter]);
 
+  const listFilters = useRecordFilters("desk-open-trades", filteredOpenTrades, { ...tradeFilterConfig, fields: [tradeFields[0], tradeFields[3], field("trader", "Trader", "traderName")] });
   const openContracts = filteredContracts.filter((c) => c.contractStatus === "Open");
   const localOpen = openContracts.filter((c) => c.tradeScope === "LOCAL");
   const intlOpen = openContracts.filter((c) => c.tradeScope === "INTERNATIONAL");
@@ -262,8 +266,9 @@ export default function ExecutionDeskPage() {
           <p className="mt-1 text-xs text-muted-foreground">
             Review, edit, allocate warehouse, and lock — or send edits back to the trader for approval.
           </p>
+          {listFilters.controls}
           <ul className="mt-2 space-y-1">
-            {filteredOpenTrades.slice(0, 5).map((t) => (
+            {listFilters.rows.slice(0, 5).map((t) => (
               <li key={t.tradeRef} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <Link
                   href={`/execution/open-trades/${encodeURIComponent(t.tradeRef)}`}

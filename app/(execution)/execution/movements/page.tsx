@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
+
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { downloadExcel, endOfDay, parseDateInput } from "@/lib/export-excel";
@@ -322,12 +325,14 @@ export default function TruckMovementsPage() {
   );
 
   const movementFilterKey = `${warehouseFilter}|${commodityFilter}|${movementFilter}|${query}|${dateFrom}|${dateTo}`;
-  const unassignedPagination = useListPagination(unassignedTrucks);
-  const movementsPagination = useListPagination(filteredMovements, { resetKey: movementFilterKey });
+  const truckFilters = useRecordFilters("workflow", unassignedTrucks, { fields: [field("warehouse", "Warehouse", "warehouseName"), field("commodity", "Commodity", "commodityCode"), field("movement", "Direction", "movementType"), field("status", "Allocation status", "status"), field("stage", "Invoice stage", "gateInvoiceStage")], date: { label: "Arrival date", paths: ["arrivalDate"] } });
+  const movementFilters = useRecordFilters("movement-stages", filteredMovements, { fields: [field("stage", "Invoice stage", "invoiceStage")], date: { label: "Movement date", paths: ["date"] } });
+  const unassignedPagination = useListPagination(truckFilters.rows, { resetKey: truckFilters.resetKey });
+  const movementsPagination = useListPagination(movementFilters.rows, { resetKey: movementFilterKey + movementFilters.resetKey });
 
   function exportFilteredExcel() {
-    if (filteredMovements.length === 0) return;
-    const rows = filteredMovements.map((m) => ({
+    if (movementFilters.rows.length === 0) return;
+    const rows = movementFilters.rows.map((m) => ({
       Type: m.type,
       Gatepass: m.gatepassNo,
       Invoice: m.invoiceNo ?? "",
@@ -418,6 +423,7 @@ export default function TruckMovementsPage() {
               count={unassignedGatepassCount}
               description="Assign each truck to a trade and follow its payment workflow — inbound cards leave this list once their receipts are paid, outbound once released."
             />
+            {truckFilters.controls}
             <div className="flex flex-col gap-3">
               {unassignedPagination.items.map((t) => (
               <div
@@ -560,14 +566,15 @@ export default function TruckMovementsPage() {
             <button
               type="button"
               onClick={exportFilteredExcel}
-              disabled={filteredMovements.length === 0}
+              disabled={movementFilters.rows.length === 0}
               className="kastros-btn-primary ml-auto inline-flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
             >
               <Download className="h-3.5 w-3.5" />
-              Excel ({filteredMovements.length})
+              Excel ({movementFilters.rows.length})
             </button>
           </div>
 
+          {movementFilters.controls}
           {/* Table card — scrolls horizontally inside itself, never the page. */}
           <div className="kastros-table-wrap">
             <table className="kastros-table text-xs">
@@ -704,7 +711,7 @@ export default function TruckMovementsPage() {
               })}
             </tbody>
             </table>
-            {filteredMovements.length === 0 && <Empty label="No movements match the current filters" />}
+            {movementFilters.rows.length === 0 && <Empty label="No movements match the current filters" />}
           </div>
           <ListPagination
             page={movementsPagination.page}

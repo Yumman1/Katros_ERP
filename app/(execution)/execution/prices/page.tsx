@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
+
 import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency } from "@/lib/formatters/numbers";
@@ -134,6 +137,7 @@ export default function ExecutionDailyPricesPage() {
     });
   };
 
+  const listFilters = useRecordFilters("prices", rows?.map((r) => ({ ...r, publication: r.cnf != null || r.yesterdayRate != null ? "Published" : "Missing price" })),  { fields: [field("commodity", "Commodity", "code"), field("season", "Season"), field("published", "Publication", "publication")], searchPaths: ["code", "name"] });
   const publishedCount = useMemo(
     () => rows?.filter((r) => r.cnf != null || r.yesterdayRate != null).length ?? 0,
     [rows],
@@ -142,6 +146,7 @@ export default function ExecutionDailyPricesPage() {
   return (
     <DeskPage>
       <DeskScroll className="space-y-5 pb-6">
+      {listFilters.controls}
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Daily Market Prices</h1>
         <p className="text-sm text-muted-foreground">
@@ -187,7 +192,7 @@ export default function ExecutionDailyPricesPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {listFilters.rows.map((row) => {
                 const d = draftFor(row);
                 const hasCnf = row.cnf != null;
                 const hasYesterday = row.yesterdayRate != null;

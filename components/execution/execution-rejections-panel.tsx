@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { rejectionFilterConfig } from "@/lib/record-filters";
+
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { XCircle } from "lucide-react";
@@ -29,7 +32,7 @@ const fmtPkr = (n: number) =>
 
 export function ExecutionRejectionsPanel() {
   const [filter, setFilter] = useState<FilterKey>("all");
-  const { data: rejections, isLoading } = trpc.policy.rejections.useQuery(undefined, {
+  const { data: rejections, isLoading } = trpc.policy.rejections.useQuery({ fullHistory: true }, {
     refetchInterval: DESK_REFETCH_MS,
   });
 
@@ -39,7 +42,8 @@ export function ExecutionRejectionsPanel() {
     return kinds ? list.filter((r) => kinds.includes(r.kind)) : list;
   }, [rejections, filter]);
 
-  const pagination = useListPagination(filtered);
+  const listFilters = useRecordFilters("rejections", filtered, rejectionFilterConfig);
+  const pagination = useListPagination(listFilters.rows, { resetKey: listFilters.resetKey });
 
   const countFor = (kinds: readonly string[] | null) => {
     const list = rejections ?? [];
@@ -52,6 +56,7 @@ export function ExecutionRejectionsPanel() {
 
   return (
     <div className="kastros-desk-scroll flex flex-col gap-4 pt-4">
+        {listFilters.controls}
       <div className="flex flex-wrap gap-2">
         {FILTERS.map((f) => {
           const count = countFor(f.kinds);

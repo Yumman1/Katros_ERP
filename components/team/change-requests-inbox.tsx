@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { requestFilterConfig } from "@/lib/record-filters";
+
 import { useMemo, useState } from "react";
 import { Check, Clock, Inbox, ShieldCheck, X } from "lucide-react";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -68,7 +71,8 @@ export function ChangeRequestsInbox({
     [queue.data],
   );
   const mineItems = useMemo(() => mine.data ?? [], [mine.data]);
-  const queuePagination = useListPagination(queueItems);
+  const listFilters = useRecordFilters("team-queue", queueItems, requestFilterConfig, department === "EXECUTION");
+  const queuePagination = useListPagination(listFilters.rows, { resetKey: listFilters.resetKey });
   const minePagination = useListPagination(mineItems);
 
   const content = (
@@ -85,6 +89,7 @@ export function ChangeRequestsInbox({
             </span>
           </div>
 
+          {listFilters.controls}
           <div className="divide-y divide-kastros-border">
             {queueItems.length === 0 && (
               <div className="flex items-center gap-2 px-5 py-8 text-sm text-subtle">

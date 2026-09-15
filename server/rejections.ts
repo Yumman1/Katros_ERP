@@ -77,10 +77,12 @@ export async function recordRejection(input: {
 export async function listRejections(filter?: {
   traderName?: string;
   limit?: number;
+  /** Opt-in for searchable history; legacy callers keep their 200-row limit. */
+  fullHistory?: boolean;
 }): Promise<RejectionView[]> {
   const rows = await prisma.rejectionRecord.findMany({
     orderBy: { createdAt: "desc" },
-    take: filter?.limit ?? 200,
+    take: filter?.fullHistory ? undefined : filter?.limit ?? 200,
   });
   const mapped = rows.map((r) => ({
     id: r.id,

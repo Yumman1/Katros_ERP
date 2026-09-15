@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields } from "@/lib/record-filters";
+
 import { invalidateFinanceApprovalBadges } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
@@ -94,7 +97,8 @@ export default function ExecutionVouchersPage() {
     },
   });
 
-  const pagination = useListPagination(vouchers ?? [], { pageSize: VOUCHER_HISTORY_PAGE_SIZE });
+  const listFilters = useRecordFilters("vouchers", vouchers, { fields: [tradeFields[0], tradeFields[3], field("status", "Status"), field("method", "Payment method")], date: { label: "Voucher date", paths: ["voucherDate"] } });
+  const pagination = useListPagination(listFilters.rows, { pageSize: VOUCHER_HISTORY_PAGE_SIZE, resetKey: listFilters.resetKey });
 
   const duplicateCheckInput = useMemo(
     () => ({
@@ -398,6 +402,7 @@ export default function ExecutionVouchersPage() {
             </span>
           )}
         </div>
+        {listFilters.controls}
         <div className="kastros-table-wrap min-h-[22rem]">
           <table className="kastros-table text-xs">
             <thead>

@@ -26,18 +26,20 @@ type ClosedContract = {
 
 export function ClosedTradesSection({
   contracts,
+  filterResetKey,
   loading,
   compact,
   className,
 }: {
   contracts: ClosedContract[];
+  filterResetKey?: string;
   loading?: boolean;
   compact?: boolean;
   className?: string;
 }) {
   const closedContracts = contracts.filter((c) => c.contractStatus !== "Open");
   const pagination = useListPagination(closedContracts, {
-    resetKey: closedContracts.length,
+    resetKey: filterResetKey ?? closedContracts.length,
     pageSize: compact ? 6 : undefined,
   });
 

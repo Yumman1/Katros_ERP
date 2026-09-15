@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field } from "@/lib/record-filters";
+
 import { ExcelExportBar } from "@/components/execution/excel-export-bar";
 import { WarehouseSubnav } from "@/components/execution/warehouse-subnav";
 import { PageHeader } from "@/components/ui/page-header";
@@ -75,11 +78,12 @@ export default function WarehouseUtilizationPage() {
   }, [enriched, search, cityFilter, minUtilPct]);
 
   const filterKey = `${search}|${cityFilter}|${minUtilPct}|${dateFrom}|${dateTo}`;
-  const utilizationPagination = useListPagination(filtered, { resetKey: filterKey });
+  const listFilters = useRecordFilters("utilization", filtered.map((r) => ({ ...r, utilizationBand: !r.view ? "Not configured" : r.view.utilizationPct >= 100 ? "Full / over capacity" : r.view.utilizationPct <= 0 ? "Empty" : "Partially occupied" })), { fields: [field("warehouse", "Warehouse", "loc.name"), field("band", "Utilization", "utilizationBand")], searchPaths: ["loc.name", "loc.code", "loc.city"] });
+  const utilizationPagination = useListPagination(listFilters.rows, { resetKey: filterKey + listFilters.resetKey });
 
   function exportExcel() {
-    if (filtered.length === 0) return;
-    const rows = filtered.map(({ loc, view }) => {
+    if (listFilters.rows.length === 0) return;
+    const rows = listFilters.rows.map(({ loc, view }) => {
       const costing = computeWarehouseCosting(costingInputFromLocation(loc));
       return {
         Warehouse: loc.name,
@@ -121,6 +125,7 @@ export default function WarehouseUtilizationPage() {
       />
 
       <WarehouseSubnav />
+      {listFilters.controls}
 
       <section className="exec-panel space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -131,8 +136,8 @@ export default function WarehouseUtilizationPage() {
             onFromChange={setDateFrom}
             onToChange={setDateTo}
             onExport={exportExcel}
-            count={filtered.length}
-            disabled={filtered.length === 0}
+            count={listFilters.rows.length}
+            disabled={listFilters.rows.length === 0}
             label="Download Excel"
           />
         </div>

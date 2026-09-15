@@ -25,10 +25,11 @@ export default function TradeFilesPage() {
 
   const { data: options } = trpc.execution.tradeFileOptions.useQuery();
 
+  const [dateMode, setDateMode] = useState<"range" | "day">("range");
   const filter = useMemo(
     () => ({
-      from: from ? new Date(from) : undefined,
-      to: to ? new Date(to) : undefined,
+      fromDay: from || undefined,
+      toDay: (dateMode === "day" ? from : to) || undefined,
       commodityCode: commodityCode || undefined,
       counterpartyId: counterpartyId || undefined,
       direction: direction || undefined,
@@ -37,7 +38,7 @@ export default function TradeFilesPage() {
       incoterms: incoterms || undefined,
       traderName: traderName || undefined,
     }),
-    [from, to, commodityCode, counterpartyId, direction, tradeScope, tradeStatus, incoterms, traderName],
+    [dateMode, from, to, commodityCode, counterpartyId, direction, tradeScope, tradeStatus, incoterms, traderName],
   );
 
   const { data: preview } = trpc.execution.tradeFilePreview.useQuery(filter);
@@ -51,12 +52,14 @@ export default function TradeFilesPage() {
   });
 
   function applyThisMonth() {
+    setDateMode("range");
     const now = new Date();
     setFrom(startOfMonth(now).toISOString().slice(0, 10));
     setTo(endOfMonth(now).toISOString().slice(0, 10));
   }
 
   function clearFilters() {
+    setDateMode("range");
     setFrom("");
     setTo("");
     setCommodityCode("");
@@ -114,12 +117,15 @@ export default function TradeFilesPage() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Booked from">
+            <Field label="Trade date selection">
+              <select className="kastros-select w-full" value={dateMode} onChange={(e) => { setDateMode(e.target.value as "range" | "day"); setFrom(""); setTo(""); }}><option value="range">Date range / all dates</option><option value="day">Specific date</option></select>
+            </Field>
+            <Field label={dateMode === "day" ? "Trade date" : "Booked from"}>
               <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="kastros-input w-full" />
             </Field>
-            <Field label="Booked to">
-              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="kastros-input w-full" />
-            </Field>
+            {dateMode === "range" && <Field label="Booked to (inclusive)">
+              <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="kastros-input w-full" />
+            </Field>}
             <Field label="Commodity">
               <select value={commodityCode} onChange={(e) => setCommodityCode(e.target.value)} className="kastros-select w-full">
                 <option value="">All commodities</option>

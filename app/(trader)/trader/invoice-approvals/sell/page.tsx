@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields } from "@/lib/record-filters";
+
 import Link from "next/link";
 import { useState } from "react";
 
@@ -63,9 +66,11 @@ export default function TraderSellInvoiceApprovalsPage() {
     },
   });
 
-  const clearances = rows ?? [];
+  const listFilters = useRecordFilters("clearance", rows, { fields: [tradeFields[3], field("stage", "Stage"), field("warehouse", "Warehouse", "warehouseName")], date: { label: "Arrival date", paths: ["arrivalDate"] } });
+  const unpaidFilters = useRecordFilters("unpaid", unpaid, { fields: [tradeFields[3], field("aging", "Aging bucket", "agingBucket"), field("warehouse", "Warehouse", "warehouseName")], date: { label: "Due date", paths: ["dueDate"] } });
+  const clearances = listFilters.rows;
   // Overdue first (most overdue on top), then soonest-due, then no-terms.
-  const unpaidSorted = [...(unpaid ?? [])].sort((a, b) => {
+  const unpaidSorted = [...unpaidFilters.rows].sort((a, b) => {
     if (a.overdueDays !== b.overdueDays) return b.overdueDays - a.overdueDays;
     const aDays = a.daysUntilDue ?? Number.POSITIVE_INFINITY;
     const bDays = b.daysUntilDue ?? Number.POSITIVE_INFINITY;
@@ -75,6 +80,7 @@ export default function TraderSellInvoiceApprovalsPage() {
   // Page shell, header and tabs come from the layout — this renders the sell tab.
   return (
       <div className="kastros-desk-scroll space-y-6 pb-6">
+        {listFilters.controls}
         <p className="text-xs text-subtle">
           Paid sale trucks clear automatically — only release-on-credit requests need your
           approval. Released-but-unpaid trucks stay below as payment reminders.
@@ -117,6 +123,7 @@ export default function TraderSellInvoiceApprovalsPage() {
             These trucks were released on credit. They stay here, aging, until finance settles
             their payment on the Counterparty Ledgers page.
           </p>
+          {unpaidFilters.controls}
           {unpaidLoading ? (
             <div className="rounded-xl border border-border bg-card px-5 py-6 text-center text-xs text-subtle">
               Loading unpaid trucks…

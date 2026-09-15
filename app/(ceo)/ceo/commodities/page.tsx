@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+
+
 import { useState } from "react";
 import { CheckCircle2, Plus, Trash2 } from "lucide-react";
 import { CommodityRegistrationFields } from "@/components/trader/commodity-registration-fields";
@@ -41,6 +44,7 @@ export default function CeoCommoditiesPage() {
     onError: (e) => setDeleteError(e.message),
   });
 
+  const listFilters = useRecordFilters("commodities", commodities.data, { searchPaths: ["name", "code"] });
   const quantityUnitOptions = refData.data?.quantityUnits ?? ["MT", "BAG", "MAUND_40"];
 
   return (
@@ -96,11 +100,12 @@ export default function CeoCommoditiesPage() {
       <section className="rounded-xl border border-kastros-border bg-kastros-card">
         <div className="border-b border-kastros-border px-5 py-3">
           <h2 className="text-sm font-semibold text-foreground">Registered commodities</h2>
+          {listFilters.controls}
           <p className="text-xs text-subtle">{commodities.data?.length ?? 0} total</p>
           {deleteError && <p className="mt-1 text-xs text-kastros-red">{deleteError}</p>}
         </div>
         <div className="max-h-96 overflow-y-auto divide-y divide-kastros-border">
-          {(commodities.data ?? []).map((c) => (
+          {listFilters.rows.map((c) => (
             <div key={c.id} className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
               <div className="min-w-0">
                 <span className="font-mono font-medium text-foreground">{c.code}</span>

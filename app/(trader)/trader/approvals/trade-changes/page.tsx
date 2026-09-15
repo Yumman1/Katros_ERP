@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { field, tradeFields, requestFilterConfig } from "@/lib/record-filters";
+
 import Link from "next/link";
 import { format } from "date-fns";
 import { CheckCircle2, PenLine } from "lucide-react";
@@ -34,7 +37,7 @@ function stringifyValue(value: unknown): string {
 
 export default function TraderApprovalsPage() {
   const utils = trpc.useUtils();
-  const { data: rows, isLoading } = trpc.trader.executionEditApprovals.useQuery(undefined, {
+  const { data: sourceRows, isLoading } = trpc.trader.executionEditApprovals.useQuery(undefined, {
     refetchInterval: 30_000,
   });
   const myRequests = trpc.team.myChangeRequests.useQuery();
@@ -48,9 +51,13 @@ export default function TraderApprovalsPage() {
     },
   });
 
+  const listFilters = useRecordFilters("approvals", sourceRows, { fields: [tradeFields[3], field("editor", "Edited by", "editedBy")], date: { label: "Execution edit date", paths: ["editedAt"] } });
+  const rows = listFilters.rows;
+  const requestFilters = useRecordFilters("my-requests", myRequests.data, requestFilterConfig);
   // Page shell, header and tabs come from the layout — this renders one tab.
   return (
       <div className="kastros-desk-scroll space-y-6 pb-6">
+      {listFilters.controls}
         <p className="text-xs text-subtle">
           Execution&apos;s changes to your trades. Approving lets execution lock the trade.
         </p>
@@ -163,9 +170,10 @@ export default function TraderApprovalsPage() {
             <div className="mb-2 flex items-center gap-2">
               <PenLine className="h-4 w-4 text-subtle" />
               <h2 className="text-sm font-semibold text-foreground">My change requests</h2>
+            {requestFilters.controls}
             </div>
             <div className="divide-y divide-kastros-border rounded-xl border border-border bg-card">
-              {myRequests.data.map((r) => (
+              {requestFilters.rows.map((r) => (
                 <div key={r.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">

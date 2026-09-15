@@ -1,5 +1,8 @@
 "use client";
 
+import { useRecordFilters } from "@/components/ui/record-filters";
+import { tradeFilterConfig, tradeFields, tradeDate, field } from "@/lib/record-filters";
+
 import { ClosedTradesSection } from "@/components/execution/closed-trades-section";
 import { ContractPreviewLink } from "@/components/execution/contract-preview-link";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -103,13 +106,14 @@ export function LockedContractsPage() {
       c.commodityName.toLowerCase().includes(search.toLowerCase());
     // The In Progress tab shows in-progress contracts only — closed ones live
     // in the Closed tab, so the tab count and the row count always agree.
-    const matchStatus = c.contractStatus === "Open";
+    const matchStatus = viewTab === "contracts" ? c.contractStatus === "Open" : c.contractStatus !== "Open";
     const matchCommodity = matchesCommodityFilter(c.commodityCode, commodityFilter);
     return matchSearch && matchStatus && matchCommodity;
   });
 
-  const filterKey = `${incoterm}|${scopeFilter}|${commodityFilter}|${search}`;
-  const contractsPagination = useListPagination(filtered, { resetKey: filterKey, pageSize: 6 });
+  const filterKey = `${viewTab}|${incoterm}|${scopeFilter}|${commodityFilter}|${search}`;
+  const listFilters = useRecordFilters("contracts", filtered, { search: false, date: tradeDate, deliveryDate: tradeFilterConfig.deliveryDate, fields: [tradeFields[0], tradeFields[3], field("trader", "Trader", "traderName")], quantityPaths: ["contractualQtyMt"] }, true, () => { setIncoterm(""); setScopeFilter(""); setCommodityFilter("ALL"); setSearch(""); });
+  const contractsPagination = useListPagination(listFilters.rows, { resetKey: filterKey + listFilters.resetKey, pageSize: 6 });
 
   const totalOpen = (contracts ?? []).filter((c) => c.contractStatus === "Open").length;
   const totalClosedCount = (contracts ?? []).filter((c) => c.contractStatus !== "Open").length;
@@ -118,6 +122,7 @@ export function LockedContractsPage() {
     incoterm !== "" || scopeFilter !== "" || commodityFilter !== "ALL" || search !== "";
 
   const clearFilters = () => {
+    listFilters.clear();
     setIncoterm("");
     setScopeFilter("");
     setCommodityFilter("ALL");
@@ -161,15 +166,11 @@ export function LockedContractsPage() {
         </div>
         {viewTab === "contracts" && (
           <span className="text-[11px] text-subtle">
-            {filtered.length} shown{hasActiveFilters ? " · filtered" : ""}
+            {listFilters.rows.length} shown{hasActiveFilters ? " · filtered" : ""}
           </span>
         )}
       </div>
 
-      {viewTab === "closed" ? (
-        <ClosedTradesSection contracts={contracts ?? []} compact className="min-h-0 flex-1" />
-      ) : (
-        <>
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
             <input
               placeholder="Search…"
@@ -213,13 +214,18 @@ export function LockedContractsPage() {
                 </option>
               ))}
             </select>
-            {hasActiveFilters && (
+            {(hasActiveFilters || listFilters.active) && (
               <button type="button" onClick={clearFilters} className="kastros-btn-secondary px-2 py-0.5 text-xs">
                 Clear
               </button>
             )}
           </div>
 
+      {listFilters.controls}
+      {viewTab === "closed" ? (
+        <ClosedTradesSection contracts={listFilters.rows} filterResetKey={filterKey + listFilters.resetKey} compact className="min-h-0 flex-1" />
+      ) : (
+        <>
           <div className="kastros-table-wrap flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-auto">
               <table className="kastros-table text-[11px] [&_td]:px-2 [&_td]:py-1 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-[10px]">
@@ -370,7 +376,7 @@ export function LockedContractsPage() {
                       </tr>
                     );
                   })}
-                  {filtered.length === 0 && (
+                  {contractsPagination.totalItems === 0 && (
                     <tr>
                       <td colSpan={13} className="py-6 text-center text-sm text-subtle">
                         No contracts match your filters.
