@@ -114,6 +114,7 @@ export function TradeContractPrintDocument({ trade }: { trade: MockTraderTrade }
 
       <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-t border-black/30 pt-4">
         <Field label="Commodity" value={`${trade.commodity.code} — ${trade.commodity.name}`} />
+        <Field label="Season" value={trade.season === "WINTER" ? "Winter" : trade.season === "SUMMER" ? "Summer" : "—"} />
         <Field label="Grade" value={trade.grade || "—"} />
         <Field
           label="Quantity"

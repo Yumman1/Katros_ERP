@@ -97,7 +97,8 @@ export default function MyTradesPage() {
   const visibleCancelled = listFilters.apply(cancelled ?? []);
 
   return (
-    <div className="kastros-desk-page">
+    <div className="kastros-desk-scroll">
+    <div className="shrink-0 space-y-4 pb-6">
       <TradeEditModal tradeRef={editRef} open={editRef != null} onClose={() => setEditRef(null)} />
       <TradeCancelModal
         tradeRef={cancelRef}
@@ -390,6 +391,7 @@ export default function MyTradesPage() {
             </table>
         </div>
       )}
+    </div>
     </div>
   );
 }

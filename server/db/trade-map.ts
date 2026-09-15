@@ -42,6 +42,7 @@ export function tradeRowToMock(row: TradeRowWithRelations): MockTraderTrade {
     traderName: row.traderName,
     desk: row.desk,
     direction: row.direction,
+    season: row.season,
     quantity: num(row.quantity),
     quantityUnit: row.quantityUnit,
     quantityEntered: numOrNull(row.quantityEntered),

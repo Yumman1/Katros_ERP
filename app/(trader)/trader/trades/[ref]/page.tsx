@@ -257,6 +257,7 @@ export default function TradeDetailPage() {
 
       <DetailCard title="Product specifications">
         <Row label="Commodity" value={`${trade.commodity.code} — ${trade.commodity.name}`} />
+        <Row label="Season" value={trade.season === "WINTER" ? "Winter" : trade.season === "SUMMER" ? "Summer" : "—"} />
         <Row label="Exact grade" value={trade.grade} />
         <Row label="Product origin" value={trade.productOrigin} />
         {trade.maxMoisturePct != null && (
