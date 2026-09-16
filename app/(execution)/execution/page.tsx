@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field, tradeFields, tradeFilterConfig } from "@/lib/record-filters";
 
@@ -179,7 +181,7 @@ export default function ExecutionDeskPage() {
         })}`}
         actions={
           <>
-            <select
+            <SearchableSelect
               value={commodityFilter}
               onChange={(e) => setCommodityFilter(e.target.value)}
               className="exec-filter"
@@ -190,7 +192,7 @@ export default function ExecutionDeskPage() {
                   {c.name} ({c.code})
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
             <Link href={contractsHref(undefined, undefined, commodityFilter)} className="kastros-btn-secondary">
               View Contracts
             </Link>

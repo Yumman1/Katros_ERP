@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import {
@@ -243,7 +245,7 @@ export function OpenTradeWarehouseAllocation({
         <div className="space-y-3 rounded-lg border border-border bg-card p-3">
           {lines.map((line, idx) => (
             <div key={line.id} className="flex flex-wrap items-center gap-2">
-              <select
+              <SearchableSelect
                 value={line.warehouseName}
                 onChange={(e) =>
                   setLines((rows) =>
@@ -260,7 +262,7 @@ export function OpenTradeWarehouseAllocation({
                     {w.name}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
               <input
                 type="number"
                 min={0}

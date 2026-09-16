@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import type { TradeParamDefinition } from "@/lib/trade-parameters";
 import { formInputClass, formSelectClass } from "@/lib/form-controls";
 
@@ -25,14 +27,14 @@ export function ParamField({
     return (
       <div>
         {label}
-        <select value={strVal} onChange={(e) => onChange(def.key, e.target.value)} className={formSelectClass}>
+        <SearchableSelect value={strVal} onChange={(e) => onChange(def.key, e.target.value)} className={formSelectClass}>
           <option value="">—</option>
           {def.options.map((o) => (
             <option key={o} value={o}>
               {o}
             </option>
           ))}
-        </select>
+        </SearchableSelect>
       </div>
     );
   }

@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field } from "@/lib/record-filters";
 
@@ -520,7 +522,7 @@ export default function TruckMovementsPage() {
                 className="kastros-input kastros-input-sm w-full py-2 pl-8"
               />
             </div>
-            <select
+            <SearchableSelect
               value={warehouseFilter}
               onChange={(e) => setWarehouseFilter(e.target.value)}
               className="exec-filter kastros-select-sm w-44"
@@ -531,8 +533,8 @@ export default function TruckMovementsPage() {
                   {w === "ALL" ? "All warehouses" : w}
                 </option>
               ))}
-            </select>
-            <select
+            </SearchableSelect>
+            <SearchableSelect
               value={commodityFilter}
               onChange={(e) => setCommodityFilter(e.target.value)}
               className="exec-filter kastros-select-sm w-40"
@@ -544,7 +546,7 @@ export default function TruckMovementsPage() {
                   {c}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
             <Segment value={movementFilter} onChange={setMovementFilter} />
             <div className="flex items-center gap-1.5">
               <input

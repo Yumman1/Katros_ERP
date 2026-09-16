@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { TradeParametersFields } from "@/components/trader/trade-parameters-fields";
 import type { CommodityFormState } from "@/lib/commodity-registration";
 import {
@@ -74,7 +76,7 @@ export function CommodityRegistrationFields({
       <div className="rounded-md border border-kastros-border/60 bg-kastros-bg/30 p-2">
         <div className="text-xs font-medium text-muted-foreground">Local price metric</div>
         <div className="mt-1 grid grid-cols-3 gap-1.5">
-          <select
+          <SearchableSelect
             value={value.localCurrency}
             onChange={(e) => onChange({ ...value, localCurrency: e.target.value as PriceCurrency })}
             className="kastros-select kastros-select-sm"
@@ -84,7 +86,7 @@ export function CommodityRegistrationFields({
                 {PRICE_CURRENCY_LABELS[c]}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
           <input
             list={unitListId}
             placeholder="per maund"
@@ -113,7 +115,7 @@ export function CommodityRegistrationFields({
       <div className="rounded-md border border-kastros-border/60 bg-kastros-bg/30 p-2">
         <div className="text-xs font-medium text-muted-foreground">International price metric</div>
         <div className="mt-1 grid grid-cols-3 gap-1.5">
-          <select
+          <SearchableSelect
             value={value.intlCurrency}
             onChange={(e) => onChange({ ...value, intlCurrency: e.target.value as PriceCurrency })}
             className="kastros-select kastros-select-sm"
@@ -123,7 +125,7 @@ export function CommodityRegistrationFields({
                 {PRICE_CURRENCY_LABELS[c]}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
           <input
             list={unitListId}
             placeholder="per lb"

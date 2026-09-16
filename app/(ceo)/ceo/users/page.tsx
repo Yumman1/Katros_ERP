@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field } from "@/lib/record-filters";
 
@@ -229,7 +231,7 @@ export default function CeoUsersPage() {
             </label>
             <label className="block text-xs text-subtle">
               Role — decides which workspace opens on login
-              <select
+              <SearchableSelect
                 value={form.role}
                 onChange={(e) => setForm({ ...form, role: e.target.value as RoleValue })}
                 className="mt-1 w-full rounded-md border border-kastros-border bg-kastros-bg px-3 py-2 text-sm text-foreground"
@@ -239,7 +241,7 @@ export default function CeoUsersPage() {
                     {r.label}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </label>
             <label className="mt-5 flex items-center gap-2 text-sm text-foreground">
               <input
@@ -297,7 +299,7 @@ export default function CeoUsersPage() {
                     </td>
                     <td className="px-2 py-1.5">{u.email}</td>
                     <td className="px-2 py-1.5">
-                      <select
+                      <SearchableSelect
                         value={u.role}
                         disabled={updateUser.isPending}
                         onChange={(e) =>
@@ -311,7 +313,7 @@ export default function CeoUsersPage() {
                           </option>
                         ))}
                         {u.role === "ADMIN" && <option value="ADMIN">Admin (legacy)</option>}
-                      </select>
+                      </SearchableSelect>
                     </td>
                     <td className="px-2 py-1.5">
                       <input

@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import {
   CornSpecificationFields,
   defaultCornSpecifications,
@@ -318,7 +320,7 @@ export function TradeChangeForm({
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Quoted currency">
-            <select
+            <SearchableSelect
               value={priceCurrency}
               onChange={(e) => setPriceCurrency(e.target.value as (typeof PRICE_CURRENCIES)[number])}
               className={selectClass}
@@ -328,7 +330,7 @@ export function TradeChangeForm({
                   {PRICE_CURRENCY_LABELS[c as PriceCurrency] ?? quotedCurrencyLabel(c)}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </Field>
           <Field label="Price per unit">
             <input
@@ -338,13 +340,13 @@ export function TradeChangeForm({
             />
           </Field>
           <Field label="Price basis">
-            <select value={priceBasis} onChange={(e) => setPriceBasis(e.target.value)} className={selectClass}>
+            <SearchableSelect value={priceBasis} onChange={(e) => setPriceBasis(e.target.value)} className={selectClass}>
               {priceBasisOptions.map((b) => (
                 <option key={b} value={b}>
                   {b}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </Field>
         </div>
 
@@ -379,13 +381,13 @@ export function TradeChangeForm({
       <Section title="Delivery & terms">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Incoterms">
-            <select value={incoterms} onChange={(e) => setIncoterms(e.target.value)} className={selectClass}>
+            <SearchableSelect value={incoterms} onChange={(e) => setIncoterms(e.target.value)} className={selectClass}>
               {bookingIncoterms.map((i) => (
                 <option key={i} value={i}>
                   {executionIncotermLabel(i)}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </Field>
           <Field label="Delivery start">
             <input
@@ -424,13 +426,13 @@ export function TradeChangeForm({
       <Section title="Payment">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Payment type">
-            <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)} className={selectClass}>
+            <SearchableSelect value={paymentType} onChange={(e) => setPaymentType(e.target.value)} className={selectClass}>
               {visiblePaymentTypes.map((pt) => (
                 <option key={pt} value={pt}>
                   {paymentTypeLabel(pt)}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </Field>
           {paymentType === "CREDIT" && (
             <Field label="Credit days">

@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import {
@@ -170,7 +172,7 @@ export default function InventoryPage() {
           ))}
         </div>
         {tab === "stock" && (
-          <select
+          <SearchableSelect
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as InventoryStatus | "ALL")}
             className="kastros-select kastros-select-sm"
@@ -180,7 +182,7 @@ export default function InventoryPage() {
                 {o.label}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         )}
         {selectedLot && tab === "movements" && (
           <button

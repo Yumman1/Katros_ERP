@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { OpenTradeWarehouseSection } from "@/components/execution/open-trade-warehouse-section";
 import { TradeActivityPanel } from "@/components/trade/trade-activity-panel";
 import {
@@ -424,7 +426,7 @@ export function OpenTradeDetail({
             {isCorn ? (
               <>
                 <Field label="Commodity origin (optional)">
-                  <select
+                  <SearchableSelect
                     disabled={ro}
                     value={productOrigin}
                     onChange={(e) => setProductOrigin(e.target.value)}
@@ -436,11 +438,11 @@ export function OpenTradeDetail({
                         {o}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </Field>
                 {tradeScope === "LOCAL" && (
                   <Field label="Deal status">
-                    <select
+                    <SearchableSelect
                       disabled={ro}
                       value={String(tradeParams.dealStatus ?? "")}
                       onChange={(e) =>
@@ -457,7 +459,7 @@ export function OpenTradeDetail({
                           {s}
                         </option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </Field>
                 )}
                 {/* Filled from the counterparty record, editable here — a
@@ -562,7 +564,7 @@ export function OpenTradeDetail({
         <Section title="Delivery" description="Incoterms, delivery window, and warehouse selections">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Incoterms">
-              <select
+              <SearchableSelect
                 disabled={ro}
                 value={incoterms}
                 onChange={(e) => setIncoterms(e.target.value)}
@@ -573,7 +575,7 @@ export function OpenTradeDetail({
                     {executionIncotermLabel(i)}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
               {tradeScope === "LOCAL" && isCorn && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Local corn: EXW — Ex Works or Delivered.

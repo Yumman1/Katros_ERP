@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { TradeDirection, TradeStatus } from "@prisma/client";
@@ -76,7 +78,7 @@ export function TraderDeskReports() {
             <span className="text-[10px] font-semibold uppercase tracking-wider text-subtle">
               Counterparty
             </span>
-            <select
+            <SearchableSelect
               value={counterpartyId}
               onChange={(e) => setCounterpartyId(e.target.value)}
               className="min-w-[200px] rounded-md border border-kastros-border bg-kastros-bg px-2 py-1.5 text-sm text-foreground"
@@ -87,7 +89,7 @@ export function TraderDeskReports() {
                   {cp.name} ({cp.code})
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </label>
 
           <div className="flex flex-col gap-1">

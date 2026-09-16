@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { ContractPreviewLink } from "@/components/execution/contract-preview-link";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
@@ -321,7 +323,7 @@ function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: 
             </button>
           )}
           {canApprovePayment ? (
-            <select
+            <SearchableSelect
               value={inv.stage}
               disabled={setStage.isPending || mismatch}
               title={
@@ -339,7 +341,7 @@ function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: 
                   {GATE_INVOICE_STAGE_LABELS[s]}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           ) : (
             <span
               className="text-[10px] text-subtle"

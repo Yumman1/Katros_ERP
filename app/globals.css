@@ -90,6 +90,18 @@ html {
   color-scheme: light;
 }
 
+/* Keep laptop sizing familiar; scale rem-based type and spacing gently on wide screens. */
+@media screen and (min-width: 1440px) {
+  html { font-size: clamp(16px, calc(12px + 0.278vw), 20px); }
+}
+
+@media screen and (min-width: 1600px) {
+  .kastros-desk-host .kastros-desk-page {
+    width: 100%;
+    max-width: none;
+  }
+}
+
 html.dark {
   color-scheme: dark;
 }

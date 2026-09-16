@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -54,27 +56,27 @@ function RecordFilters({ source, config, state, onChange, onClear, count }: {
           const values = [...new Set(source.flatMap((r) => valueAt(r, f.paths) ?? []).filter((v) => v != null && v !== "").map(String))].sort((a, b) => a.localeCompare(b));
           if (state.selected[f.key] && !values.includes(state.selected[f.key])) values.push(state.selected[f.key]);
           return <label key={f.key} className="w-36 space-y-1"><span className="block text-subtle">{f.label}</span>
-            <select className="kastros-select w-full text-xs" value={state.selected[f.key] ?? ""} onChange={(e) => patch({ selected: { ...state.selected, [f.key]: e.target.value } })}>
+            <SearchableSelect aria-label={f.label} searchable={/counterparty|warehouse|commodity|trader|location|origin|destination/i.test(f.key)} className="kastros-select w-full text-xs" value={state.selected[f.key] ?? ""} onChange={(e) => patch({ selected: { ...state.selected, [f.key]: e.target.value } })}>
               <option value="">ALL</option>{(f.key === "side" ? ["BUY", "SELL"] : values).map((v) => <option key={v} value={v}>{v === "true" ? "Yes" : v === "false" ? "No" : v.replace(/_/g, " ")}</option>)}
-            </select></label>;
+            </SearchableSelect></label>;
         })}
         {config.date && <>
           <label className="w-36 space-y-1"><span className="block text-subtle">{config.date.label}</span>
-            <select className="kastros-select w-full text-xs" value={state.dateMode} onChange={(e) => patch({ dateMode: e.target.value as FilterState["dateMode"], from: "", to: "" })}>
+            <SearchableSelect className="kastros-select w-full text-xs" value={state.dateMode} onChange={(e) => patch({ dateMode: e.target.value as FilterState["dateMode"], from: "", to: "" })}>
               <option value="all">All dates</option><option value="day">Specific date</option><option value="range">Date range</option>
-            </select></label>
+            </SearchableSelect></label>
           {state.dateMode !== "all" && <label className="space-y-1"><span className="block text-subtle">{state.dateMode === "day" ? "On date" : "From date"}</span>
             <input className={inputClass} type="date" value={state.from} max={state.dateMode === "range" ? state.to || undefined : undefined} onChange={(e) => patch({ from: e.target.value })} /></label>}
           {state.dateMode === "range" && <label className="space-y-1"><span className="block text-subtle">To date (inclusive)</span>
             <input className={inputClass} type="date" value={state.to} min={state.from || undefined} onChange={(e) => patch({ to: e.target.value })} /></label>}
         </>}
         {(config.date || config.quantityPaths || config.deliveryDate) && <label className="w-36 space-y-1"><span className="block text-subtle">Sort</span>
-          <select className="kastros-select w-full text-xs" value={state.sort} onChange={(e) => patch({ sort: e.target.value })}>
+          <SearchableSelect searchable={false} className="kastros-select w-full text-xs" value={state.sort} onChange={(e) => patch({ sort: e.target.value })}>
             <option value="original">Default order</option>
             {config.date && <><option value="date-desc">Newest first</option><option value="date-asc">Oldest first</option></>}
             {config.quantityPaths && <><option value="quantity-desc">Quantity: high to low</option><option value="quantity-asc">Quantity: low to high</option></>}
             {config.deliveryDate && <><option value="delivery-asc">Delivery: earliest</option><option value="delivery-desc">Delivery: latest</option></>}
-          </select></label>}
+          </SearchableSelect></label>}
         <button type="button" className="kastros-btn-secondary text-xs" onClick={onClear}>Clear filters</button>
       </div>
       {config.deliveryDate && <details className="mt-2" open={state.deliveryFrom || state.deliveryTo ? true : undefined}>

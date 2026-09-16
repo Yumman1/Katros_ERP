@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useState } from "react";
 import { formSelectClass } from "@/lib/form-controls";
 
@@ -86,7 +88,8 @@ export function CreatableSelect({
   }
 
   return (
-    <select
+    <SearchableSelect
+      searchable
       value={value}
       disabled={disabled}
       onChange={(e) => {
@@ -105,6 +108,6 @@ export function CreatableSelect({
         </option>
       ))}
       <option value={ADD_NEW}>{addLabel}</option>
-    </select>
+    </SearchableSelect>
   );
 }

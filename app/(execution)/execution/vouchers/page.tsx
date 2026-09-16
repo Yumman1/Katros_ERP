@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field, tradeFields } from "@/lib/record-filters";
 
@@ -193,7 +195,7 @@ export default function ExecutionVouchersPage() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Counterparty
-              <select
+              <SearchableSelect
                 value={counterpartyId}
                 onChange={(e) => {
                   setCounterpartyId(e.target.value);
@@ -207,11 +209,11 @@ export default function ExecutionVouchersPage() {
                     {cp.code} — {cp.name}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </label>
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               {side === "SELL" ? "Trade reference (optional)" : "Against trade (required)"}
-              <select
+              <SearchableSelect
                 value={noteRef ? `note:${noteRef}` : tradeRef ? `trade:${tradeRef}` : ""}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -263,7 +265,7 @@ export default function ExecutionVouchersPage() {
                     ))}
                   </optgroup>
                 )}
-              </select>
+              </SearchableSelect>
               {side === "SELL" ? (
                 <span className="text-[10px] leading-snug text-subtle">
                   Optional — for reconciliation. All approved credits join the buyer&rsquo;s shared pool.
@@ -302,7 +304,7 @@ export default function ExecutionVouchersPage() {
             </label>
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Method
-              <select
+              <SearchableSelect
                 value={method}
                 onChange={(e) => {
                   setMethod(e.target.value);
@@ -315,12 +317,12 @@ export default function ExecutionVouchersPage() {
                     {m}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </label>
             {method === "Bank transfer" && (
               <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
                 Bank
-                <select
+                <SearchableSelect
                   value={bankName}
                   onChange={(e) => setBankName(e.target.value)}
                   className="kastros-select kastros-select-sm w-full"
@@ -332,7 +334,7 @@ export default function ExecutionVouchersPage() {
                       {b}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </label>
             )}
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">

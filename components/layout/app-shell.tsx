@@ -90,7 +90,7 @@ export function AppShell({ brandSubtitle, sidebarTop, nav, pathname, children, h
       <div className={cn("flex h-dvh min-h-0 flex-1 flex-col overflow-hidden", SIDEBAR_PL)}>
         {header}
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-6">
-          <div className="kastros-desk-host mx-auto max-w-7xl">
+          <div className="kastros-desk-host mx-auto">
             <div className="kastros-desk-host-scroll">{children}</div>
           </div>
         </main>

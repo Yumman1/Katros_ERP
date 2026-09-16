@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field } from "@/lib/record-filters";
 
@@ -154,11 +156,11 @@ export default function WarehouseUtilizationPage() {
           </label>
           <label className="space-y-1">
             <span className="text-[10px] font-medium uppercase tracking-wider text-subtle">City</span>
-            <select value={cityFilter} onChange={(e) => setCityFilter(e.target.value)} className="exec-filter">
+            <SearchableSelect value={cityFilter} onChange={(e) => setCityFilter(e.target.value)} className="exec-filter">
               {cityOptions.map((c) => (
                 <option key={c} value={c}>{c === "ALL" ? "All cities" : c}</option>
               ))}
-            </select>
+            </SearchableSelect>
           </label>
           <label className="space-y-1">
             <span className="text-[10px] font-medium uppercase tracking-wider text-subtle">Min util %</span>

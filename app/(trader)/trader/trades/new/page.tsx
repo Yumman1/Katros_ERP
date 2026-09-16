@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { ContractDetailsFields } from "@/components/trader/contract-details-fields";
 import { CommodityRegistrationFields } from "@/components/trader/commodity-registration-fields";
 import {
@@ -741,7 +743,7 @@ function BookTradeForm() {
         <Section title="Deal" description="Commodity, counterparty, and market">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Commodity" error={errors.commodityId?.message}>
-              <select
+              <SearchableSelect
                 {...register("commodityId")}
                 className="kastros-select w-full"
               >
@@ -751,7 +753,7 @@ function BookTradeForm() {
                     {c.code} — {c.name}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
               <button
                 type="button"
                 onClick={() => {
@@ -826,7 +828,8 @@ function BookTradeForm() {
             </Field>
 
             <Field label="Counterparty" error={errors.counterpartyId?.message}>
-              <select
+              <SearchableSelect
+                searchable
                 {...register("counterpartyId")}
                 className="kastros-select w-full"
               >
@@ -839,7 +842,7 @@ function BookTradeForm() {
                       : ""}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
               {/* Registered details, read-only — they belong to the counterparty
                   record, so the booking form shows them rather than asking again. */}
               {selectedCounterparty && (
@@ -939,17 +942,17 @@ function BookTradeForm() {
             </Field>
 
             <Field label="Direction" error={errors.direction?.message}>
-              <select
+              <SearchableSelect
                 {...register("direction")}
                 className="kastros-select w-full"
               >
                 <option value={TradeDirection.BUY}>BUY</option>
                 <option value={TradeDirection.SELL}>SELL</option>
-              </select>
+              </SearchableSelect>
             </Field>
 
             <Field label="Market" error={errors.tradeScope?.message}>
-              <select
+              <SearchableSelect
                 {...register("tradeScope")}
                 className="kastros-select w-full"
               >
@@ -958,23 +961,23 @@ function BookTradeForm() {
                     {TRADE_SCOPE_LABELS[s]}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </Field>
 
             {/* One position book per crop season — the daily net-position mail
                 splits Corn Winter from Corn Summer, so the trade must say
                 which book it belongs to at booking time. */}
             <Field label="Season" error={errors.season?.message}>
-              <select {...register("season")} className="kastros-select w-full">
+              <SearchableSelect {...register("season")} className="kastros-select w-full">
                 <option value="SUMMER">Summer</option>
                 <option value="WINTER">Winter</option>
-              </select>
+              </SearchableSelect>
             </Field>
 
             {isCorn ? (
               <>
                 <Field label="Commodity origin (optional)" error={errors.productOrigin?.message}>
-                  <select
+                  <SearchableSelect
                     {...register("productOrigin")}
                     className="kastros-select w-full"
                   >
@@ -984,11 +987,11 @@ function BookTradeForm() {
                         {o}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </Field>
                 {tradeScope === "LOCAL" && (
                   <Field label="Deal status">
-                    <select
+                    <SearchableSelect
                       value={String(tradeParams.dealStatus ?? "")}
                       onChange={(e) =>
                         setTradeParams((p) => ({
@@ -1004,7 +1007,7 @@ function BookTradeForm() {
                           {s}
                         </option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </Field>
                 )}
               </>
@@ -1043,7 +1046,7 @@ function BookTradeForm() {
               />
             </Field>
             <Field label="Unit" error={errors.quantityUnit?.message}>
-              <select
+              <SearchableSelect
                 {...register("quantityUnit")}
                 className="kastros-select w-full"
               >
@@ -1052,7 +1055,7 @@ function BookTradeForm() {
                     {unitOptionLabel(u, unitRegistry)}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </Field>
           </div>
           {qtyConversion && (
@@ -1101,7 +1104,7 @@ function BookTradeForm() {
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Quoted currency" error={errors.priceCurrency?.message}>
-              <select
+              <SearchableSelect
                 {...register("priceCurrency")}
                 className="kastros-select w-full"
               >
@@ -1110,7 +1113,7 @@ function BookTradeForm() {
                     {PRICE_CURRENCY_LABELS[c as PriceCurrency] ?? c}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </Field>
             <Field label="Price per unit" error={errors.priceWeightUnit?.message}>
               {(() => {
@@ -1135,7 +1138,7 @@ function BookTradeForm() {
               </datalist>
             </Field>
             <Field label="Price basis" error={errors.priceBasis?.message}>
-              <select
+              <SearchableSelect
                 {...register("priceBasis")}
                 className="kastros-select w-full"
               >
@@ -1144,7 +1147,7 @@ function BookTradeForm() {
                     {b}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
               {!requiresQuotedPrice && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Unfixed trades can be submitted without a price — enter the price later from My Trades before
@@ -1332,7 +1335,7 @@ function BookTradeForm() {
         <Section title="Delivery" description="Incoterms, delivery window, port of load, and optional company warehouse">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Incoterms" error={errors.incoterms?.message}>
-              <select
+              <SearchableSelect
                 {...register("incoterms")}
                 className="kastros-select w-full"
               >
@@ -1341,7 +1344,7 @@ function BookTradeForm() {
                     {executionIncotermLabel(i)}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
               {tradeScope === "LOCAL" && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   {isCorn

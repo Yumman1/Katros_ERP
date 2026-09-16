@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useState } from "react";
 import type { TradeParamDefinition, TradeParamGroup, TradeParamValues } from "@/lib/trade-parameters";
 import { ParamField } from "@/components/trader/param-field";
@@ -83,7 +85,7 @@ function AddCustomParamForm({
             onChange={(e) => setLabel(e.target.value)}
             className="min-w-[140px] flex-1 rounded-md border border-kastros-border bg-kastros-bg px-2 py-1.5 text-sm text-foreground"
           />
-          <select
+          <SearchableSelect
             value={type}
             onChange={(e) => setType(e.target.value as TradeParamDefinition["type"])}
             className="kastros-select kastros-select-sm"
@@ -92,7 +94,7 @@ function AddCustomParamForm({
             <option value="number">Number</option>
             <option value="percent">Percent</option>
             <option value="select">Dropdown</option>
-          </select>
+          </SearchableSelect>
           <button
             type="button"
             disabled={!label.trim()}

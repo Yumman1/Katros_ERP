@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import {
   allocationSummaryLabel,
   allocationsSumMatchesContract,
@@ -282,7 +284,7 @@ export function WarehouseSplitAllocation({
 
   if (compact && !allocated && !hasPartialFulfillment && !contract.traderWarehouseSelections?.length) {
     return (
-      <select
+      <SearchableSelect
         value=""
         disabled={isPending}
         onChange={(e) => {
@@ -298,7 +300,7 @@ export function WarehouseSplitAllocation({
             {w.name}
           </option>
         ))}
-      </select>
+      </SearchableSelect>
     );
   }
 
@@ -395,7 +397,7 @@ export function WarehouseSplitAllocation({
                 )}
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <select
+                  <SearchableSelect
                     value={line.warehouseName}
                     disabled={isPending || isLocked}
                     onChange={(e) =>
@@ -416,7 +418,7 @@ export function WarehouseSplitAllocation({
                         {w.name}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                   <input
                     type="number"
                     min={0}

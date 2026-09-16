@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { PageHeader } from "@/components/ui/page-header";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import { executionIncotermLabel, TRADE_SCOPES, TRADE_SCOPE_LABELS } from "@/lib/trade-constants";
@@ -118,7 +120,7 @@ export default function TradeFilesPage() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Trade date selection">
-              <select className="kastros-select w-full" value={dateMode} onChange={(e) => { setDateMode(e.target.value as "range" | "day"); setFrom(""); setTo(""); }}><option value="range">Date range / all dates</option><option value="day">Specific date</option></select>
+              <SearchableSelect className="kastros-select w-full" value={dateMode} onChange={(e) => { setDateMode(e.target.value as "range" | "day"); setFrom(""); setTo(""); }}><option value="range">Date range / all dates</option><option value="day">Specific date</option></SearchableSelect>
             </Field>
             <Field label={dateMode === "day" ? "Trade date" : "Booked from"}>
               <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="kastros-input w-full" />
@@ -127,27 +129,27 @@ export default function TradeFilesPage() {
               <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="kastros-input w-full" />
             </Field>}
             <Field label="Commodity">
-              <select value={commodityCode} onChange={(e) => setCommodityCode(e.target.value)} className="kastros-select w-full">
+              <SearchableSelect value={commodityCode} onChange={(e) => setCommodityCode(e.target.value)} className="kastros-select w-full">
                 <option value="">All commodities</option>
                 {(options?.commodities ?? []).map((c) => (
                   <option key={c.code} value={c.code}>
                     {c.name} ({c.code})
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </Field>
             <Field label="Counterparty">
-              <select value={counterpartyId} onChange={(e) => setCounterpartyId(e.target.value)} className="kastros-select w-full">
+              <SearchableSelect value={counterpartyId} onChange={(e) => setCounterpartyId(e.target.value)} className="kastros-select w-full">
                 <option value="">All counterparties</option>
                 {(options?.counterparties ?? []).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </Field>
             <Field label="Direction">
-              <select
+              <SearchableSelect
                 value={direction}
                 onChange={(e) => setDirection(e.target.value as "" | "BUY" | "SELL")}
                 className="kastros-select w-full"
@@ -155,10 +157,10 @@ export default function TradeFilesPage() {
                 <option value="">Buy &amp; Sell</option>
                 <option value="BUY">Buy</option>
                 <option value="SELL">Sell</option>
-              </select>
+              </SearchableSelect>
             </Field>
             <Field label="Market">
-              <select
+              <SearchableSelect
                 value={tradeScope}
                 onChange={(e) => setTradeScope(e.target.value as "" | "LOCAL" | "INTERNATIONAL")}
                 className="kastros-select w-full"
@@ -169,37 +171,37 @@ export default function TradeFilesPage() {
                     {TRADE_SCOPE_LABELS[s]}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </Field>
             <Field label="Status">
-              <select value={tradeStatus} onChange={(e) => setTradeStatus(e.target.value)} className="kastros-select w-full">
+              <SearchableSelect value={tradeStatus} onChange={(e) => setTradeStatus(e.target.value)} className="kastros-select w-full">
                 <option value="">All statuses</option>
                 {(options?.statuses ?? []).map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </Field>
             <Field label="Incoterm">
-              <select value={incoterms} onChange={(e) => setIncoterms(e.target.value)} className="kastros-select w-full">
+              <SearchableSelect value={incoterms} onChange={(e) => setIncoterms(e.target.value)} className="kastros-select w-full">
                 <option value="">All incoterms</option>
                 {(options?.incoterms ?? []).map((i) => (
                   <option key={i} value={i}>
                     {executionIncotermLabel(i)}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </Field>
             <Field label="Trader" className="sm:col-span-2">
-              <select value={traderName} onChange={(e) => setTraderName(e.target.value)} className="kastros-select w-full">
+              <SearchableSelect value={traderName} onChange={(e) => setTraderName(e.target.value)} className="kastros-select w-full">
                 <option value="">All traders</option>
                 {(options?.traders ?? []).map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </Field>
           </div>
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { tradeFilterConfig, tradeFields, tradeDate, field } from "@/lib/record-filters";
 
@@ -178,7 +180,7 @@ export function LockedContractsPage() {
               onChange={(e) => setSearch(e.target.value)}
               className="kastros-input h-7 min-w-[120px] flex-1 rounded-md py-0 text-xs"
             />
-            <select
+            <SearchableSelect
               value={commodityFilter}
               onChange={(e) => setCommodityFilter(e.target.value)}
               className="exec-filter h-7 max-w-[130px] py-0 text-xs"
@@ -189,8 +191,8 @@ export function LockedContractsPage() {
                   {c.code} — {c.name}
                 </option>
               ))}
-            </select>
-            <select
+            </SearchableSelect>
+            <SearchableSelect
               value={scopeFilter}
               onChange={(e) => setScopeFilter(e.target.value)}
               className="exec-filter h-7 max-w-[110px] py-0 text-xs"
@@ -201,8 +203,8 @@ export function LockedContractsPage() {
                   {TRADE_SCOPE_LABELS[s]}
                 </option>
               ))}
-            </select>
-            <select
+            </SearchableSelect>
+            <SearchableSelect
               value={incoterm}
               onChange={(e) => setIncoterm(e.target.value)}
               className="exec-filter h-7 max-w-[120px] py-0 text-xs"
@@ -213,7 +215,7 @@ export function LockedContractsPage() {
                   {executionIncotermLabel(i)}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
             {(hasActiveFilters || listFilters.active) && (
               <button type="button" onClick={clearFilters} className="kastros-btn-secondary px-2 py-0.5 text-xs">
                 Clear

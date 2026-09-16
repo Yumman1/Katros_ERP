@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field } from "@/lib/record-filters";
 
@@ -388,7 +390,7 @@ function NewShiftForm({
       <div className="grid gap-4 md:grid-cols-3">
         {/* Shifted stock still belongs to a crop season's position book. */}
         <Field label="Season">
-          <select
+          <SearchableSelect
             value={season}
             onChange={(e) => setSeason(e.target.value as "WINTER" | "SUMMER")}
             className="w-full rounded-md border px-3 py-2 text-sm"
@@ -396,11 +398,11 @@ function NewShiftForm({
           >
             <option value="SUMMER">Summer</option>
             <option value="WINTER">Winter</option>
-          </select>
+          </SearchableSelect>
         </Field>
 
         <Field label="Commodity">
-          <select
+          <SearchableSelect
             value={commodityCode}
             onChange={(e) => setCommodityCode(e.target.value)}
             className="w-full rounded-md border px-3 py-2 text-sm"
@@ -411,11 +413,11 @@ function NewShiftForm({
                 {c.name}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </Field>
 
         <Field label="From">
-          <select
+          <SearchableSelect
             value={fromWarehouse}
             onChange={(e) => setFromWarehouse(e.target.value)}
             className="w-full rounded-md border px-3 py-2 text-sm"
@@ -427,11 +429,11 @@ function NewShiftForm({
               </option>
             ))}
             <option value="__external__">Outside our warehouses…</option>
-          </select>
+          </SearchableSelect>
         </Field>
 
         <Field label="To">
-          <select
+          <SearchableSelect
             value={toWarehouse}
             onChange={(e) => setToWarehouse(e.target.value)}
             className="w-full rounded-md border px-3 py-2 text-sm"
@@ -442,7 +444,7 @@ function NewShiftForm({
                 {w}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </Field>
 
         {fromOutside ? (

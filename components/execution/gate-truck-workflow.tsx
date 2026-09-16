@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AlertTriangle, Check, Pencil } from "lucide-react";
@@ -277,7 +279,7 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
       )}
       {showAssignControl && (
         <div className="flex items-center gap-2">
-          <select
+          <SearchableSelect
             value={tradeRef}
             onChange={(e) => setTradeRef(e.target.value)}
             className="kastros-input kastros-input-sm min-w-0 flex-1 py-1.5 text-[11px]"
@@ -297,7 +299,7 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
                 {assignableQtyAtWarehouse(truck, c).toFixed(1)} {c.quantityUnit}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
           <button
             type="button"
             disabled={!tradeRef || assign.isPending}

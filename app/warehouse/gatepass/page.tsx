@@ -279,7 +279,7 @@ export default function WarehouseGatepassPage() {
 
   return (
     <main className="bg-background px-4 py-5 pb-8 text-foreground sm:px-6">
-      <div className="mx-auto max-w-2xl space-y-5">
+      <div className="mx-auto max-w-2xl 2xl:max-w-none space-y-5">
         <div className="flex justify-end">
           <ThemeToggle />
         </div>
@@ -347,7 +347,7 @@ export default function WarehouseGatepassPage() {
                   className={inputClass}
                 />
                 <datalist id="gatepass-warehouses">
-                  {reference.warehouses.map((w) => (
+                  {reference.warehouses.filter((w) => w.toLocaleLowerCase().startsWith(form.warehouseName.trim().toLocaleLowerCase())).map((w) => (
                     <option key={w} value={w} />
                   ))}
                 </datalist>

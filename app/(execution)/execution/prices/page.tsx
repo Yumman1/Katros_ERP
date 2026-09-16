@@ -1,5 +1,7 @@
 "use client";
 
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field } from "@/lib/record-filters";
 
@@ -217,7 +219,7 @@ export default function ExecutionDailyPricesPage() {
                       />
                     </td>
                     <td>
-                      <select
+                      <SearchableSelect
                         value={d.cnfCurrency}
                         onChange={(e) => setDraft(row, { cnfCurrency: e.target.value })}
                         className="kastros-select kastros-select-sm"
@@ -227,10 +229,10 @@ export default function ExecutionDailyPricesPage() {
                             {c}
                           </option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                     </td>
                     <td>
-                      <select
+                      <SearchableSelect
                         value={d.cnfUnit}
                         onChange={(e) => setDraft(row, { cnfUnit: e.target.value })}
                         className="kastros-select kastros-select-sm"
@@ -240,7 +242,7 @@ export default function ExecutionDailyPricesPage() {
                             {u}
                           </option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                     </td>
                     <td>
                       <input
@@ -253,7 +255,7 @@ export default function ExecutionDailyPricesPage() {
                       />
                     </td>
                     <td>
-                      <select
+                      <SearchableSelect
                         value={d.yesterdayCurrency}
                         onChange={(e) => setDraft(row, { yesterdayCurrency: e.target.value })}
                         className="kastros-select kastros-select-sm"
@@ -263,10 +265,10 @@ export default function ExecutionDailyPricesPage() {
                             {c}
                           </option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                     </td>
                     <td>
-                      <select
+                      <SearchableSelect
                         value={d.yesterdayUnit}
                         onChange={(e) => setDraft(row, { yesterdayUnit: e.target.value })}
                         className="kastros-select kastros-select-sm"
@@ -276,7 +278,7 @@ export default function ExecutionDailyPricesPage() {
                             {u}
                           </option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                     </td>
                     <td className="whitespace-nowrap text-xs">
                       {hasCnf || hasYesterday ? (
