@@ -35,14 +35,10 @@ export default function DashboardOverviewPage() {
           </div>
         ))}
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3">
         <Link href="/positions" className="rounded-lg border border-kastros-border bg-kastros-card p-4 hover:border-success/40">
           <p className="font-medium text-foreground">Positions</p>
           <p className="mt-1 text-sm text-subtle">Exposure by commodity and desk</p>
-        </Link>
-        <Link href="/reports" className="rounded-lg border border-kastros-border bg-kastros-card p-4 hover:border-success/40">
-          <p className="font-medium text-foreground">Reports</p>
-          <p className="mt-1 text-sm text-subtle">Blotter, breaks, and KPI exports</p>
         </Link>
       </div>
     </div>

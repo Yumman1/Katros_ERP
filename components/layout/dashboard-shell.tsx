@@ -33,26 +33,13 @@ const nav: NavEntry[] = [
       { href: "/finance/rejections", label: "Rejections" },
       { href: "/finance/change-requests", label: "Change requests" },
       { href: "/finance/policies", label: "Policies" },
-      { href: "/cashflow", label: "Cash Flow" },
-      { href: "/reconciliation", label: "Reconciliation" },
     ],
   },
   {
     label: "Supply Chain",
     children: [
-      { href: "/supply-chain", label: "Operations Hub" },
-      { href: "/inventory", label: "Inventory" },
-      { href: "/shipments", label: "Shipments" },
       { href: "/locations", label: "Locations" },
       { href: "/suppliers", label: "Suppliers" },
-      { href: "/traceability", label: "Traceability" },
-    ],
-  },
-  {
-    label: "Reporting",
-    children: [
-      { href: "/reports", label: "Reports" },
-      { href: "/analytics", label: "Analytics" },
     ],
   },
 ];

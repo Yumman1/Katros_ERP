@@ -57,12 +57,12 @@ export async function exportCommercialReport(data: CommercialReport, kind: "exce
     for (const r of data.buyers) line(`${r.counterparty} | ${r.currency} ${n(r.sales)} | ${n(r.quantityMt)} MT | ${r.count} sales | Missing values ${r.missingValues}`);
     line("Batch sale detail", 13);
     for (const s of data.sales) {
-      line(`${s.batchRefs.join(", ") || "Unlinked"} | ${s.reference} | ${s.counterparty} | ${s.date.slice(0, 10)} | ${s.currency}`);
+      line(`${s.batchRefs.join(", ") || "No batch linked"} | ${s.reference} | ${s.counterparty} | ${s.date.slice(0, 10)} | ${s.currency}`);
       line(`Sold quantity (MT): ${n(s.quantityKg == null ? null : s.quantityKg / 1000)} | Bought for: ${n(s.purchaseCost)} | Sold for: ${n(s.amount)} | Profit/loss: ${n(s.profit)}`);
       line(`Cost basis: ${s.costReason} | Purchase references: ${s.purchaseRefs.join(", ") || "Unavailable"}`);
     }
     line("Purchase detail", 13);
-    for (const p of data.purchases) line(`${p.reference} | Batch ${p.batchRefs.join(", ") || "Unlinked"} | ${p.counterparty} | ${p.currency} ${n(p.amount)} | ${n(p.quantityKg == null ? null : p.quantityKg / 1000)} MT`);
+    for (const p of data.purchases) line(`${p.reference} | Batch ${p.batchRefs.join(", ") || "No batch linked"} | ${p.counterparty} | ${p.currency} ${n(p.amount)} | ${n(p.quantityKg == null ? null : p.quantityKg / 1000)} MT`);
     doc.save(`${filename}.pdf`);
   }
 }
