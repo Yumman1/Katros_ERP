@@ -4,6 +4,8 @@ type Utils = ReturnType<typeof trpc.useUtils>;
 
 /** Refresh execution desk, contract queues, and trader book after trade lifecycle changes. */
 export function invalidateTradeFlowCaches(utils: Utils, tradeRef?: string) {
+  void utils.reports.commercial.invalidate();
+  void utils.trader.commoditySalesReport.invalidate();
   void utils.trader.myTrades.invalidate();
   void utils.trader.deskSummary.invalidate();
   void utils.trader.actionItems.invalidate();
@@ -36,6 +38,8 @@ export function invalidateTradeFlowCaches(utils: Utils, tradeRef?: string) {
 
 /** Gate / truck / inbound / outbound ops after assign, edit, or delete. */
 export function invalidateGateOpsCaches(utils: Utils) {
+  void utils.reports.commercial.invalidate();
+  void utils.trader.commoditySalesReport.invalidate();
   void utils.execution.pendingTrucks.invalidate();
   void utils.execution.inboundReceipts.invalidate();
   void utils.execution.outboundDispatches.invalidate();

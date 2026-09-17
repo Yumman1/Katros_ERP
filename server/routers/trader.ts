@@ -1,3 +1,4 @@
+import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { CounterpartyType, TradeDirection, TradeStatus } from "@prisma/client";
@@ -233,6 +234,7 @@ const bookTradeInputSchema = z
   });
 
 export const traderRouter = router({
+  commoditySalesReport: roleProcedure(["TRADER"]).input(commercialReportInput).query(({ ctx, input }) => getCommercialReport(ctx.prisma, input, traderNameFromSession(ctx.session.user))),
   deskSummary: protectedProcedure.query(({ ctx }) => {
     const name = traderNameFromSession(ctx.session.user);
     return mockTraderDeskSummary(name);

@@ -28,9 +28,7 @@ const nav: NavEntry[] = [
   {
     label: "Finance",
     children: [
-      { href: "/finance/payments", label: "Payment approvals" },
-      { href: "/finance/delivery-order-approvals", label: "DO approvals" },
-      { href: "/finance/vouchers", label: "Voucher approvals" },
+      { href: "/finance/approvals", label: "Approvals" },
       { href: "/finance/ledgers", label: "Ledgers" },
       { href: "/finance/rejections", label: "Rejections" },
       { href: "/finance/change-requests", label: "Change requests" },
@@ -99,9 +97,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   });
 
   const badges: Record<string, number | undefined> = {
-    "/finance/payments": approvalBadges.data?.payments,
-    "/finance/delivery-order-approvals": approvalBadges.data?.doApprovals,
-    "/finance/vouchers": approvalBadges.data?.vouchers,
+    "/finance/approvals": approvalBadges.data
+      ? approvalBadges.data.payments + approvalBadges.data.doApprovals + approvalBadges.data.vouchers
+      : undefined,
     "/finance/change-requests": approvalBadges.data?.changeRequests,
   };
 

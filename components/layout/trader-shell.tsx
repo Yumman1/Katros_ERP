@@ -19,6 +19,7 @@ const nav = [
   { href: "/trader/approvals", label: "Approvals", icon: <PenLine className="h-4 w-4" /> },
   { href: "/trader/rejections", label: "Rejections", icon: <XCircle className="h-4 w-4" /> },
   { href: "/trader/positions", label: "Positions", icon: <LineChart className="h-4 w-4" /> },
+  { href: "/trader/reports", label: "Sales reports", icon: <LineChart className="h-4 w-4" /> },
   { href: "/trader/ledgers", label: "Ledgers", icon: <BookOpen className="h-4 w-4" /> },
   { href: "/trader/market", label: "Market", icon: <LineChart className="h-4 w-4" /> },
   { href: "/account", label: "Account", icon: <User className="h-4 w-4" /> },

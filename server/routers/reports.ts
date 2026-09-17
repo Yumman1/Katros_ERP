@@ -1,3 +1,4 @@
+import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
 import { z } from "zod";
 import type { Prisma, Reconciliation } from "@prisma/client";
 import { dashboardProcedure, router } from "@/server/trpc/trpc";
@@ -11,6 +12,7 @@ type TradeBlotterRow = Prisma.TradeGetPayload<{
 }>;
 
 export const reportsRouter = router({
+  commercial: dashboardProcedure().input(commercialReportInput).query(({ ctx, input }) => getCommercialReport(ctx.prisma, input)),
   kpis: dashboardProcedure().query(async ({ ctx }) => {
     if (isMockMode()) return mockKpis();
     const y0 = startOfYear(new Date());

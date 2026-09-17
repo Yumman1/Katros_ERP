@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CounterpartyNetPosition } from "@/components/finance/counterparty-net-position";
 import { CounterpartyLedgersPanel } from "@/components/ledgers/counterparty-ledgers-panel";
 import { PageHeader } from "@/components/ui/page-header";
 import { trpc } from "@/lib/trpc/client";
@@ -13,6 +14,7 @@ export default function FinanceLedgersPage() {
   });
 
   const [settleError, setSettleError] = useState<string | null>(null);
+  const [selectedCounterpartyId, setSelectedCounterpartyId] = useState<string | null>(null);
 
   const settle = trpc.finance.settleSaleTruck.useMutation({
     onSuccess: () => {
@@ -46,12 +48,15 @@ export default function FinanceLedgersPage() {
         {rowsError ? (
           <div className="exec-empty">You don&apos;t have access to this page.</div>
         ) : (
-          <CounterpartyLedgersPanel
-            rows={rows}
-            isLoading={isLoading}
-            onSettle={handleSettle}
-            settlingTruckId={settle.isPending ? settle.variables?.truckId ?? null : null}
-          />
+          <>
+            {rows && <CounterpartyNetPosition accounts={rows} selectedId={selectedCounterpartyId} onSelect={setSelectedCounterpartyId} />}
+            <CounterpartyLedgersPanel
+              rows={selectedCounterpartyId ? rows?.filter((r) => r.counterpartyId === selectedCounterpartyId) : rows}
+              isLoading={isLoading}
+              onSettle={handleSettle}
+              settlingTruckId={settle.isPending ? settle.variables?.truckId ?? null : null}
+            />
+          </>
         )}
       </div>
     </div>
