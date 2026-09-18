@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { KastrosLogo } from "@/components/branding/kastros-logo";
 import { cn } from "@/lib/utils";
 
@@ -28,13 +28,22 @@ type Props = {
   pathname: string;
   children: ReactNode;
   header: ReactNode;
+  contentScroll?: "panels" | "page";
 };
 
 function isActive(pathname: string, href: string, exact?: boolean) {
   return exact ? pathname === href : pathname.startsWith(href);
 }
 
-export function AppShell({ brandSubtitle, sidebarTop, nav, pathname, children, header }: Props) {
+export function AppShell({ brandSubtitle, sidebarTop, nav, pathname, children, header, contentScroll = "panels" }: Props) {
+  const pageScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (contentScroll === "page") {
+      pageScrollRef.current?.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
+  }, [pathname, contentScroll]);
+
   const renderLink = (item: NavLink) => {
     const active = isActive(pathname, item.href, item.exact);
     return (
@@ -87,11 +96,16 @@ export function AppShell({ brandSubtitle, sidebarTop, nav, pathname, children, h
         </nav>
       </aside>
 
-      <div className={cn("flex h-dvh min-h-0 flex-1 flex-col overflow-hidden", SIDEBAR_PL)}>
+      <div className={cn("flex h-dvh min-h-0 min-w-0 flex-1 flex-col overflow-hidden", SIDEBAR_PL)}>
         {header}
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-6">
           <div className="kastros-desk-host mx-auto">
-            <div className="kastros-desk-host-scroll">{children}</div>
+            <div
+              ref={pageScrollRef}
+              className={cn("kastros-desk-host-scroll", contentScroll === "page" && "kastros-desk-host-scroll-page")}
+            >
+              {children}
+            </div>
           </div>
         </main>
       </div>

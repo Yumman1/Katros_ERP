@@ -143,6 +143,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
   return (
     <AppShell
       brandSubtitle="Execution Desk"
+      contentScroll="page"
       pathname={pathname}
       nav={nav}
       sidebarTop={

@@ -147,6 +147,36 @@ body {
     @apply shrink-0;
   }
 
+  /* Execution forms and multi-section pages share one vertical scrollbar.
+     Let sections keep their natural height instead of shrinking into the
+     viewport. Table wrappers still own their horizontal overflow. */
+  .kastros-desk-host-scroll-page {
+    display: block;
+    overflow-anchor: none;
+  }
+
+  .kastros-desk-host-scroll-page .kastros-desk-page {
+    flex: none;
+    min-height: 100%;
+    overflow: visible;
+  }
+
+  .kastros-desk-host-scroll-page .kastros-desk-page > *,
+  .kastros-desk-host-scroll-page .kastros-desk-scroll > * {
+    flex-shrink: 0;
+  }
+
+  .kastros-desk-host-scroll-page .kastros-desk-scroll,
+  .kastros-desk-host-scroll-page .kastros-scroll-panel {
+    flex: none;
+    overflow: visible;
+  }
+
+  .kastros-desk-host-scroll-page .kastros-desk-page > .kastros-table-wrap,
+  .kastros-desk-host-scroll-page .kastros-panel-scroll {
+    flex: none;
+  }
+
   .kastros-desk-scroll,
   .kastros-scroll-panel {
     @apply min-h-0 flex-1 overflow-auto;
