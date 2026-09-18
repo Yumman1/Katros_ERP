@@ -21,8 +21,7 @@ const nav: NavEntry[] = [
     label: "Position & P&L",
     children: [
       { href: "/positions", label: "Positions" },
-      { href: "/mtm", label: "MTM" },
-      { href: "/pnl", label: "P&L Explained" },
+      { href: "/pnl/commercial-margins", label: "Commercial margins" },
     ],
   },
   {
@@ -33,13 +32,6 @@ const nav: NavEntry[] = [
       { href: "/finance/rejections", label: "Rejections" },
       { href: "/finance/change-requests", label: "Change requests" },
       { href: "/finance/policies", label: "Policies" },
-    ],
-  },
-  {
-    label: "Supply Chain",
-    children: [
-      { href: "/locations", label: "Locations" },
-      { href: "/suppliers", label: "Suppliers" },
     ],
   },
 ];
