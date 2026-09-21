@@ -51,12 +51,14 @@ import {
   getCommodityById,
   getCommodityPriceBasis,
   getCounterpartyById,
+  getMergedCounterparties,
   getCompanyWarehouses,
   getTraderReferenceData,
   registerCustomUnit,
   updateCustomCounterparty,
 } from "@/server/trader-master-data";
 import { canonicalKgPerUnitOf, PRICE_CURRENCIES } from "@/lib/price-units";
+import { updateCounterpartyProfileSchema } from "@/lib/counterparty-profile";
 import { commodityCreateInputSchema } from "@/lib/commodity-registration";
 import { qualitySummaryFromParams, resolveAllTradeParameters } from "@/lib/trade-parameters";
 import { toMt } from "@/lib/unit-registry";
@@ -596,6 +598,25 @@ export const traderRouter = router({
   }),
 
   referenceData: protectedProcedure.query(() => getTraderReferenceData()),
+
+  counterparties: roleProcedure(["TRADER", "ADMIN"]).query(() => getMergedCounterparties()),
+
+  updateCounterpartyProfile: roleProcedure(["TRADER", "ADMIN"])
+    .input(updateCounterpartyProfileSchema)
+    .mutation(async ({ input }) => {
+      const existing = await getCounterpartyById(input.id);
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Counterparty not found" });
+      if (existing.type === CounterpartyType.INTERNAL) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Internal company records cannot be edited here" });
+      }
+      const { kycExpires, ...patch } = input.patch;
+      // This schema rejects name/code/id/side and all relation fields. The
+      // existing transaction also keeps NTN on linked contracts synchronized.
+      return updateCustomCounterparty(input.id, {
+        ...patch,
+        ...(kycExpires !== undefined ? { kycExpires: kycExpires === null ? null : new Date(`${kycExpires}T00:00:00.000Z`) } : {}),
+      });
+    }),
 
   warehouseAvailability: protectedProcedure
     .input(z.object({ commodityId: z.string().optional() }).optional())

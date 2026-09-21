@@ -7,7 +7,11 @@ import type { ExecutionContractView } from "@/server/execution-store";
 import { Split } from "lucide-react";
 import type { TradeParamValues } from "@/lib/trade-parameters";
 
+import type { TradeDirection } from "@prisma/client";
+
 type TradeLike = {
+  commodity: { id: string };
+  direction: TradeDirection;
   quantity: number;
   quantityUnit?: string | null;
   tradeParams?: TradeParamValues | null;
@@ -96,6 +100,8 @@ export function OpenTradeWarehouseSection({
   return (
     <OpenTradeWarehouseAllocation
       tradeRef={tradeRef}
+      commodityId={trade.commodity.id}
+      direction={trade.direction}
       contractualQtyMt={trade.quantity}
       quantityUnit={trade.quantityUnit ?? "MT"}
       tradeParams={trade.tradeParams as Record<string, string | number | null> | null | undefined}

@@ -60,6 +60,7 @@ export type MockCounterpartyOption = {
   /** 236G rate selector (filer vs non-filer) for sales to this counterparty. */
   taxFilerStatus: TaxFilerStatus;
   country: string;
+  creditLimit?: number | null;
   kycStatus: KycStatus;
   kycRef: string | null;
   kycExpires: Date | null;
@@ -124,6 +125,7 @@ export function counterpartyRowToOption(row: Counterparty): MockCounterpartyOpti
     side: row.side,
     taxFilerStatus: row.taxFilerStatus,
     country: row.country,
+    creditLimit: numOrNull(row.creditLimit),
     kycStatus: row.kycStatus,
     kycRef: row.kycRef,
     kycExpires: row.kycExpires,
@@ -454,6 +456,7 @@ export async function updateCustomCounterparty(
       | "name"
       | "type"
       | "country"
+      | "creditLimit"
       | "kycStatus"
       | "kycRef"
       | "kycExpires"
@@ -477,6 +480,7 @@ export async function updateCustomCounterparty(
   }
   if (patch.type != null) data.type = patch.type;
   if (patch.country != null) data.country = patch.country.trim();
+  if (patch.creditLimit !== undefined) data.creditLimit = patch.creditLimit;
   if (patch.kycStatus != null) data.kycStatus = patch.kycStatus;
   if (patch.kycRef !== undefined) data.kycRef = patch.kycRef?.trim() || null;
   if (patch.kycExpires !== undefined) data.kycExpires = patch.kycExpires ?? null;

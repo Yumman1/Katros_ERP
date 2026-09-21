@@ -6,11 +6,15 @@ import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { formatQtyWithUnit } from "@/lib/formatters/numbers";
 import {
   allocationSummaryLabel,
+  normWarehouseName,
   allocationsSumMatchesContract,
   parseExecutionWarehouseSplit,
   parseTraderWarehouseSelections,
   type WarehouseOpenAllocationLine,
 } from "@/lib/warehouse-allocation";
+import { WarehouseAvailabilityBadges } from "@/components/trader/warehouse-availability-badges";
+import { fmtCapacityMt } from "@/lib/warehouse-availability";
+import type { TradeDirection } from "@prisma/client";
 import { trpc } from "@/lib/trpc/client";
 import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
@@ -26,6 +30,8 @@ function newSplitLine(name = ""): SplitLine {
 
 type Props = {
   tradeRef: string;
+  commodityId: string;
+  direction: TradeDirection;
   contractualQtyMt: number;
   quantityUnit: string;
   tradeParams?: Record<string, string | number | null> | null;
@@ -36,6 +42,8 @@ type Props = {
 
 export function OpenTradeWarehouseAllocation({
   tradeRef,
+  commodityId,
+  direction,
   contractualQtyMt,
   quantityUnit,
   tradeParams,
@@ -49,8 +57,28 @@ export function OpenTradeWarehouseAllocation({
 
   const { data: warehouses, isLoading: warehousesLoading } = trpc.execution.companyWarehouses.useQuery();
 
-  const traderPicks = parseTraderWarehouseSelections(tradeParams ?? null);
-  const savedSplit = parseExecutionWarehouseSplit(tradeParams ?? null);
+  const availability = trpc.trader.warehouseAvailability.useQuery(
+    { commodityId },
+    { enabled: Boolean(commodityId), refetchInterval: 60_000, refetchOnWindowFocus: true },
+  );
+  const availabilityByName = useMemo(
+    () => new Map((availability.data?.warehouses ?? []).map((w) => [normWarehouseName(w.name), w])),
+    [availability.data],
+  );
+
+  function warehouseLabel(name: string) {
+    const row = availability.isError ? undefined : availabilityByName.get(normWarehouseName(name));
+    if (!row) return name;
+    if (direction === "SELL") {
+      return `${name} — Stock ${fmtCapacityMt(row.stockOnHandMt)} MT · Booked ${fmtCapacityMt(row.bookedQtyMt)} MT · Free to sell ${fmtCapacityMt(row.freeToSellMt)} MT`;
+    }
+    const mt = row.trueAvailableMt ?? row.divisionAvailableMt;
+    const pct = row.trueAvailabilityPct ?? row.divisionAvailabilityPct;
+    return `${name} — Available ${fmtCapacityMt(mt)} MT${pct == null ? "" : ` · ${pct.toFixed(0)}%`}`;
+  }
+
+  const traderPicks = useMemo(() => parseTraderWarehouseSelections(tradeParams ?? null), [tradeParams]);
+  const savedSplit = useMemo(() => parseExecutionWarehouseSplit(tradeParams ?? null), [tradeParams]);
 
   const needsAllocation = !warehouseSplitApproved;
   const [open, setOpen] = useState(needsAllocation);
@@ -98,7 +126,7 @@ export function OpenTradeWarehouseAllocation({
       setLines([newSplitLine(), newSplitLine()]);
     }
     setSaved(false);
-  }, [tradeRef, tradeParams, savedSplit.length, traderPicks.join("|")]);
+  }, [tradeRef, savedSplit, traderPicks]);
 
   const draftSum = useMemo(
     () =>
@@ -243,9 +271,21 @@ export function OpenTradeWarehouseAllocation({
 
       {open && (
         <div className="space-y-3 rounded-lg border border-border bg-card p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-subtle">
+            <p>{direction === "BUY" ? "Live spare storage capacity" : "Live stock and open sell commitments"} · quantities shown in MT</p>
+            <button type="button" onClick={() => void availability.refetch()} disabled={availability.isFetching}
+              className="text-accent-secondary hover:underline disabled:opacity-50">
+              {availability.isFetching ? "Refreshing…" : "Refresh availability"}
+            </button>
+          </div>
+          {availability.isError && <p role="alert" className="text-xs text-destructive">Warehouse availability could not be loaded. Refresh to try again.</p>}
+          {direction === "SELL" && !availability.isError && (availability.data?.unassignedBookedMt ?? 0) > 0 && (
+            <p className="text-xs text-warning">{fmtCapacityMt(availability.data?.unassignedBookedMt)} MT of open sell commitments have no warehouse allocation and are not deducted from these warehouse balances.</p>
+          )}
           {lines.map((line, idx) => (
             <div key={line.id} className="flex flex-wrap items-center gap-2">
               <SearchableSelect
+                aria-label={`Warehouse ${idx + 1}`}
                 value={line.warehouseName}
                 onChange={(e) =>
                   setLines((rows) =>
@@ -259,7 +299,7 @@ export function OpenTradeWarehouseAllocation({
                 </option>
                 {warehouseOptions.map((w) => (
                   <option key={w.id} value={w.name}>
-                    {w.name}
+                    {warehouseLabel(w.name)}
                   </option>
                 ))}
               </SearchableSelect>
@@ -268,6 +308,7 @@ export function OpenTradeWarehouseAllocation({
                 min={0}
                 step="any"
                 placeholder="Qty"
+                aria-label={`Allocation quantity ${idx + 1}`}
                 value={line.openQtyMt}
                 onChange={(e) =>
                   setLines((rows) =>
@@ -286,6 +327,19 @@ export function OpenTradeWarehouseAllocation({
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
+              )}
+              {line.warehouseName && (
+                <div className="w-full" aria-live="polite">
+                  {availability.isLoading ? <p className="text-xs text-subtle">Loading warehouse availability…</p>
+                    : !availability.isError && availabilityByName.has(normWarehouseName(line.warehouseName)) ? (
+                      <WarehouseAvailabilityBadges
+                        warehouse={availabilityByName.get(normWarehouseName(line.warehouseName))!}
+                        bookingDirection={direction}
+                        storageDivision={availabilityByName.get(normWarehouseName(line.warehouseName))!.storageDivision}
+                        requestedQtyMt={quantityUnit === "MT" ? Number(line.openQtyMt) || 0 : 0}
+                      />
+                    ) : <p className="text-xs text-subtle">Availability unavailable for this warehouse.</p>}
+                </div>
               )}
             </div>
           ))}
