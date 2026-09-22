@@ -76,7 +76,8 @@ export default function TraderFulfillmentPage() {
   const pagination = useListPagination(listFilters.rows, { pageSize: 10, resetKey: listFilters.resetKey });
 
   return (
-    <div className="kastros-desk-page">
+    <div className="kastros-desk-scroll">
+      <div className="shrink-0 space-y-4 pb-6">
       <PageHeader
         title="Trade fulfillment"
         subtitle="Physical progress on locked trades. Within tolerance you close a trade yourself; short of the tolerance floor a close goes to the CEO. Trades auto-close above contract + tolerance."
@@ -88,7 +89,6 @@ export default function TraderFulfillmentPage() {
       </div>
 
       {listFilters.controls}
-      <div className="kastros-desk-scroll space-y-4 pb-6">
       {isLoading ? (
         <div className="py-12 text-center text-sm text-subtle">Loading fulfillment…</div>
       ) : !trades?.length ? (
@@ -293,7 +293,6 @@ export default function TraderFulfillmentPage() {
           />
         </div>
       )}
-      </div>
 
       {closeRef && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
@@ -423,6 +422,7 @@ export default function TraderFulfillmentPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
