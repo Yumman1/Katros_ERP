@@ -3,6 +3,7 @@
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { requestFilterConfig } from "@/lib/record-filters";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Check, Inbox, ShieldCheck, X } from "lucide-react";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -32,7 +33,7 @@ function actionLabel(action: string, entityType: string): string {
   if (action === "CLOSE") return "Approve & close trade";
   if (action === "CANCEL") return "Approve & cancel trade";
   if (action === "CREATE" && entityType === "WAREHOUSE") return "Approve & register warehouse";
-  if (action === "CREATE" && entityType === "COMMODITY") return "Approve & register commodity";
+  if (action === "CREATE" && entityType === "COMMODITY") return "Approve, register & assign commodity";
   if (action === "CREATE") return "Approve & create";
   if (action === "DELETE" && entityType === "TRADE") return "Approve & delete trade";
   if (action === "EDIT" && entityType === "TRADE") return "Approve & apply trade changes";
@@ -43,10 +44,16 @@ function actionLabel(action: string, entityType: string): string {
 export function CeoApprovalsInbox() {
   const utils = trpc.useUtils();
   const queue = trpc.ceo.approvalQueue.useQuery(undefined, { refetchInterval: 60_000, staleTime: 60_000 });
+  const [commodityNotice, setCommodityNotice] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
 
   const resolve = trpc.ceo.resolveApproval.useMutation({
-    onSuccess: () => invalidateApprovalCaches(utils),
+    onSuccess: (resolved) => {
+      invalidateApprovalCaches(utils);
+      if (resolved.entityType === "COMMODITY" && resolved.action === "CREATE" && resolved.status === "APPROVED") {
+        setCommodityNotice(`${resolved.entityLabel} approved. The trader assignment has been saved.`);
+      }
+    },
   });
 
   const items = useMemo(() => queue.data ?? [], [queue.data]);
@@ -65,6 +72,7 @@ export function CeoApprovalsInbox() {
           </span>
         </div>
 
+        {commodityNotice && <p role="status" className="px-5 py-3 text-sm text-success">{commodityNotice} <Link href="/ceo/trader-commodities" className="underline">View assignments</Link></p>}
         <div className="divide-y divide-kastros-border">
         {listFilters.controls}
           {/* A failed query must not read as an empty queue — pending approvals

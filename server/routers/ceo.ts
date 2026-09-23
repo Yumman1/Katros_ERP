@@ -34,19 +34,57 @@ import {
 import { commodityCreateInputSchema } from "@/lib/commodity-registration";
 import { getCompanyInventorySnapshot } from "@/server/inventory-snapshot";
 
+import {
+  assignCommodityTrader,
+  initializeCommodityAssignment,
+  requireAssignmentCeo,
+  resolveCommodityRegistration,
+} from "@/server/commodity-assignments";
+
 function actorName(user: { name?: string | null; email?: string | null }) {
   return user.name ?? user.email ?? "user";
 }
 
 export const ceoRouter = router({
+  traderCommodities: ceoProcedure().query(async ({ ctx }) => {
+    await requireAssignmentCeo(prisma, ctx.session.user.id);
+    const [commodities, traders] = await Promise.all([
+      prisma.commodity.findMany({
+        orderBy: { name: "asc" },
+        select: {
+          id: true, code: true, name: true,
+          traderAssignment: { include: {
+            trader: { select: { id: true, name: true, email: true, disabled: true, role: true } },
+            changedBy: { select: { name: true, email: true } },
+          } },
+        },
+      }),
+      prisma.user.findMany({
+        where: { role: "TRADER", disabled: false }, orderBy: { name: "asc" },
+        select: { id: true, name: true, email: true },
+      }),
+    ]);
+    return { commodities, traders };
+  }),
+
+  assignCommodityTrader: ceoProcedure()
+    .input(z.object({ commodityId: z.string().min(1), traderId: z.string().min(1).nullable(), expectedVersion: z.number().int().min(0) }))
+    .mutation(({ ctx, input }) => assignCommodityTrader({ ...input, actorId: ctx.session.user.id })),
+
   commodities: ceoProcedure().query(() => getMergedCommodities()),
 
   addCommodity: ceoProcedure()
     .input(commodityCreateInputSchema)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
-        return await addCustomCommodity(input);
+        return await prisma.$transaction(async (db) => {
+          await requireAssignmentCeo(db, ctx.session.user.id);
+          const row = await addCustomCommodity(input, { db, createdById: ctx.session.user.id });
+          await initializeCommodityAssignment(db, row, ctx.session.user.id);
+          return row;
+        });
       } catch (e) {
+        if (e instanceof TRPCError) throw e;
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: e instanceof Error ? e.message : "Could not add commodity",
@@ -56,7 +94,8 @@ export const ceoRouter = router({
 
   deleteCommodity: ceoProcedure()
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await requireAssignmentCeo(prisma, ctx.session.user.id);
       const commodity = await getCommodityById(input.id);
       if (!commodity) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Commodity not found" });
@@ -113,6 +152,16 @@ export const ceoRouter = router({
           code: "BAD_REQUEST",
           message: "Add a reason before rejecting — it is shown to the requester",
         });
+      }
+
+      if (req.department === "TRADING" && req.entityType === "COMMODITY" && req.action === "CREATE") {
+        try {
+          await resolveCommodityRegistration({ requestId: req.id, actorId: ctx.session.user.id, decision: input.decision, note: input.note });
+        } catch (error) {
+          if (error instanceof TRPCError) throw error;
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Could not register and assign commodity" });
+        }
+        return (await getChangeRequest(req.id))!;
       }
 
       let applied = false;
@@ -185,6 +234,10 @@ export const ceoRouter = router({
         disabled: true,
         lastSeenAt: true,
         createdAt: true,
+        commodityAssignments: {
+          select: { commodity: { select: { id: true, code: true, name: true } } },
+          orderBy: { commodity: { name: "asc" } },
+        },
       },
     });
     return rows;
@@ -260,19 +313,26 @@ export const ceoRouter = router({
       if (input.disabled !== undefined) data.disabled = input.disabled;
       if (input.password) data.passwordHash = await bcrypt.hash(input.password, 12);
       try {
-        return await prisma.user.update({
-          where: { id: input.id },
-          data,
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            isHead: true,
-            disabled: true,
-            lastSeenAt: true,
-            createdAt: true,
-          },
+        return await prisma.$transaction(async (db) => {
+          await db.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${input.id} FOR UPDATE`;
+          if (input.role && input.role !== "TRADER") {
+            const assigned = await db.commodityTraderAssignment.count({ where: { traderId: input.id } });
+            if (assigned) throw new TRPCError({ code: "BAD_REQUEST", message: "Transfer or remove this user's commodity assignments in Trader commodities before changing their role" });
+          }
+          return db.user.update({
+            where: { id: input.id },
+            data,
+            select: {
+              id: true,
+              email: true,
+              name: true,
+              role: true,
+              isHead: true,
+              disabled: true,
+              lastSeenAt: true,
+              createdAt: true,
+            },
+          });
         });
       } catch (e) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025") {

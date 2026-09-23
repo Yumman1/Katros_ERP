@@ -48,6 +48,8 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  commodityAssignments       CommodityTraderAssignment[] @relation("AssignedTrader")
+  commodityAssignmentsChanged CommodityTraderAssignment[] @relation("AssignmentChangedBy")
   commoditiesCreated         Commodity[]          @relation("CommodityCreatedBy")
   counterpartiesCreated      Counterparty[]       @relation("CounterpartyCreatedBy")
   locationsCreated           Location[]           @relation("LocationCreatedBy")
@@ -102,6 +104,7 @@ model Commodity {
   createdById String
   createdBy   User             @relation("CommodityCreatedBy", fields: [createdById], references: [id])
 
+  traderAssignment    CommodityTraderAssignment?
   trades              Trade[]
   positions           Position[]
   inventories         Inventory[]
@@ -109,6 +112,23 @@ model Commodity {
   traceabilityRecords TraceabilityRecord[]
   deskPrices          DeskMarketPrice[]
   positionAdjustments PositionAdjustment[]
+}
+
+/// Current commodity desk ownership. One owner per commodity; many commodities per trader.
+/// A null traderId is an explicit CEO unassignment, never an invitation to restore a default.
+model CommodityTraderAssignment {
+  commodityId String @id
+  traderId    String?
+  changedById String?
+  source      String @default("CEO_ASSIGNMENT")
+  version     Int @default(1)
+  updatedAt   DateTime @updatedAt
+  commodity   Commodity @relation(fields: [commodityId], references: [id], onDelete: Cascade)
+  trader      User? @relation("AssignedTrader", fields: [traderId], references: [id], onDelete: Restrict)
+  changedBy   User? @relation("AssignmentChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([traderId])
+  @@index([changedById])
 }
 
 /// Custom weight/quantity units with kg conversion (unit registry).

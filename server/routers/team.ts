@@ -1,3 +1,4 @@
+import { resolveCommodityRegistration } from "@/server/commodity-assignments";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, headProcedure, router } from "@/server/trpc/trpc";
@@ -7,7 +8,6 @@ import {
   DEPARTMENTS,
   departmentForRole,
   requiresCeoApproval,
-  type Department,
 } from "@/lib/departments";
 import {
   createChangeRequest,
@@ -253,6 +253,13 @@ export const teamRouter = router({
           code: "BAD_REQUEST",
           message: "Add a reason before rejecting — it is shown to the requester",
         });
+      }
+
+      // Commodity registrations always use the CEO-only atomic workflow, even
+      // when an old client submits through this department endpoint.
+      if (req.department === "TRADING" && req.entityType === "COMMODITY" && req.action === "CREATE") {
+        await resolveCommodityRegistration({ requestId: req.id, actorId: ctx.session.user.id, decision: input.decision, note: input.note });
+        return (await getChangeRequest(req.id))!;
       }
 
       let applied = false;

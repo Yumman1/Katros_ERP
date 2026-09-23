@@ -13,6 +13,7 @@ const nav = [
   { href: "/ceo/approvals", label: "Approvals" },
   { href: "/ceo/rejections", label: "Rejections" },
   { href: "/ceo/users", label: "Users" },
+  { href: "/ceo/trader-commodities", label: "Trader commodities" },
   { href: "/account", label: "Account" },
 ];
 

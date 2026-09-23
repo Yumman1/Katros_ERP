@@ -188,8 +188,8 @@ function uniqueUnits(values: string[]) {
   return out;
 }
 
-async function customUnitDefs(): Promise<UnitDefinition[]> {
-  const rows = await prisma.unitDef.findMany();
+async function customUnitDefs(db: Prisma.TransactionClient = prisma): Promise<UnitDefinition[]> {
+  const rows = await db.unitDef.findMany();
   return rows.map((r) => ({
     code: r.code,
     kgPerUnit: Number(r.kgPerUnit),
@@ -198,14 +198,14 @@ async function customUnitDefs(): Promise<UnitDefinition[]> {
 }
 
 /** All known units with kg-per-unit factors (built-in + custom). */
-export async function getMergedUnitRegistry(): Promise<Map<string, UnitDefinition>> {
-  return mergeUnitRegistry(await customUnitDefs());
+export async function getMergedUnitRegistry(db: Prisma.TransactionClient = prisma): Promise<Map<string, UnitDefinition>> {
+  return mergeUnitRegistry(await customUnitDefs(db));
 }
 
-async function mergedQuantityUnits(): Promise<string[]> {
+async function mergedQuantityUnits(db: Prisma.TransactionClient = prisma): Promise<string[]> {
   const [registry, commodities] = await Promise.all([
-    getMergedUnitRegistry(),
-    prisma.commodity.findMany({ select: { unit: true } }),
+    getMergedUnitRegistry(db),
+    db.commodity.findMany({ select: { unit: true } }),
   ]);
   return uniqueUnits([
     ...QUANTITY_UNITS,
@@ -219,12 +219,12 @@ export async function registerCustomUnit(input: {
   code: string;
   kgPerUnit: number;
   label?: string;
-}): Promise<UnitDefinition> {
+}, db: Prisma.TransactionClient = prisma): Promise<UnitDefinition> {
   const code = input.code.trim().toUpperCase();
   if (!code || input.kgPerUnit <= 0) {
     throw new Error("Unit code and positive kg per unit are required");
   }
-  await prisma.unitDef.upsert({
+  await db.unitDef.upsert({
     where: { code },
     update: { kgPerUnit: input.kgPerUnit, label: input.label ?? null },
     create: { code, kgPerUnit: input.kgPerUnit, label: input.label ?? null },
@@ -232,9 +232,9 @@ export async function registerCustomUnit(input: {
   return { code, kgPerUnit: input.kgPerUnit, label: input.label };
 }
 
-async function canonicalUnit(unit: string): Promise<string> {
+async function canonicalUnit(unit: string, db: Prisma.TransactionClient = prisma): Promise<string> {
   const key = norm(unit);
-  const known = await mergedQuantityUnits();
+  const known = await mergedQuantityUnits(db);
   return known.find((k) => norm(k) === key) ?? unit.trim();
 }
 
@@ -271,22 +271,23 @@ export async function addCustomCommodity(input: {
   canonicalKgPerUnit?: number | null;
   priceUnits?: CommodityPriceUnits | null;
   tradeParameterDefs?: TradeParamDefinition[] | null;
-}): Promise<MockCommodityOption> {
+}, options: { db?: Prisma.TransactionClient; createdById?: string } = {}): Promise<MockCommodityOption> {
+  const db = options.db ?? prisma;
   const code = input.code.trim().toUpperCase();
   const name = input.name.trim();
   const unitInput = input.unit.trim();
   if (!code || !name || !unitInput) throw new Error("Name, code, and unit are required");
-  const dupe = await prisma.commodity.findFirst({
+  const dupe = await db.commodity.findFirst({
     where: { code: { equals: code, mode: "insensitive" } },
     select: { id: true },
   });
   if (dupe) throw new Error(`Commodity code ${code} already exists`);
 
-  const unit = await canonicalUnit(unitInput);
+  const unit = await canonicalUnit(unitInput, db);
   const kgPerCanonical = input.canonicalKgPerUnit ?? canonicalKgPerUnitOf({ unit });
-  await registerCustomUnit({ code: unit, kgPerUnit: kgPerCanonical });
+  await registerCustomUnit({ code: unit, kgPerUnit: kgPerCanonical }, db);
 
-  const row = await prisma.commodity.create({
+  const row = await db.commodity.create({
     data: {
       name,
       code,
@@ -295,7 +296,7 @@ export async function addCustomCommodity(input: {
       canonicalKgPerUnit: kgPerCanonical,
       priceUnits: (input.priceUnits ?? Prisma.JsonNull) as Prisma.InputJsonValue,
       tradeParameterDefs: (input.tradeParameterDefs ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-      createdById: await getSystemUserId(),
+      createdById: options.createdById ?? await getSystemUserId(),
     },
   });
   return commodityRowToOption(row);

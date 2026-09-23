@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
@@ -100,7 +101,7 @@ export default function CeoUsersPage() {
   const listFilters = useRecordFilters("users", users.data, { fields: [field("role", "Role"), field("disabled", "Disabled"), field("isHead", "Department head")], searchPaths: ["name", "email"] });
 
   return (
-    <div className="kastros-desk-page mx-auto max-w-5xl">
+    <div className="kastros-desk-page mx-auto max-w-7xl">
       <PageHeader
         title="Users"
         subtitle="Create accounts, assign roles and department-head rights. Each person lands in their role's workspace when they log in."
@@ -273,7 +274,11 @@ export default function CeoUsersPage() {
 
         {/* ── All users ── */}
         <section className="rounded-xl border border-kastros-border bg-kastros-card p-5">
-          <h2 className="text-sm font-semibold text-foreground">All users</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-foreground">All users</h2>
+            <Link href="/ceo/trader-commodities" className="text-sm text-brand underline">Manage trader commodities</Link>
+          </div>
+          {users.isError && <p role="alert" className="mt-2 text-sm text-danger">Could not load users: {users.error.message}</p>}
             {listFilters.controls}
           <div className="kastros-table-wrap mt-3">
             <table className="w-full border-collapse text-sm">
@@ -282,6 +287,7 @@ export default function CeoUsersPage() {
                   <th className="border-b border-kastros-border px-2 py-2">Name</th>
                   <th className="border-b border-kastros-border px-2 py-2">Email</th>
                   <th className="border-b border-kastros-border px-2 py-2">Role</th>
+                  <th className="border-b border-kastros-border px-2 py-2">Commodities</th>
                   <th className="border-b border-kastros-border px-2 py-2">Head</th>
                   <th className="border-b border-kastros-border px-2 py-2">Last seen</th>
                   <th className="border-b border-kastros-border px-2 py-2">Status</th>
@@ -314,6 +320,15 @@ export default function CeoUsersPage() {
                         ))}
                         {u.role === "ADMIN" && <option value="ADMIN">Admin (legacy)</option>}
                       </SearchableSelect>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {u.commodityAssignments.length ? (
+                        <Link href="/ceo/trader-commodities" className="flex min-w-32 flex-wrap gap-1" title="Manage trader commodities">
+                          {u.commodityAssignments.map(({ commodity }) => (
+                            <span key={commodity.id} className="rounded-full bg-brand/10 px-2 py-1 text-xs text-brand" title={commodity.code}>{commodity.name}</span>
+                          ))}
+                        </Link>
+                      ) : u.role === "TRADER" ? <Link href="/ceo/trader-commodities" className="text-xs text-warning underline">Unassigned</Link> : <span className="text-subtle">—</span>}
                     </td>
                     <td className="px-2 py-1.5">
                       <input

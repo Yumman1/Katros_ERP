@@ -69,6 +69,8 @@ export function invalidateApprovalCaches(utils: Utils) {
   void utils.ceo.pendingApprovals.invalidate();
   void utils.ceo.dashboardSummary.invalidate();
   void utils.ceo.commodities.invalidate();
+  void utils.ceo.traderCommodities.invalidate();
+  void utils.ceo.users.invalidate();
   void utils.execution.warehouseLocations.invalidate();
   void utils.trader.referenceData.invalidate();
   void utils.policy.rejections.invalidate();

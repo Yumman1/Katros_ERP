@@ -3,6 +3,7 @@
 import { useRecordFilters } from "@/components/ui/record-filters";
 
 
+import Link from "next/link";
 import { useState } from "react";
 import { CheckCircle2, Plus, Trash2 } from "lucide-react";
 import { CommodityRegistrationFields } from "@/components/trader/commodity-registration-fields";
@@ -28,6 +29,8 @@ export default function CeoCommoditiesPage() {
       setTradeParams([]);
       void utils.trader.referenceData.invalidate();
       void utils.ceo.commodities.invalidate();
+      void utils.ceo.traderCommodities.invalidate();
+      void utils.ceo.users.invalidate();
     },
   });
 
@@ -40,6 +43,8 @@ export default function CeoCommoditiesPage() {
       setSuccess(`${row.code} — ${row.name} was removed from the registry.`);
       void utils.trader.referenceData.invalidate();
       void utils.ceo.commodities.invalidate();
+      void utils.ceo.traderCommodities.invalidate();
+      void utils.ceo.users.invalidate();
     },
     onError: (e) => setDeleteError(e.message),
   });
@@ -55,6 +60,7 @@ export default function CeoCommoditiesPage() {
       />
 
       <div className="kastros-desk-scroll space-y-5 pb-6">
+      <Link href="/ceo/trader-commodities" className="inline-block text-sm text-brand underline">Manage trader commodity assignments</Link>
       <section className="rounded-xl border border-kastros-border bg-kastros-card p-5">
         <h2 className="text-sm font-semibold text-foreground">Register new commodity</h2>
         <p className="mt-1 text-xs text-subtle">
