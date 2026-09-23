@@ -1,4 +1,5 @@
 "use client";
+import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { tradeFilterConfig } from "@/lib/record-filters";
@@ -22,13 +23,18 @@ const statusStyle: Partial<Record<TradeStatus, string>> = {
 };
 
 export default function TraderDeskPage() {
-  const { data: summary, isLoading } = trpc.trader.deskSummary.useQuery();
-  const { data: trades } = trpc.trader.myTrades.useQuery({});
-  const { data: actions } = trpc.trader.actionItems.useQuery();
-  const { data: exposure } = trpc.trader.myExposure.useQuery();
+  const desk = useCommodityDesk();
+  const input = { commodityId: desk.active?.id };
+  const options = { enabled: Boolean(desk.active) };
+  const { data: summary, isLoading, error: summaryError } = trpc.trader.deskSummary.useQuery(input, options);
+  const { data: trades } = trpc.trader.myTrades.useQuery(input, options);
+  const { data: actions } = trpc.trader.actionItems.useQuery(input, options);
+  const { data: exposure } = trpc.trader.myExposure.useQuery(input, options);
 
   const listFilters = useRecordFilters("desk-trades", (trades ?? []).filter(isActiveTraderTrade), tradeFilterConfig);
 
+  if (!desk.loading && !desk.active) return <div className="space-y-3"><h1 className="text-2xl font-semibold">Your commodity dashboard</h1><p>{desk.error ?? "No commodities are assigned yet. Request a commodity and ask the CEO to approve it, or ask the CEO to assign an existing commodity."}</p><Link href="/trader/trades/new" className="text-success underline">Request a commodity</Link></div>;
+  if (summaryError) return <p role="alert" className="text-destructive">{summaryError.message}</p>;
   if (isLoading || !summary) {
     return <div className="animate-pulse text-subtle">Loading your desk…</div>;
   }
@@ -40,9 +46,9 @@ export default function TraderDeskPage() {
       <DeskScroll className="space-y-4 pb-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">My Desk</h1>
+            <h1 className="text-2xl font-semibold text-foreground">{desk.active?.name} Dashboard</h1>
             <p className="text-sm text-subtle">
-              {summary.desk.replace("_", " ")} · Your open book and today&apos;s activity
+              {desk.active?.name} · Your open book and today&apos;s activity
             </p>
           </div>
           <Link
@@ -53,7 +59,7 @@ export default function TraderDeskPage() {
           </Link>
         </div>
 
-        <OverdueAlertsCard title="Overdue payments" />
+        <OverdueAlertsCard title="Company-wide overdue payments" />
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           {[
@@ -242,7 +248,7 @@ export default function TraderDeskPage() {
           </div>
         </div>
 
-        <TraderDeskReports />
+        <TraderDeskReports key={desk.active?.id} deskCommodityCode={desk.active?.code} />
       </DeskScroll>
     </DeskPage>
   );

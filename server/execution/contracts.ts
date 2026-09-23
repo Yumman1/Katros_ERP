@@ -1025,9 +1025,10 @@ export async function exportLockedContractsCsv(
   to: Date,
   profile?: ExecutionProfile,
   incoterms?: string,
+  scope?: { commodityCode?: string; traderName?: string },
 ): Promise<string> {
   const list = await getLockedContracts({ from, to, profile, incoterms });
-  return lockedContractsToCsv(list);
+  return lockedContractsToCsv(list.filter(c => (!scope?.commodityCode || c.commodityCode === scope.commodityCode) && (!scope?.traderName || c.traderName === scope.traderName)));
 }
 
 /** No-op in DB mode — nothing to seed or warm. */

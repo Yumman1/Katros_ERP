@@ -1,4 +1,5 @@
 "use client";
+import { isSesameCommodity } from "@/lib/sesame";
 
 import { TRADE_SCOPE_LABELS, executionIncotermLabel, paymentTypeLabel } from "@/lib/trade-constants";
 import { parseTraderWarehouseSelections } from "@/lib/warehouse-allocation";
@@ -114,7 +115,7 @@ export default function TradeDetailPage() {
   const paymentLabel =
     trade.paymentType === "CREDIT"
       ? paymentTypeLabel("CREDIT", creditDays)
-      : paymentTypeLabel(trade.paymentType) ?? trade.paymentTerms;
+      : paymentTypeLabel(trade.paymentType, undefined, Number(trade.tradeParams?.paymentPercentage) || undefined) ?? trade.paymentTerms;
   const unit = trade.quantityUnit ?? trade.commodity.unit ?? "MT";
   const mappedPrice = trade.pricePerCanonicalQty ?? trade.price;
   const notional = trade.quantity * mappedPrice;
@@ -257,7 +258,7 @@ export default function TradeDetailPage() {
 
       <DetailCard title="Product specifications">
         <Row label="Commodity" value={`${trade.commodity.code} — ${trade.commodity.name}`} />
-        <Row label="Season" value={trade.season === "WINTER" ? "Winter" : trade.season === "SUMMER" ? "Summer" : "—"} />
+        {!isSesameCommodity(trade.commodity.code, trade.commodity.name) && <Row label="Season" value={trade.season === "WINTER" ? "Winter" : trade.season === "SUMMER" ? "Summer" : "—"} />}
         <Row label="Exact grade" value={trade.grade} />
         <Row label="Product origin" value={trade.productOrigin} />
         {trade.maxMoisturePct != null && (
@@ -408,7 +409,7 @@ export default function TradeDetailPage() {
       </div>
 
       {trade.tradeParams && Object.keys(trade.tradeParams).length > 0 && (() => {
-        const defs = resolveAllTradeParameters(trade.commodity.code, null);
+        const defs = resolveAllTradeParameters(isSesameCommodity(trade.commodity.code, trade.commodity.name) ? "SESAME" : trade.commodity.code, null);
         const labelOf = (key: string) => defs.find((d) => d.key === key)?.label ?? key.replace(/_/g, " ");
         const universalKeys = new Set([
           ...UNIVERSAL_TRADE_FIELDS.map((d) => d.key),
@@ -421,6 +422,7 @@ export default function TradeDetailPage() {
           "contactNumber",
           "dealStatus",
           "quantityTolerance",
+          "paymentPercentage",
         ]);
         const universal = Object.entries(trade.tradeParams).filter(
           ([k, v]) =>
@@ -453,7 +455,7 @@ export default function TradeDetailPage() {
             {commodity.length > 0 && (
               <DetailCard title={`${trade.commodity.name} specifications`}>
                 {commodity.map(([key, val]) => (
-                  <Row key={key} label={labelOf(key)} value={String(val)} />
+                  <Row key={key} label={labelOf(key)} value={`${val}${defs.find(d => d.key === key)?.type === "percent" ? "%" : ""}`} />
                 ))}
               </DetailCard>
             )}

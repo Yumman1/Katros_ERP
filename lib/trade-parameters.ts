@@ -1,3 +1,4 @@
+import { SESAME_FIELDS } from "@/lib/sesame";
 /**
  * Trade-parameter model aligned with the Kastros trade file.
  *
@@ -101,11 +102,8 @@ export const COMMODITY_PARAM_TEMPLATES: Record<string, TradeParamDefinition[]> =
   COR: GRAIN_QUALITY,
   CORN: GRAIN_QUALITY,
   WHEAT: GRAIN_QUALITY,
-  SES: [
-    ...GRAIN_QUALITY,
-    { key: "colour", label: "Colour", type: "text", group: "quality" },
-    { key: "freight", label: "Freight", type: "text", group: "logistics" },
-  ],
+  SES: SESAME_FIELDS,
+  SESAME: SESAME_FIELDS,
   CTN: [
     { key: "pakkaSta", label: "Pakka / STA", type: "select", group: "contract", options: ["Pakka", "STA"] },
     { key: "cropYear", label: "Crop year (CY)", type: "text", group: "quality", placeholder: "2025-2026" },

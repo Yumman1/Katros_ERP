@@ -1097,6 +1097,7 @@ export const executionRouter = router({
         select: {
           tradeRef: true,
           paymentType: true,
+          paymentTerms: true,
           quantity: true,
           quantityUnit: true,
           directSettled: true,
@@ -1106,6 +1107,7 @@ export const executionRouter = router({
       return trades.map((t) => ({
         tradeRef: t.tradeRef,
         paymentType: t.paymentType,
+        paymentTerms: t.paymentTerms,
         quantity: num(t.quantity),
         quantityUnit: t.quantityUnit,
         isSettlement: t.directSettled,

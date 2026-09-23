@@ -1,35 +1,20 @@
 "use client";
+import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
-import { CommodityFilterBar } from "@/components/execution/commodity-filter-bar";
 import { NetPositionPanel } from "@/components/position/net-position-panel";
-import { collectCommodityOptions } from "@/lib/execution-commodity-filter";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
 import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 export default function TraderPositionsPage() {
-  const [commodityFilter, setCommodityFilter] = useState("ALL");
-  const { data: exposure, isLoading: loadingExposure } = trpc.trader.myExposure.useQuery();
+  const desk = useCommodityDesk();
+  const commodityFilter = desk.active?.code ?? "";
+  const { data: exposure, isLoading: loadingExposure } = trpc.trader.myExposure.useQuery({ commodityId: desk.active?.id }, { enabled: Boolean(desk.active) });
   const { data: ledger, isLoading: loadingLedger } = trpc.trader.positionLedger.useQuery(undefined, {
     refetchInterval: 20000,
   });
-  const { data: trades } = trpc.trader.myTrades.useQuery({});
-  const { data: seasonCols } = trpc.trader.seasonNetPositions.useQuery();
-
-  const commodityOptions = useMemo(() => {
-    const fromExposure = (exposure ?? []).map((e) => ({ commodityCode: e.code, commodityName: e.name }));
-    const fromLedger = (ledger ?? []).map((r) => ({
-      commodityCode: r.commodityCode,
-      commodityName: r.commodityName,
-    }));
-    const fromSeason = (seasonCols ?? []).map((c) => ({
-      commodityCode: c.commodityCode,
-      commodityName: c.commodityName,
-    }));
-    return collectCommodityOptions([...fromExposure, ...fromLedger, ...fromSeason]);
-  }, [exposure, ledger, seasonCols]);
-
+  const { data: trades } = trpc.trader.myTrades.useQuery({ commodityId: desk.active?.id }, { enabled: Boolean(desk.active) });
   const filteredExposure = useMemo(
     () =>
       commodityFilter === "ALL"
@@ -46,6 +31,7 @@ export default function TraderPositionsPage() {
     [ledger, commodityFilter],
   );
 
+  if (!desk.active) return <p>{desk.error ?? "Select an assigned commodity to view positions."}</p>;
   if (loadingExposure && loadingLedger) {
     return <div className="animate-pulse text-muted-foreground">Loading your positions…</div>;
   }
@@ -64,9 +50,7 @@ export default function TraderPositionsPage() {
         </p>
       </div>
 
-      {commodityOptions.length > 0 && (
-        <CommodityFilterBar commodities={commodityOptions} value={commodityFilter} onChange={setCommodityFilter} />
-      )}
+
 
       <NetPositionPanel canEdit commodityFilter={commodityFilter} />
 

@@ -20,11 +20,13 @@ export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
 };
 
 /** Human-readable payment label; credit days are stored separately on the trade. */
-export function paymentTypeLabel(type: PaymentType, creditDays?: number): string {
+export function paymentTypeLabel(type: PaymentType, creditDays?: number, percentage?: number): string {
   if (type === "CREDIT") {
     const days = creditDays ?? 30;
     return `${days} Day Credit`;
   }
+  if (type === "ADVANCE_100") return `${percentage ?? 100}% Advance`;
+  if (type === "AFTER_DELIVERY_100") return `${percentage ?? 100}% After Delivery`;
   return PAYMENT_TYPE_LABELS[type];
 }
 

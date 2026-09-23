@@ -1,3 +1,5 @@
+import { isSesameCommodity, normalizeSesameParams, SESAME_FIELDS } from "@/lib/sesame";
+import { qualitySummaryFromParams } from "@/lib/trade-parameters";
 import { TradeDirection, TradeStatus } from "@prisma/client";
 import type { KycStatus, QualityTolerances } from "@/lib/trade-constants";
 import {
@@ -352,7 +354,7 @@ async function applyPatchToTrade(
   }
   if (patch.maxMoisturePct !== undefined) trade.maxMoisturePct = patch.maxMoisturePct;
 
-  const nextParams = { ...(trade.tradeParams ?? {}), ...(patch.tradeParams ?? {}) };
+  let nextParams = { ...(trade.tradeParams ?? {}), ...(patch.tradeParams ?? {}) };
   if (patch.creditDays != null && patch.paymentType === "CREDIT") {
     nextParams.creditDays = patch.creditDays;
   }
@@ -371,6 +373,12 @@ async function applyPatchToTrade(
       delete nextParams[EXECUTION_WAREHOUSE_SPLIT_KEY];
     }
     // Warehouse qty split always requires explicit head approval — never auto-approve here.
+  }
+  if (isSesameCommodity(trade.commodity.code, trade.commodity.name)) {
+    nextParams = normalizeSesameParams(nextParams, trade.paymentType);
+    trade.paymentTerms = paymentTypeLabel(trade.paymentType, Number(nextParams.creditDays) || undefined, Number(nextParams.paymentPercentage) || undefined);
+    trade.qualityTolerances = qualitySummaryFromParams(nextParams, SESAME_FIELDS);
+    trade.maxMoisturePct = Number(nextParams.moisture);
   }
   trade.tradeParams = Object.keys(nextParams).length ? nextParams : null;
 

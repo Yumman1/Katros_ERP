@@ -1,3 +1,5 @@
+import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
+import { isSesameCommodity, normalizeSesameParams } from "@/lib/sesame";
 import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -235,17 +237,22 @@ const bookTradeInputSchema = z
     }
   });
 
+const deskInput = z.object({ commodityId: z.string().optional() }).optional();
+
 export const traderRouter = router({
+  myCommodityDesks: protectedProcedure.query(({ ctx }) => traderCommodityDesks(ctx.session.user.id)),
   commoditySalesReport: roleProcedure(["TRADER"]).input(commercialReportInput).query(({ ctx, input }) => getCommercialReport(ctx.prisma, input, traderNameFromSession(ctx.session.user))),
-  deskSummary: protectedProcedure.query(({ ctx }) => {
+  deskSummary: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
+    if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    return mockTraderDeskSummary(name);
+    return mockTraderDeskSummary(name, input?.commodityId);
   }),
 
   myTrades: protectedProcedure
     .input(
       z
         .object({
+          commodityId: z.string().optional(),
           status: z.nativeEnum(TradeStatus).optional(),
           bucket: z.enum(["DRAFTS", "LOCKED", "CLOSED", "CANCELLED", "SETTLED"]).optional(),
         })
@@ -253,7 +260,8 @@ export const traderRouter = router({
     )
     .query(async ({ ctx, input }) => {
       const name = traderNameFromSession(ctx.session.user);
-      const overlaid = await getTraderBookTrades(name);
+      if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
+      const overlaid = await getTraderBookTrades(name, input?.commodityId);
 
       const isDraft = (s: TradeStatus) => s === TradeStatus.PENDING;
       const isLocked = (s: TradeStatus) =>
@@ -278,9 +286,10 @@ export const traderRouter = router({
     }),
 
   /** Count for the Cancelled tab badge in My Trades. */
-  myCancelledCount: protectedProcedure.query(async ({ ctx }) => {
+  myCancelledCount: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
+    if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    const all = await mockTraderTrades(name);
+    const all = await mockTraderTrades(name, { commodityId: input?.commodityId });
     return all.filter((t) => t.tradeStatus === TradeStatus.CANCELLED).length;
   }),
 
@@ -290,9 +299,10 @@ export const traderRouter = router({
    * booking columns (price, notional, delivery) say nothing once a trade is
    * dead, so the Cancelled tab shows this instead.
    */
-  myCancelledTrades: protectedProcedure.query(async ({ ctx }) => {
+  myCancelledTrades: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
+    if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    const all = await mockTraderTrades(name);
+    const all = await mockTraderTrades(name, { commodityId: input?.commodityId });
     const cancelled = all.filter((t) => t.tradeStatus === TradeStatus.CANCELLED);
     if (cancelled.length === 0) return [];
 
@@ -587,14 +597,16 @@ export const traderRouter = router({
       }
     }),
 
-  myExposure: protectedProcedure.query(({ ctx }) => {
+  myExposure: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
+    if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    return mockTraderExposure(name);
+    return mockTraderExposure(name, input?.commodityId);
   }),
 
-  actionItems: protectedProcedure.query(({ ctx }) => {
+  actionItems: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
+    if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    return mockTraderActionItems(name);
+    return mockTraderActionItems(name, input?.commodityId);
   }),
 
   referenceData: protectedProcedure.query(() => getTraderReferenceData()),
@@ -842,6 +854,19 @@ export const traderRouter = router({
         traderNameFromSession(ctx.session.user) || input.traderName.trim(),
       );
 
+      await requireTraderCommodity(ctx.session.user.id, input.commodityId);
+      const c = await getCommodityById(input.commodityId);
+      if (!c) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid commodity" });
+      }
+
+      const sesame = isSesameCommodity(c.code, c.name);
+      const paramDefs = resolveAllTradeParameters(sesame ? "SESAME" : c.code, c.tradeParameterDefs);
+      let tradeParams = input.tradeParams ?? {};
+      if (sesame) {
+        try { tradeParams = normalizeSesameParams(tradeParams, input.paymentType); }
+        catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invalid Sesame terms" }); }
+      }
       const cp = await getCounterpartyById(input.counterpartyId);
       if (!cp) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid counterparty" });
@@ -863,10 +888,6 @@ export const traderRouter = router({
         }
       }
 
-      const c = await getCommodityById(input.commodityId);
-      if (!c) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid commodity" });
-      }
 
       {
         // Resolve the quoted price metric: use what the form sent, else the commodity's
@@ -876,16 +897,14 @@ export const traderRouter = router({
         const priceWeightUnit = input.priceWeightUnit ?? configuredBasis.weightUnit;
         const priceKgPerUnit = input.priceKgPerUnit ?? configuredBasis.kgPerUnit;
         const canonicalKgPerUnit = canonicalKgPerUnitOf(c);
-        const paramDefs = resolveAllTradeParameters(c.code, c.tradeParameterDefs);
-        const tradeParams = input.tradeParams ?? {};
         const qualityTolerances =
-          input.qualityTolerances?.trim() ||
+          (sesame ? qualitySummaryFromParams(tradeParams, paramDefs) : input.qualityTolerances?.trim()) ||
           (input.qualityTolerancesDetail
             ? formatQualityTolerancesSummary(input.qualityTolerancesDetail)
             : qualitySummaryFromParams(tradeParams, paramDefs));
         const moistureRaw = tradeParams.moisture;
         const maxMoisturePct =
-          input.maxMoisturePct ??
+          (sesame ? Number(tradeParams.moisture) : input.maxMoisturePct) ??
           input.qualityTolerancesDetail?.moisturePct ??
           (typeof moistureRaw === "number"
             ? moistureRaw
@@ -1059,13 +1078,15 @@ export const traderRouter = router({
   exportLockedTrades: roleProcedure(["TRADER", "ADMIN", "EXECUTION"])
     .input(
       z.object({
+        commodityId: z.string().optional(),
         from: z.coerce.date(),
         to: z.coerce.date(),
         executionProfile: z.enum(EXECUTION_PROFILES).optional(),
       }),
     )
-    .mutation(async ({ input }) => {
-      const csv = await exportLockedContractsCsv(input.from, input.to, input.executionProfile);
+    .mutation(async ({ ctx, input }) => {
+      const desk = input.commodityId ? await requireTraderCommodity(ctx.session.user.id, input.commodityId) : undefined;
+      const csv = await exportLockedContractsCsv(input.from, input.to, input.executionProfile, undefined, desk ? { commodityCode: desk.code, traderName: traderNameFromSession(ctx.session.user) } : undefined);
       return { csv, filename: `locked-trades-${input.from.toISOString().slice(0, 10)}-${input.to.toISOString().slice(0, 10)}.csv` };
     }),
 

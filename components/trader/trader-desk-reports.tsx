@@ -33,7 +33,7 @@ function fmtPkrPerMaund(n: number | null | undefined) {
 
 type DirectionFilter = "ALL" | TradeDirection;
 
-export function TraderDeskReports() {
+export function TraderDeskReports({ deskCommodityCode }: { deskCommodityCode?: string } = {}) {
   const [counterpartyId, setCounterpartyId] = useState<string>("ALL");
   const [commodityCode, setCommodityCode] = useState("ALL");
   const [direction, setDirection] = useState<DirectionFilter>("ALL");
@@ -41,10 +41,10 @@ export function TraderDeskReports() {
   const queryInput = useMemo(
     () => ({
       counterpartyId: counterpartyId === "ALL" ? undefined : counterpartyId,
-      commodityCode: commodityCode === "ALL" ? undefined : commodityCode,
+      commodityCode: deskCommodityCode ?? (commodityCode === "ALL" ? undefined : commodityCode),
       direction: direction === "ALL" ? undefined : direction,
     }),
-    [counterpartyId, commodityCode, direction],
+    [counterpartyId, commodityCode, direction, deskCommodityCode],
   );
 
   const { data, isLoading } = trpc.trader.counterpartyReport.useQuery(queryInput, {
@@ -116,7 +116,7 @@ export function TraderDeskReports() {
           </div>
         </div>
 
-        {commodityOptions.length > 0 && (
+        {commodityOptions.length > 0 && !deskCommodityCode && (
           <CommodityFilterBar
             commodities={commodityOptions}
             value={commodityCode}

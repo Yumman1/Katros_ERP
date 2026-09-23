@@ -1,3 +1,4 @@
+import { isSesameCommodity } from "@/lib/sesame";
 import { addDays } from "date-fns";
 import {
   getMergedCommodities,
@@ -698,10 +699,11 @@ async function withDeskMtm(trade: MockTraderTrade): Promise<MockTraderTrade> {
 
 export async function mockTraderTrades(
   traderName: string,
-  filter?: { status?: TradeStatus; bucket?: "DRAFTS" | "CLOSED" },
+  filter?: { status?: TradeStatus; bucket?: "DRAFTS" | "CLOSED"; commodityId?: string },
 ): Promise<MockTraderTrade[]> {
   const canonical = canonicalTraderName(traderName);
   const rows = await prisma.trade.findMany({
+    where: filter?.commodityId ? { commodityId: filter.commodityId } : undefined,
     include: TRADE_INCLUDE,
     orderBy: { tradeDate: "desc" },
   });
@@ -750,18 +752,18 @@ export async function mockTradeByRefGlobal(tradeRef: string): Promise<MockTrader
   return row ? withDeskMtm(tradeRowToMock(row)) : null;
 }
 
-export async function mockTraderDeskSummary(traderName: string) {
+export async function mockTraderDeskSummary(traderName: string, commodityId?: string) {
   const { buildTraderDeskSummary } = await import("@/server/trader-book");
-  return buildTraderDeskSummary(traderName);
+  return buildTraderDeskSummary(traderName, commodityId);
 }
 
-export async function mockTraderExposure(traderName: string) {
+export async function mockTraderExposure(traderName: string, commodityId?: string) {
   const { buildTraderExposure } = await import("@/server/trader-book");
-  return buildTraderExposure(traderName);
+  return buildTraderExposure(traderName, commodityId);
 }
 
-export async function mockTraderActionItems(traderName: string) {
-  const trades = await mockTraderTrades(canonicalTraderName(traderName));
+export async function mockTraderActionItems(traderName: string, commodityId?: string) {
+  const trades = await mockTraderTrades(canonicalTraderName(traderName), { commodityId });
   const items: { id: string; type: string; message: string; tradeRef: string; priority: "high" | "medium" | "low" }[] = [];
   for (const t of trades) {
     if (t.tradeStatus === TradeStatus.PENDING && t.pendingTraderReview) {
@@ -919,7 +921,8 @@ export async function mockBookTrade(input: {
       desk: "AGRI_DESK",
       direction: input.direction,
       tradeScope: input.tradeScope ?? "LOCAL",
-      season: input.season ?? "SUMMER",
+      // Sesame uses one compatibility bucket; no crop season is selected or shown.
+      season: isSesameCommodity(input.commodityCode, input.commodityName) ? "SUMMER" : input.season ?? "SUMMER",
       commodityId: input.commodityId,
       counterpartyId: input.counterpartyId,
       counterpartyKycStatus: input.counterpartyKycStatus,
@@ -955,14 +958,11 @@ export async function mockBookTrade(input: {
             : "Delivered"
           : null),
       paymentType: input.paymentType,
-      paymentTerms:
-        input.paymentType === "CREDIT"
-          ? paymentTypeLabel("CREDIT", input.creditDays)
-          : PAYMENT_TYPE_LABELS[input.paymentType] ?? paymentTypeLabel(input.paymentType),
+      paymentTerms: paymentTypeLabel(input.paymentType, input.creditDays, isSesameCommodity(input.commodityCode, input.commodityName) && input.tradeParams?.paymentPercentage != null ? Number(input.tradeParams.paymentPercentage) : undefined),
       grade: input.grade,
       productOrigin: input.productOrigin,
       qualityTolerances: input.qualityTolerances,
-      qualityTolerancesDetail:
+      qualityTolerancesDetail: isSesameCommodity(input.commodityCode, input.commodityName) ? undefined :
         input.qualityTolerancesDetail ??
         ({
           ...DEFAULT_QUALITY_TOLERANCES,

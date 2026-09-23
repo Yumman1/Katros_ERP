@@ -1,4 +1,5 @@
 "use client";
+import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { tradeFilterConfig, tradeFields, field } from "@/lib/record-filters";
@@ -18,10 +19,12 @@ import { FileMinus2, Send, X } from "lucide-react";
 const fmtNum = (n: number) => n.toLocaleString("en-PK", { maximumFractionDigits: 2 });
 
 export default function TraderFulfillmentPage() {
+  const desk = useCommodityDesk();
   const utils = trpc.useUtils();
-  const { data: trades, isLoading } = trpc.trader.tradeFulfillment.useQuery(undefined, {
+  const { data: allTrades, isLoading } = trpc.trader.tradeFulfillment.useQuery(undefined, {
     refetchInterval: 20000,
   });
+  const trades = allTrades?.filter(t => t.commodityCode === desk.active?.code);
   const { data: myRequests } = trpc.team.myChangeRequests.useQuery();
 
   const [closeRef, setCloseRef] = useState<string | null>(null);

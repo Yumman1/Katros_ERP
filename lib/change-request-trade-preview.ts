@@ -89,7 +89,7 @@ function fmtPayment(type: unknown, tradeParams?: Record<string, unknown> | null)
         ? Number(creditDays) || undefined
         : undefined;
   if (t === "CREDIT" && days) return paymentTypeLabel("CREDIT", days);
-  return paymentTypeLabel(t as Parameters<typeof paymentTypeLabel>[0]) ?? t.replace(/_/g, " ");
+  return paymentTypeLabel(t as Parameters<typeof paymentTypeLabel>[0], days, Number(tradeParams?.paymentPercentage) || undefined) ?? t.replace(/_/g, " ");
 }
 
 function fmtCommission(amount: unknown, currency: unknown): string {

@@ -24,8 +24,8 @@ export async function overlayFulfilledContracts(
   );
 }
 
-export async function getTraderBookTrades(traderName: string): Promise<MockTraderTrade[]> {
-  const raw = await mockTraderTrades(canonicalTraderName(traderName));
+export async function getTraderBookTrades(traderName: string, commodityId?: string): Promise<MockTraderTrade[]> {
+  const raw = await mockTraderTrades(canonicalTraderName(traderName), { commodityId });
   const overlaid = await overlayFulfilledContracts(raw);
   return enrichTradesMtmUsd(overlaid);
 }
@@ -40,8 +40,8 @@ function deliveryOverlapsWeek(t: MockTraderTrade, weekStart: Date, weekEnd: Date
   return t.deliveryStart <= weekEnd && t.deliveryEnd >= weekStart;
 }
 
-export async function buildTraderDeskSummary(traderName: string) {
-  const trades = await getTraderBookTrades(traderName);
+export async function buildTraderDeskSummary(traderName: string, commodityId?: string) {
+  const trades = await getTraderBookTrades(traderName, commodityId);
 
   const active = trades.filter(isActiveTraderTrade);
   const pendingAction = trades.filter(
@@ -115,8 +115,8 @@ const EXPOSURE_STATUSES: TradeStatus[] = [
   TradeStatus.PENDING,
 ];
 
-export async function buildTraderExposure(traderName: string): Promise<TraderExposureRow[]> {
-  const trades = await getTraderBookTrades(traderName);
+export async function buildTraderExposure(traderName: string, commodityId?: string): Promise<TraderExposureRow[]> {
+  const trades = await getTraderBookTrades(traderName, commodityId);
   const exposureTrades = trades.filter((t) => EXPOSURE_STATUSES.includes(t.tradeStatus));
 
   const byCommodity = new Map<

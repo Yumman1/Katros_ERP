@@ -1,7 +1,8 @@
 "use client";
+import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { BookOpen, LayoutDashboard, LineChart, ListOrdered, PenLine, Plus, Receipt, Truck, User, Users, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
@@ -36,6 +37,8 @@ function navBadge(count: number | undefined) {
 }
 
 export function TraderShell({ children }: { children: ReactNode }) {
+  const desk = useCommodityDesk();
+  const router = useRouter();
   const pathname = usePathname();
   const { data: session } = useSession();
   const firstName = session?.user?.name?.split(" ")[0] ?? "Trader";
@@ -69,11 +72,18 @@ export function TraderShell({ children }: { children: ReactNode }) {
 
   return (
     <AppShell
-      brandSubtitle="Trading Desk"
+      brandSubtitle={desk.active ? `${desk.active.name} Desk` : "Trading Desk"}
       pathname={pathname}
       nav={appNav}
       sidebarTop={
         <div className="border-b border-border px-4 py-3">
+          <label className="mb-3 block text-xs text-subtle">
+            Commodity dashboard
+            <select aria-label="Commodity dashboard" className="kastros-select mt-1 w-full" value={desk.active?.id ?? ""} onChange={e => { desk.select(e.target.value); router.push("/trader"); }} disabled={!desk.desks.length}>
+              {!desk.desks.length && <option value="">{desk.loading ? "Loading…" : "No assigned commodities"}</option>}
+              {desk.desks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}
+            </select>
+          </label>
           <Link href="/trader/trades/new" className="kastros-btn-primary w-full">
             <Plus className="h-4 w-4" />
             Book Trade

@@ -1,4 +1,5 @@
 "use client";
+import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { tradeFilterConfig } from "@/lib/record-filters";
@@ -58,11 +59,13 @@ function filterInput(filter: TradeFilter) {
 }
 
 export default function MyTradesPage() {
+  const desk = useCommodityDesk();
+  const deskInput = { commodityId: desk.active?.id };
   const [filter, setFilter] = useState<TradeFilter>("ALL");
   const [editRef, setEditRef] = useState<string | null>(null);
   const [cancelRef, setCancelRef] = useState<string | null>(null);
   const utils = trpc.useUtils();
-  const { data: cancelledCount } = trpc.trader.myCancelledCount.useQuery();
+  const { data: cancelledCount } = trpc.trader.myCancelledCount.useQuery(deskInput, { enabled: Boolean(desk.active) });
   const { data: drafts, isLoading: draftsLoading } = trpc.trader.bookingDrafts.useQuery();
   const deleteDraft = trpc.trader.deleteBookingDraft.useMutation({
     onSuccess: () => void utils.trader.bookingDrafts.invalidate(),
@@ -78,15 +81,15 @@ export default function MyTradesPage() {
       URL.revokeObjectURL(url);
     },
   });
-  const { data: trades, isLoading } = trpc.trader.myTrades.useQuery(filterInput(filter), {
-    enabled: filter !== "CANCELLED",
+  const { data: trades, isLoading } = trpc.trader.myTrades.useQuery({ ...filterInput(filter), ...deskInput }, {
+    enabled: Boolean(desk.active) && filter !== "CANCELLED",
   });
   // The Cancelled tab is a different report, not a filter of the same one — a
   // dead trade is read through its note, not through its booking terms.
   const { data: cancelled, isLoading: cancelledLoading } =
-    trpc.trader.myCancelledTrades.useQuery(undefined, { enabled: filter === "CANCELLED" });
+    trpc.trader.myCancelledTrades.useQuery(deskInput, { enabled: Boolean(desk.active) && filter === "CANCELLED" });
 
-  const draftRows = (drafts ?? []).map((d) => ({ ...d,
+  const draftRows = (drafts ?? []).filter(d => !d.summary?.commodityLabel || d.summary.commodityLabel.startsWith(`${desk.active?.code} — `)).map((d) => ({ ...d,
     commodityCode: d.summary?.commodityLabel?.split(" — ")[0],
     counterpartyName: d.summary?.counterpartyLabel?.split(" — ").slice(1).join(" — ") || undefined,
   }));
@@ -95,6 +98,8 @@ export default function MyTradesPage() {
   const visibleTrades = listFilters.apply(trades ?? []);
   const visibleDrafts = listFilters.apply(draftRows);
   const visibleCancelled = listFilters.apply(cancelled ?? []);
+
+  if (!desk.active) return <p>{desk.error ?? "Select an assigned commodity to view its trades."}</p>;
 
   return (
     <div className="kastros-desk-scroll">
@@ -120,6 +125,7 @@ export default function MyTradesPage() {
             type="button"
             onClick={() =>
               exportCsv.mutate({
+                commodityId: desk.active?.id,
                 from: startOfMonth(new Date()),
                 to: endOfMonth(new Date()),
               })

@@ -19,7 +19,7 @@ function rangeFor(day: string, group: ReportFilters["groupBy"]) {
   return { from: start, to: d.toISOString().slice(0, 10) };
 }
 
-export function CommercialReportPanel({ scope = "finance", margins = false }: { scope?: "finance" | "trader"; margins?: boolean }) {
+export function CommercialReportPanel({ scope = "finance", margins = false, deskCommodityId }: { scope?: "finance" | "trader"; margins?: boolean; deskCommodityId?: string }) {
   const [filters, setFilters] = useState<ReportFilters>(() => ({ ...rangeFor(pkToday(), "month"), basis: "delivered", groupBy: "month" }));
   const [draft, setDraft] = useState(filters);
   const [anchor, setAnchor] = useState(pkToday);
@@ -29,7 +29,7 @@ export function CommercialReportPanel({ scope = "finance", margins = false }: { 
   const [page, setPage] = useState(0);
   const [exportError, setExportError] = useState<string | null>(null);
   const finance = trpc.reports.commercial.useQuery(filters, { enabled: scope === "finance", retry: false, refetchInterval: 60_000 });
-  const trader = trpc.trader.commoditySalesReport.useQuery(filters, { enabled: scope === "trader", retry: false, refetchInterval: 60_000 });
+  const trader = trpc.trader.commoditySalesReport.useQuery(deskCommodityId ? { ...filters, commodityId: deskCommodityId } : filters, { enabled: scope === "trader", retry: false, refetchInterval: 60_000 });
   const query = scope === "trader" ? trader : finance;
   const data = query.data;
   const sales = useMemo(() => (data?.sales ?? []).filter((s) => `${s.batchRefs.join(" ")} ${s.reference} ${s.counterparty}`.toLowerCase().includes(search.toLowerCase())
@@ -75,7 +75,7 @@ export function CommercialReportPanel({ scope = "finance", margins = false }: { 
           <label className="text-xs">To<input required type="date" min={draft.from} className="kastros-input block" value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} /></label>
           <label className="text-xs">Basis<select className="kastros-input block" value={draft.basis} onChange={(e) => setDraft({ ...draft, basis: e.target.value as ReportFilters["basis"], warehouse: undefined })}><option value="delivered">Received purchases / released sales</option><option value="booked">Booked contracts</option></select></label>
           <label className="text-xs">Group periods<select className="kastros-input block" value={draft.groupBy} onChange={(e) => setDraft({ ...draft, groupBy: e.target.value as ReportFilters["groupBy"] })}><option value="week">Weekly (Monday–Sunday)</option><option value="month">Monthly</option><option value="year">Yearly (calendar)</option></select></label>
-          <label className="text-xs">Commodity<select className="kastros-input block" value={draft.commodityId ?? ""} onChange={(e) => setDraft({ ...draft, commodityId: e.target.value || undefined })}><option value="">All commodities</option>{data?.options.commodities.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>
+          {!deskCommodityId && <label className="text-xs">Commodity<select className="kastros-input block" value={draft.commodityId ?? ""} onChange={(e) => setDraft({ ...draft, commodityId: e.target.value || undefined })}><option value="">All commodities</option>{data?.options.commodities.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>}
           <label className="text-xs">Counterparty<select className="kastros-input block" value={draft.counterpartyId ?? ""} onChange={(e) => setDraft({ ...draft, counterpartyId: e.target.value || undefined })}><option value="">All counterparties</option>{data?.options.counterparties.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>
           <label className="text-xs">Warehouse<select disabled={draft.basis === "booked"} className="kastros-input block" value={draft.warehouse ?? ""} onChange={(e) => setDraft({ ...draft, warehouse: e.target.value || undefined })}><option value="">All warehouses</option>{data?.options.warehouses.map((w) => <option key={w} value={w}>{w}</option>)}</select></label>
           <button type="submit" className="kastros-btn-primary" disabled={!draft.from || !draft.to || draft.from > draft.to}>Apply filters</button>

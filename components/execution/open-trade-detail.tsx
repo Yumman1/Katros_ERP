@@ -1,4 +1,5 @@
 "use client";
+import { isSesameCommodity, sesameFields, isPercentagePayment } from "@/lib/sesame";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -106,6 +107,7 @@ export function OpenTradeDetail({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  const isSesame = isSesameCommodity(trade?.commodity.code, trade?.commodity.name);
   const isCorn = isCornCommodity(trade?.commodity.code);
   const tradeScope = trade?.tradeScope ?? "LOCAL";
   const requiresWarehouse =
@@ -673,13 +675,15 @@ export function OpenTradeDetail({
                       onChange={() => setPaymentType(pt)}
                       className="accent-brand"
                     />
-                    <span className="text-muted-foreground">{paymentTypeLabel(pt)}</span>
+                    <span className="text-muted-foreground">{paymentTypeLabel(pt, undefined, isSesame && isPercentagePayment(pt) ? Number(tradeParams.paymentPercentage) || 100 : undefined)}</span>
                   </label>
                 ),
               )}
             </div>
           </div>
         </Section>
+
+        {isSesame && <Section title="Sesame specifications and route"><div className="grid gap-3 sm:grid-cols-2">{sesameFields(tradeParams).map(def => <Field key={def.key} label={def.label}><input readOnly value={`${tradeParams[def.key] ?? "—"}${def.type === "percent" ? "%" : ""}`} className={`${inputClass} opacity-80`} /></Field>)}</div></Section>}
 
         {/* ── 5. Specification (corn) ── */}
         {isCorn && (

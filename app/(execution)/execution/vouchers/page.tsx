@@ -244,7 +244,7 @@ export default function ExecutionVouchersPage() {
                     {t.tradeRef} ·{" "}
                     {t.isSettlement
                       ? "Settlement (no delivery)"
-                      : paymentTypeLabel(t.paymentType as PaymentType)}{" "}
+                      : t.paymentTerms || paymentTypeLabel(t.paymentType as PaymentType)}{" "}
                     · {t.quantity} {t.quantityUnit}
                   </option>
                 ))}

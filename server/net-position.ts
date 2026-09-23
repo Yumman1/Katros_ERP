@@ -1,3 +1,4 @@
+import { isSesameCommodity } from "@/lib/sesame";
 import type { TradeSeason } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
@@ -218,7 +219,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
         commodityCode: b.commodityCode,
         commodityName: b.commodityName || b.commodityCode,
         season: b.season,
-        label: `${titleCase(b.commodityName || b.commodityCode)} ${titleCase(b.season)}`,
+        label: isSesameCommodity(b.commodityCode, b.commodityName) ? titleCase(b.commodityName || b.commodityCode) : `${titleCase(b.commodityName || b.commodityCode)} ${titleCase(b.season)}`,
         openPurchasesMt: round2(b.openPurchasesMt),
         inventoryMt: round2(b.inventoryMt),
         openSalesMt: round2(b.openSalesMt),

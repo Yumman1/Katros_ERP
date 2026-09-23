@@ -1,4 +1,6 @@
 "use client";
+import { isSesameCommodity, sesameFields, isPercentagePayment, normalizeSesameParams } from "@/lib/sesame";
+import { TradeParametersFields } from "@/components/trader/trade-parameters-fields";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -28,6 +30,7 @@ import {
   priceBasisOptionsForCommodity,
   priceBasisRequiresQuote,
   type QualityTolerances,
+  type PaymentType,
 } from "@/lib/trade-constants";
 import type { TradeParamValues } from "@/lib/trade-parameters";
 import { trpc } from "@/lib/trpc/client";
@@ -60,6 +63,7 @@ export function TradeChangeForm({
   const mode = modeProp ?? (isTraderDraft(trade) ? "direct" : "ceo");
   const utils = trpc.useUtils();
   const tradeRef = trade.tradeRef;
+  const isSesame = isSesameCommodity(trade.commodity.code, trade.commodity.name);
   const isCorn = isCornCommodity(trade.commodity.code);
   const tradeScope = trade.tradeScope ?? "LOCAL";
 
@@ -181,6 +185,8 @@ export function TradeChangeForm({
     if (paymentType === "CREDIT" && creditDays) {
       cleanedParams.creditDays = parseInt(creditDays, 10);
     }
+
+    if (isSesame) Object.assign(cleanedParams, normalizeSesameParams(tradeParams, paymentType as PaymentType));
 
     const commission =
       commissionAmount.trim() !== "" ? parseNumericString(commissionAmount) : null;
@@ -429,11 +435,12 @@ export function TradeChangeForm({
             <SearchableSelect value={paymentType} onChange={(e) => setPaymentType(e.target.value)} className={selectClass}>
               {visiblePaymentTypes.map((pt) => (
                 <option key={pt} value={pt}>
-                  {paymentTypeLabel(pt)}
+                  {isSesame && isPercentagePayment(pt) ? (pt === "ADVANCE_100" ? "Advance" : "After Delivery") : paymentTypeLabel(pt)}
                 </option>
               ))}
             </SearchableSelect>
           </Field>
+          {isSesame && isPercentagePayment(paymentType) && <Field label="Payment percentage"><input aria-label="Payment percentage" type="number" min="0.01" max="100" step="0.01" className={inputClass} value={String(tradeParams.paymentPercentage ?? 100)} onChange={e => setTradeParams(p => ({ ...p, paymentPercentage: e.target.value }))} /></Field>}
           {paymentType === "CREDIT" && (
             <Field label="Credit days">
               <input
@@ -447,6 +454,7 @@ export function TradeChangeForm({
         </div>
       </Section>
 
+      {isSesame && <Section title="Sesame specifications and route"><TradeParametersFields definitions={sesameFields(tradeParams)} values={tradeParams} onChange={(key, value) => setTradeParams(p => ({ ...p, [key]: value }))} /></Section>}
       {isCorn && (
         <Section title="Corn specifications">
           <CornSpecificationFields values={cornSpecs} onChange={setCornSpecs} />

@@ -1,5 +1,8 @@
 "use client";
 
+import { isSesameCommodity, sesameFields, SESAME_DEFAULTS, SESAME_TYPES, isPercentagePayment } from "@/lib/sesame";
+import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
+
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import { ContractDetailsFields } from "@/components/trader/contract-details-fields";
@@ -359,7 +362,11 @@ function BookTradeForm() {
   const priceBasis = watch("priceBasis");
   const counterpartyId = watch("counterpartyId");
 
-  const commodities = refData.data?.commodities ?? [];
+  const desk = useCommodityDesk();
+  const commodities = (refData.data?.commodities ?? []).filter(c => desk.desks.some(d => d.id === c.id));
+  useEffect(() => {
+    if (!commodityId && desk.active && !draftParam) setValue("commodityId", desk.active.id);
+  }, [commodityId, desk.active, draftParam, setValue]);
   const quantityUnitOptions = refData.data?.quantityUnits ?? [...QUANTITY_UNITS];
   const priceWeightUnitOptions = refData.data?.priceWeightUnits ?? [...PRICE_WEIGHT_UNITS];
   const priceCurrencyOptions = refData.data?.priceCurrencies ?? [...PRICE_CURRENCIES];
@@ -394,6 +401,10 @@ function BookTradeForm() {
   );
 
   const isCorn = isCornCommodity(selectedCommodity?.code);
+  const isSesame = isSesameCommodity(selectedCommodity?.code, selectedCommodity?.name);
+  useEffect(() => {
+    if (isSesame) setTradeParams(current => ({ ...SESAME_DEFAULTS, ...current }));
+  }, [isSesame, selectedCommodity?.id]);
   const warehouseStorageDivision = useMemo(
     () =>
       selectedCommodity
@@ -460,23 +471,23 @@ function BookTradeForm() {
   }, [refData.data?.units]);
 
   const commodityParamDefs = useMemo(() => {
-    const base = resolveCommoditySpecificParameters(
+    const base = isSesame ? sesameFields(tradeParams).filter(d => d.group === "quality") : resolveCommoditySpecificParameters(
       selectedCommodity?.code,
       selectedCommodity?.tradeParameterDefs ?? null,
     );
     const seen = new Set(base.map((d) => d.key));
     const extras = sessionParamDefs.filter((d) => !seen.has(d.key));
     return [...base, ...extras];
-  }, [selectedCommodity?.code, selectedCommodity?.tradeParameterDefs, sessionParamDefs]);
+  }, [isSesame, tradeParams, selectedCommodity?.code, selectedCommodity?.tradeParameterDefs, sessionParamDefs]);
 
   const allParamDefs = useMemo(
     () =>
       resolveAllTradeParameters(
-        selectedCommodity?.code,
+        isSesame ? "SESAME" : selectedCommodity?.code,
         selectedCommodity?.tradeParameterDefs ?? null,
         sessionParamDefs,
       ),
-    [selectedCommodity?.code, selectedCommodity?.tradeParameterDefs, sessionParamDefs],
+    [isSesame, selectedCommodity?.code, selectedCommodity?.tradeParameterDefs, sessionParamDefs],
   );
 
   const qtyConversion = useMemo(
@@ -690,6 +701,7 @@ function BookTradeForm() {
         const isMaundPrice = /MAUND/i.test(data.priceWeightUnit);
         book.mutate({
           ...data,
+          season: isSesame ? undefined : data.season,
           price: data.price && data.price > 0 ? data.price : undefined,
           traderName: loggedInTraderName || data.traderName,
           tradeDate: new Date(data.tradeDate),
@@ -705,7 +717,7 @@ function BookTradeForm() {
           quantityUnit: "MT",
           commissionPerUnit: data.commissionPerUnit,
           commissionPerMaund: isMaundPrice && data.commissionPerUnit ? data.commissionPerUnit : undefined,
-          tradeParams: cleanedParams,
+          tradeParams: isSesame ? { ...cleanedParams, paymentPercentage: tradeParams[data.paymentType === "ADVANCE_100" ? "advancePercentage" : "afterDeliveryPercentage"] ?? 100 } : cleanedParams,
           qualityTolerances: isCorn
             ? formatQualityTolerancesSummary(cornSpecs)
             : qualitySummaryFromParams(cleanedParams, allParamDefs),
@@ -744,7 +756,12 @@ function BookTradeForm() {
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Commodity" error={errors.commodityId?.message}>
               <SearchableSelect
-                {...register("commodityId")}
+                {...register("commodityId", { onChange: e => {
+                  const commodity = commodities.find(c => c.id === e.target.value);
+                  setTradeParams(isSesameCommodity(commodity?.code, commodity?.name) ? { ...SESAME_DEFAULTS, quantityToleranceMode: "percent" } : { quantityToleranceMode: "percent" });
+                  setSessionParamDefs([]);
+                  if (commodity) desk.select(commodity.id);
+                } })}
                 className="kastros-select w-full"
               >
                 <option value="">Select…</option>
@@ -767,7 +784,7 @@ function BookTradeForm() {
               {showAddCommodity && (
                 <div className="mt-2 space-y-2 rounded-md border border-kastros-border/80 bg-kastros-bg/40 p-3">
                   <p className="text-xs text-subtle">
-                    New commodities require CEO approval. Once approved, they appear in this dropdown for all traders.
+                    New commodities require CEO approval. Once approved, they appear in this dropdown for its assigned trader.
                   </p>
                   <CommodityRegistrationFields
                     value={newCommodity}
@@ -964,15 +981,26 @@ function BookTradeForm() {
               </SearchableSelect>
             </Field>
 
-            {/* One position book per crop season — the daily net-position mail
-                splits Corn Winter from Corn Summer, so the trade must say
-                which book it belongs to at booking time. */}
-            <Field label="Season" error={errors.season?.message}>
-              <SearchableSelect {...register("season")} className="kastros-select w-full">
-                <option value="SUMMER">Summer</option>
-                <option value="WINTER">Winter</option>
-              </SearchableSelect>
-            </Field>
+            {isSesame ? (
+              <>
+                <Field label="Sesame type">
+                  <SearchableSelect value={String(tradeParams.sesameType ?? "Machine Cleaned")} onChange={e => setTradeParams(p => ({ ...p, sesameType: e.target.value, colour: e.target.value === "Sortex" ? p.colour ?? "" : "" }))} className="kastros-select w-full">
+                    {SESAME_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
+                  </SearchableSelect>
+                </Field>
+                <Field label="Trade route">
+                  <SearchableSelect value={String(tradeParams.tradeRoute ?? "Local")} onChange={e => setTradeParams(p => ({ ...p, tradeRoute: e.target.value }))} className="kastros-select w-full">
+                    <option value="Local">Local</option><option value="Dubai">Dubai</option>
+                  </SearchableSelect>
+                </Field>
+              </>
+            ) : (
+              <Field label="Season" error={errors.season?.message}>
+                <SearchableSelect {...register("season")} className="kastros-select w-full">
+                  <option value="SUMMER">Summer</option><option value="WINTER">Winter</option>
+                </SearchableSelect>
+              </Field>
+            )}
 
             {isCorn ? (
               <>
@@ -1460,7 +1488,15 @@ function BookTradeForm() {
                     className="flex cursor-pointer items-center gap-2 rounded-md border border-kastros-border px-3 py-2 text-xs hover:bg-foreground/[0.02] has-[:checked]:border-success has-[:checked]:bg-success/5"
                   >
                     <input type="radio" value={pt} {...register("paymentType")} className="accent-brand" />
-                    <span className="text-muted-foreground">{paymentTypeLabel(pt)}</span>
+                    {isSesame && isPercentagePayment(pt) ? (
+                      <span className="flex items-center gap-1 text-muted-foreground">
+                        <input aria-label={pt === "ADVANCE_100" ? "Advance percentage" : "After delivery percentage"} type="number" min="0.01" max="100" step="0.01" value={String(tradeParams[pt === "ADVANCE_100" ? "advancePercentage" : "afterDeliveryPercentage"] ?? 100)}
+                          onFocus={() => setValue("paymentType", pt)}
+                          onChange={e => setTradeParams(p => ({ ...p, [pt === "ADVANCE_100" ? "advancePercentage" : "afterDeliveryPercentage"]: e.target.value }))}
+                          className="w-14 rounded border border-kastros-border bg-kastros-bg px-1 py-0.5 text-center text-foreground" />
+                        % {pt === "ADVANCE_100" ? "Advance" : "After Delivery"}
+                      </span>
+                    ) : <span className="text-muted-foreground">{paymentTypeLabel(pt)}</span>}
                   </label>
                 ),
               )}
