@@ -70,9 +70,10 @@ function RecordFilters({ source, config, state, onChange, onClear, count }: {
           {state.dateMode === "range" && <label className="space-y-1"><span className="block text-subtle">To date (inclusive)</span>
             <input className={inputClass} type="date" value={state.to} min={state.from || undefined} onChange={(e) => patch({ to: e.target.value })} /></label>}
         </>}
-        {(config.date || config.quantityPaths || config.deliveryDate) && <label className="w-36 space-y-1"><span className="block text-subtle">Sort</span>
+        {(config.date || config.quantityPaths || config.deliveryDate || config.mtmPaths) && <label className="w-36 space-y-1"><span className="block text-subtle">Sort</span>
           <SearchableSelect searchable={false} className="kastros-select w-full text-xs" value={state.sort} onChange={(e) => patch({ sort: e.target.value })}>
             <option value="original">Default order</option>
+            {config.mtmPaths && <option value="mtm-desc">MTM: highest to lowest</option>}
             {config.date && <><option value="date-desc">Newest first</option><option value="date-asc">Oldest first</option></>}
             {config.quantityPaths && <><option value="quantity-desc">Quantity: high to low</option><option value="quantity-asc">Quantity: low to high</option></>}
             {config.deliveryDate && <><option value="delivery-asc">Delivery: earliest</option><option value="delivery-desc">Delivery: latest</option></>}

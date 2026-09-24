@@ -8,6 +8,7 @@ export type FilterConfig = {
   deliveryDate?: FilterDate;
   searchPaths?: string[];
   quantityPaths?: string[];
+  mtmPaths?: string[];
 };
 export type FilterState = {
   search: string;
@@ -29,7 +30,7 @@ export function restoreFilters(value: unknown): FilterState {
     if (typeof data[key] === "string") state[key] = data[key];
   }
   if (["all", "day", "range"].includes(String(data.dateMode))) state.dateMode = data.dateMode as FilterState["dateMode"];
-  if (["original", "date-asc", "date-desc", "delivery-asc", "delivery-desc", "quantity-asc", "quantity-desc"].includes(String(data.sort))) state.sort = String(data.sort);
+  if (["original", "date-asc", "date-desc", "delivery-asc", "delivery-desc", "quantity-asc", "quantity-desc", "mtm-desc"].includes(String(data.sort))) state.sort = String(data.sort);
   if (data.selected && typeof data.selected === "object" && !Array.isArray(data.selected)) {
     state.selected = Object.fromEntries(Object.entries(data.selected).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   }
@@ -106,6 +107,18 @@ export function matchesRecord(row: unknown, state: FilterState, config: FilterCo
 
 export function filterRecords<T>(rows: readonly T[], state: FilterState, config: FilterConfig): T[] {
   const result = rows.filter((row) => matchesRecord(row, state, config));
+  if (state.sort === "mtm-desc" && config.mtmPaths) {
+    const amount = (row: T) => {
+      const value = valueAt(row, config.mtmPaths!);
+      return value == null || value === "" || !Number.isFinite(Number(value)) ? null : Number(value);
+    };
+    return result.sort((a, b) => {
+      const av = amount(a), bv = amount(b);
+      if (av == null) return bv == null ? 0 : 1;
+      if (bv == null) return -1;
+      return bv - av;
+    });
+  }
   const date = state.sort.startsWith("delivery") ? config.deliveryDate : config.date;
   const quantity = state.sort.startsWith("quantity");
   if (state.sort !== "original" && (quantity ? config.quantityPaths : date)) {

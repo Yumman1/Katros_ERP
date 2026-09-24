@@ -75,7 +75,7 @@ export default function TraderFulfillmentPage() {
 
   const openCount = trades?.filter((t) => t.contractStatus === "Open").length ?? 0;
 
-  const listFilters = useRecordFilters("fulfillment", trades, { ...tradeFilterConfig, fields: [...tradeFields, field("status", "Contract status", "contractStatus"), field("warehouse", "Warehouse", "warehouseAllocationProgress.warehouseName")] });
+  const listFilters = useRecordFilters("fulfillment-v2", trades, { ...tradeFilterConfig, search: false, date: undefined, mtmPaths: ["mtmPnlUsd"], fields: [...tradeFields.filter(f => !["commodity", "counterparty"].includes(f.key)), field("status", "Contract status", "contractStatus"), field("warehouse", "Warehouse", "warehouseAllocationProgress.warehouseName")] });
   const pagination = useListPagination(listFilters.rows, { pageSize: 10, resetKey: listFilters.resetKey });
 
   return (
@@ -143,6 +143,7 @@ export default function TraderFulfillmentPage() {
                     >
                       {t.contractStatus === "Open" ? "In progress" : "Fulfilled"}
                     </span>
+                    <span className="text-xs text-subtle">MTM (USD): {t.mtmPnlUsd == null ? "Unavailable" : t.mtmPnlUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     {t.contractStatus === "Open" && (
                       closePending ? (
                         <span className="text-[10px] font-medium text-accent-secondary">Close pending CEO</span>

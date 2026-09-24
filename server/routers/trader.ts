@@ -1165,10 +1165,13 @@ export const traderRouter = router({
   /** Locked trades with fulfillment progress for the signed-in trader. */
   tradeFulfillment: protectedProcedure.query(async ({ ctx }) => {
     const traderName = traderNameFromSession(ctx.session.user);
-    return (await getLockedContracts({}))
+    const [contracts, book] = await Promise.all([getLockedContracts({}), getTraderBookTrades(traderName)]);
+    const mtmByRef = new Map(book.map(t => [t.tradeRef, t.mtmPnlUsd]));
+    return contracts
       .filter((c) => c.traderName === traderName)
       .map((c) => ({
         tradeRef: c.tradeRef,
+        mtmPnlUsd: mtmByRef.get(c.tradeRef) ?? null,
         direction: c.direction,
         executionProfile: c.executionProfile,
         tradeScope: c.tradeScope,

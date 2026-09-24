@@ -1,4 +1,6 @@
 "use client";
+import { useDeskWidgets } from "@/components/trader/desk-widget-editor";
+import type { DeskWidgetId } from "@/lib/trader-desk-widgets";
 import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
@@ -24,8 +26,9 @@ const statusStyle: Partial<Record<TradeStatus, string>> = {
 
 export default function TraderDeskPage() {
   const desk = useCommodityDesk();
+  const widgets = useDeskWidgets(desk.active?.id);
   const input = { commodityId: desk.active?.id };
-  const options = { enabled: Boolean(desk.active) };
+  const options = { enabled: Boolean(desk.active), refetchInterval: 30_000 };
   const { data: summary, isLoading, error: summaryError } = trpc.trader.deskSummary.useQuery(input, options);
   const { data: trades } = trpc.trader.myTrades.useQuery(input, options);
   const { data: actions } = trpc.trader.actionItems.useQuery(input, options);
@@ -59,25 +62,21 @@ export default function TraderDeskPage() {
           </Link>
         </div>
 
-        <OverdueAlertsCard title="Company-wide overdue payments" />
+        {widgets.editor}
+        {widgets.empty && <p className="rounded-lg border border-border p-6 text-subtle">Your desk is empty. Use Edit widgets to add widgets back.</p>}
+        {widgets.visible("overdue") && <OverdueAlertsCard title="Company-wide overdue payments" />}
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           {[
-            { label: "Open trades", value: summary.openTrades.toString() },
-            {
-              label: "Pending confirmation",
-              value: summary.pendingConfirmation.toString(),
-              warn: summary.pendingConfirmation > 0,
-            },
-            { label: "Deliveries this week", value: summary.deliveriesThisWeek.toString() },
-            { label: "Booked today", value: summary.bookedToday.toString() },
-            { label: "Today's volume", value: `${formatQty(summary.todayVolumeMt)} MT` },
-            {
-              label: "My open MTM",
-              value: formatCurrency(summary.myMtm, "USD"),
-              tone: summary.myMtm >= 0 ? "up" : "down",
-            },
-          ].map((t) => (
+            { id: "totalBought", label: "Total bought", value: `${formatQty(summary.totalBoughtMt)} MT`, detail: "Confirmed purchases, all time" },
+            { id: "inventory", label: "Inventory", value: summary.inventoryMt == null ? "—" : `${formatQty(summary.inventoryMt)} MT`, detail: "Commodity stock across warehouses" },
+            { id: "totalSold", label: "Total sold", value: `${formatQty(summary.totalSoldMt)} MT`, detail: "Confirmed sales, all time" },
+            { id: "openTrades", label: "Open trades", value: summary.openTrades.toString() },
+            { id: "deliveries", label: "Deliveries this week", value: summary.deliveriesThisWeek.toString() },
+            { id: "bookedToday", label: "Booked today", value: summary.bookedToday.toString() },
+            { id: "todayVolume", label: "Today's volume", value: `${formatQty(summary.todayVolumeMt)} MT` },
+            { id: "openMtm", label: "My open MTM", value: summary.mtmUnconverted ? "Unavailable" : formatCurrency(summary.myMtm, "USD"), detail: summary.mtmUnconverted ? `${summary.mtmUnconverted} trade(s) missing FX conversion` : "Open locked trades · USD", tone: summary.myMtm >= 0 ? "up" : "down" },
+          ].filter(t => widgets.visible(t.id as DeskWidgetId)).map((t) => (
             <div
               key={t.label}
               className="rounded-lg border border-kastros-border bg-kastros-card px-3 py-2.5"
@@ -89,19 +88,18 @@ export default function TraderDeskPage() {
                     ? "text-success"
                     : "tone" in t && t.tone === "down"
                       ? "text-kastros-red"
-                      : "warn" in t && t.warn
-                        ? "text-warning"
-                        : "text-foreground"
+                      : "text-foreground"
                 }`}
               >
                 {t.value}
               </div>
+              {t.detail && <p className="mt-1 text-xs text-subtle">{t.detail}</p>}
             </div>
           ))}
         </div>
 
         <div className="grid gap-4 lg:grid-cols-3">
-          <div className="lg:col-span-2 rounded-lg border border-kastros-border bg-kastros-card">
+          {widgets.visible("tradeList") && <div className={`${widgets.visible("actions") || widgets.visible("mtmCommodity") || widgets.visible("exposure") ? "lg:col-span-2" : "lg:col-span-3"} rounded-lg border border-kastros-border bg-kastros-card`}>
             <div className="flex items-center justify-between border-b border-kastros-border px-3 py-2">
               <span className="text-sm font-medium text-muted-foreground">My open trades</span>
               <Link href="/trader/trades" className="text-xs text-success hover:underline">
@@ -187,7 +185,7 @@ export default function TraderDeskPage() {
                       <td
                         className={`px-2 py-1.5 data-grid ${(t.mtmPnlUsd ?? t.mtmPnl) >= 0 ? "text-success" : "text-kastros-red"}`}
                       >
-                        {formatCurrency(t.mtmPnlUsd ?? t.mtmPnl, "USD")}
+                        {t.mtmPnlUsd == null ? "Unavailable" : formatCurrency(t.mtmPnlUsd, "USD")}
                       </td>
                       <td className="px-2 py-1.5">
                         <span
@@ -201,10 +199,10 @@ export default function TraderDeskPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </div>}
 
-          <div className="space-y-4">
-            <div className="rounded-lg border border-kastros-border bg-kastros-card p-3">
+          <div className={widgets.visible("tradeList") ? "space-y-4" : "space-y-4 lg:col-span-3"}>
+            {widgets.visible("actions") && <div className="rounded-lg border border-kastros-border bg-kastros-card p-3">
               <h2 className="text-sm font-medium text-muted-foreground">Action required</h2>
               <div className="mt-2 space-y-2">
                 {(actions ?? []).length === 0 && (
@@ -225,30 +223,23 @@ export default function TraderDeskPage() {
                   </Link>
                 ))}
               </div>
-            </div>
+            </div>}
 
-            <div className="rounded-lg border border-kastros-border bg-kastros-card p-3">
+            {widgets.visible("exposure") && <div className="rounded-lg border border-kastros-border bg-kastros-card p-3">
               <h2 className="text-sm font-medium text-muted-foreground">My exposure by commodity</h2>
-              <div className="mt-2 space-y-2">
-                {exposure?.map((e) => (
-                  <div key={e.code} className="flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-medium text-foreground">{e.code}</span>
-                      <span className="ml-2 text-subtle">Net {formatQty(e.net)} MT</span>
-                    </div>
-                    <span
-                      className={`data-grid ${e.mtm >= 0 ? "text-success" : "text-kastros-red"}`}
-                    >
-                      {formatCurrency(e.mtm, "USD")}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+              <div className="mt-2 space-y-2">{exposure?.map(e => <div key={e.code} className="flex items-center justify-between gap-2 text-xs"><span>{e.code} · Net {formatQty(e.net)} MT</span><span className="data-grid">{e.mtmUnconverted ? "Unavailable" : formatCurrency(e.mtm, "USD")}</span></div>)}</div>
+            </div>}
+
+            {widgets.visible("mtmCommodity") && <div className="rounded-lg border border-kastros-border bg-kastros-card p-3">
+              <h2 className="text-sm font-medium text-muted-foreground">MTM by commodity</h2>
+              <div className="mt-3 flex items-center justify-between gap-3 text-sm"><span>{desk.active?.name}</span><span className="data-grid">{summary.mtmUnconverted ? "Unavailable" : formatCurrency(summary.myMtm, "USD")}</span></div>
+              <p className="mt-2 text-xs text-subtle">{summary.mtmUnconverted ? `${summary.mtmUnconverted} trade(s) need an FX rate before a complete USD MTM is available.` : "Open locked trades for this commodity. Switch desks to view another commodity."}</p>
+            </div>}
+
           </div>
         </div>
 
-        <TraderDeskReports key={desk.active?.id} deskCommodityCode={desk.active?.code} />
+        {widgets.visible("reports") && <TraderDeskReports key={desk.active?.id} deskCommodityCode={desk.active?.code} />}
       </DeskScroll>
     </DeskPage>
   );

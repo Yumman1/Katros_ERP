@@ -1,3 +1,6 @@
+import { prisma } from "@/server/db";
+import { getSeasonNetPositions } from "@/server/net-position";
+import { committedTradeTotals } from "@/lib/trader-desk-widgets";
 import { TradeStatus } from "@prisma/client";
 import { addDays, startOfDay } from "date-fns";
 import { canonicalTraderName } from "@/lib/trader-identity";
@@ -43,6 +46,10 @@ function deliveryOverlapsWeek(t: MockTraderTrade, weekStart: Date, weekEnd: Date
 export async function buildTraderDeskSummary(traderName: string, commodityId?: string) {
   const trades = await getTraderBookTrades(traderName, commodityId);
 
+  const totals = committedTradeTotals(trades);
+  const commodity = commodityId ? await prisma.commodity.findUnique({ where: { id: commodityId }, select: { code: true } }) : null;
+  const inventoryMt = commodity ? (await getSeasonNetPositions()).filter(row => row.commodityCode === commodity.code).reduce((sum, row) => sum + row.inventoryMt, 0) : null;
+
   const active = trades.filter(isActiveTraderTrade);
   const pendingAction = trades.filter(
     (t) =>
@@ -75,6 +82,8 @@ export async function buildTraderDeskSummary(traderName: string, commodityId?: s
 
   return {
     traderName,
+    ...totals,
+    inventoryMt,
     desk: deskLabel,
     openTrades: active.length,
     pendingConfirmation: pendingAction.length,
