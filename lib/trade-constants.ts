@@ -1,3 +1,5 @@
+import { isSesameCommodity } from "./sesame";
+
 export type PaymentType =
   | "DP"
   | "LC"
@@ -118,7 +120,7 @@ export type ExecutionIncoterm = (typeof EXECUTION_INCOTERMS)[number];
 export const STANDARD_INCOTERMS = ["EXW", "FCA", "FOB", "CFR", "CIF", "DAP"] as const;
 export type StandardIncoterm = (typeof STANDARD_INCOTERMS)[number];
 
-export const INCOTERMS = [...EXECUTION_INCOTERMS, ...STANDARD_INCOTERMS] as const;
+export const INCOTERMS = [...EXECUTION_INCOTERMS, ...STANDARD_INCOTERMS, "CNF"] as const;
 export type Incoterm = (typeof INCOTERMS)[number];
 
 /** Full form of every incoterm — shown wherever an incoterm is displayed or selected. */
@@ -130,6 +132,7 @@ export const INCOTERM_FULL_NAMES: Record<string, string> = {
   FCA: "FCA — Free Carrier",
   FOB: "FOB — Free on Board",
   CFR: "CFR — Cost and Freight",
+  CNF: "CNF — Cost and Freight",
   CIF: "CIF — Cost, Insurance and Freight",
   DAP: "DAP — Delivered at Place",
 };
@@ -148,6 +151,7 @@ export function incotermsForBooking(
   direction: "BUY" | "SELL",
   scope: TradeScope,
   commodityCode?: string | null,
+  commodityName?: string | null,
 ): readonly string[] {
   if (scope === "LOCAL") {
     if (isCornCommodity(commodityCode)) {
@@ -155,7 +159,8 @@ export function incotermsForBooking(
     }
     return ["Spot", "Delivered"];
   }
-  return incotermsForDirection(direction);
+  const terms = incotermsForDirection(direction);
+  return isSesameCommodity(commodityCode, commodityName) ? [...terms, "CNF"] : terms;
 }
 
 export function defaultIncotermForBooking(

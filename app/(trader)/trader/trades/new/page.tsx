@@ -1,6 +1,6 @@
 "use client";
 
-import { isSesameCommodity, sesameFields, SESAME_DEFAULTS, SESAME_TYPES, isPercentagePayment } from "@/lib/sesame";
+import { isSesameCommodity, sesameFields, SESAME_DEFAULTS, SESAME_TYPES, SESAME_TRADING_ENTITIES, sesameTradingEntity, sesameNetPrice, isPercentagePayment } from "@/lib/sesame";
 import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -257,6 +257,7 @@ function BookTradeForm() {
   const draftRestoredRef = useRef(false);
   const restoreFixupRef = useRef<{
     form: Partial<Form>;
+    priceIncludesCommission?: boolean;
     cornSpecs: QualityTolerances | null;
   } | null>(null);
 
@@ -265,6 +266,7 @@ function BookTradeForm() {
     handleSubmit,
     watch,
     setValue,
+    setError,
     reset,
     getValues,
     control,
@@ -319,6 +321,7 @@ function BookTradeForm() {
     draftRestoredRef.current = true;
     const payload = (draft.payload ?? {}) as {
       form?: Partial<Form>;
+      priceIncludesCommission?: boolean;
       tradeParams?: TradeParamValues;
       selectedWarehouses?: string[];
       cornSpecs?: QualityTolerances;
@@ -336,7 +339,7 @@ function BookTradeForm() {
     if (Array.isArray(payload.sessionParamDefs)) setSessionParamDefs(payload.sessionParamDefs);
     // Commodity-driven effects overwrite units/specs once the commodity loads —
     // stash the saved values so the fixup effect below can re-apply them.
-    restoreFixupRef.current = { form: savedForm, cornSpecs: payload.cornSpecs ?? null };
+    restoreFixupRef.current = { form: savedForm, priceIncludesCommission: payload.priceIncludesCommission, cornSpecs: payload.cornSpecs ?? null };
     draftIdRef.current = draft.id;
   }, [draftQuery.data, draftQuery.isError, draftQuery.isSuccess, reset, getValues]);
 
@@ -396,14 +399,14 @@ function BookTradeForm() {
       : null;
 
   const bookingIncoterms = useMemo(
-    () => incotermsForBooking(direction, tradeScope, selectedCommodity?.code),
-    [direction, tradeScope, selectedCommodity?.code],
+    () => incotermsForBooking(direction, tradeScope, selectedCommodity?.code, selectedCommodity?.name),
+    [direction, tradeScope, selectedCommodity?.code, selectedCommodity?.name],
   );
 
   const isCorn = isCornCommodity(selectedCommodity?.code);
   const isSesame = isSesameCommodity(selectedCommodity?.code, selectedCommodity?.name);
   useEffect(() => {
-    if (isSesame) setTradeParams(current => ({ ...SESAME_DEFAULTS, ...current }));
+    if (isSesame) setTradeParams(current => ({ ...SESAME_DEFAULTS, ...current, tradingEntity: sesameTradingEntity(current) }));
   }, [isSesame, selectedCommodity?.id]);
   const warehouseStorageDivision = useMemo(
     () =>
@@ -435,7 +438,7 @@ function BookTradeForm() {
   }, [deliveryStart, deliveryEnd]);
 
   useEffect(() => {
-    const allowed = incotermsForBooking(direction, tradeScope, selectedCommodity?.code);
+    const allowed = incotermsForBooking(direction, tradeScope, selectedCommodity?.code, selectedCommodity?.name);
     if (!allowed.includes(incoterms)) {
       setValue(
         "incoterms",
@@ -443,7 +446,7 @@ function BookTradeForm() {
         { shouldValidate: true },
       );
     }
-  }, [direction, tradeScope, incoterms, selectedCommodity?.code, setValue]);
+  }, [direction, tradeScope, incoterms, selectedCommodity?.code, selectedCommodity?.name, setValue]);
 
   useEffect(() => {
     if (!priceBasisOptions.includes(priceBasis)) {
@@ -522,6 +525,9 @@ function BookTradeForm() {
     const fix = restoreFixupRef.current;
     if (!fix || !selectedCommodity) return;
     restoreFixupRef.current = null;
+    if (isSesame && !fix.priceIncludesCommission && fix.form.price != null) {
+      setValue("price", fix.form.price + (fix.form.commissionPerUnit ?? 0));
+    }
     if (fix.cornSpecs) setCornSpecs(fix.cornSpecs);
     if (fix.form.quantityUnit) setValue("quantityUnit", fix.form.quantityUnit);
     if (fix.form.priceCurrency) setValue("priceCurrency", fix.form.priceCurrency);
@@ -607,7 +613,7 @@ function BookTradeForm() {
   const commissionInBase = commissionTotalQuoted * currencyToBaseFactor(priceCurrency);
   const netAfterCommission = Math.max(0, notional - commissionInBase);
   /** Gross payable for finance — contract value plus broker commission. */
-  const totalWithCommission = notional + commissionInBase;
+  const totalWithCommission = isSesame ? notional : notional + commissionInBase;
   const quotedPriceUnit = priceUnitLabel({ currency: priceCurrency, weightUnit: priceWeightUnit });
   const fmtBase = (v: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: baseCurrency }).format(v);
@@ -618,15 +624,17 @@ function BookTradeForm() {
     filerStatus === "NON_FILER"
       ? policy.data?.advanceTaxRatePctNonFiler ?? null
       : policy.data?.advanceTaxRatePct ?? null;
+  const taxableNotional = isSesame ? netAfterCommission : notional;
   const advanceTaxAmount =
     direction === TradeDirection.SELL && notional > 0 && advanceTaxRatePct != null
-      ? (notional * advanceTaxRatePct) / 100
+      ? (taxableNotional * advanceTaxRatePct) / 100
       : 0;
 
   // ── Draft autosave — 2s after the last change, once the form is meaningful.
   const formValues = watch();
   const draftPayloadSerialized = JSON.stringify({
     form: formValues,
+    priceIncludesCommission: isSesame,
     tradeParams,
     selectedWarehouses,
     cornSpecs,
@@ -670,6 +678,13 @@ function BookTradeForm() {
     handleSubmit(
       (data) => {
         setSubmitHint(null);
+        if (isSesame) {
+          try { sesameNetPrice(data.price, data.commissionPerUnit); }
+          catch (error) {
+            setError("commissionPerUnit", { message: error instanceof Error ? error.message : "Invalid commission" });
+            return;
+          }
+        }
         setPendingAction(submitToExecution ? "submit" : "draft");
         const cleanedParams = Object.fromEntries(
           Object.entries(tradeParams).filter(([, v]) => v != null && v !== ""),
@@ -702,6 +717,7 @@ function BookTradeForm() {
         book.mutate({
           ...data,
           season: isSesame ? undefined : data.season,
+          priceIncludesCommission: isSesame,
           price: data.price && data.price > 0 ? data.price : undefined,
           traderName: loggedInTraderName || data.traderName,
           tradeDate: new Date(data.tradeDate),
@@ -988,9 +1004,9 @@ function BookTradeForm() {
                     {SESAME_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
                   </SearchableSelect>
                 </Field>
-                <Field label="Trade route">
-                  <SearchableSelect value={String(tradeParams.tradeRoute ?? "Local")} onChange={e => setTradeParams(p => ({ ...p, tradeRoute: e.target.value }))} className="kastros-select w-full">
-                    <option value="Local">Local</option><option value="Dubai">Dubai</option>
+                <Field label="Trading Entity">
+                  <SearchableSelect value={String(sesameTradingEntity(tradeParams))} onChange={e => setTradeParams(p => ({ ...p, tradingEntity: e.target.value }))} className="kastros-select w-full">
+                    {SESAME_TRADING_ENTITIES.map(entity => <option key={entity} value={entity}>{entity}</option>)}
                   </SearchableSelect>
                 </Field>
               </>
@@ -1056,7 +1072,7 @@ function BookTradeForm() {
         {/* ── 2. Quantity & pricing ── */}
         <Section
           title="Quantity & pricing"
-          description={`Price and broker commission per selected unit (${quotedPriceUnit}). Quantity stored as MT internally (unit → kg → MT).`}
+          description={isSesame ? `Price includes commission. Commission is deducted to calculate the net amount (${quotedPriceUnit}).` : `Price and broker commission per selected unit (${quotedPriceUnit}). Quantity stored as MT internally (unit → kg → MT).`}
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={`Quantity (${quantityUnit})`} error={errors.quantity?.message}>
@@ -1194,7 +1210,7 @@ function BookTradeForm() {
           </div>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
             <Field
-              label={`Price (${quotedPriceUnit}) (without commission)${requiresQuotedPrice ? "" : " — optional"}`}
+              label={`Price (${quotedPriceUnit}) (${isSesame ? "with commission" : "without commission"})${requiresQuotedPrice ? "" : " — optional"}`}
               error={errors.price?.message}
             >
               <Controller
@@ -1212,7 +1228,7 @@ function BookTradeForm() {
               />
             </Field>
             <Field
-              label={`Broker commission (${quotedPriceUnit})${requiresQuotedPrice ? "" : " — optional"}`}
+              label={`${isSesame ? "Commission" : "Broker commission"} (${quotedPriceUnit})${requiresQuotedPrice ? "" : " — optional"}`}
               error={errors.commissionPerUnit?.message}
             >
               <Controller
@@ -1306,7 +1322,7 @@ function BookTradeForm() {
             {commissionPerUnit != null && commissionPerUnit > 0 && (
               <>
                 <div>
-                  Broker commission:{" "}
+                  {isSesame ? "Commission:" : "Broker commission:"}{" "}
                   <span className="data-grid text-warning">
                     {commissionPerUnit.toLocaleString()} {quotedPriceUnit}
                     {priceDenomCount > 0 && (
@@ -1344,7 +1360,7 @@ function BookTradeForm() {
                 <div title="Set on Finance → Policies">
                   Total receivable (incl. 236G):{" "}
                   <span className="data-grid font-semibold text-foreground">
-                    {fmtBase(notional + advanceTaxAmount)}
+                    {fmtBase(taxableNotional + advanceTaxAmount)}
                   </span>
                 </div>
                 {commissionInBase > 0 && (
@@ -1449,7 +1465,7 @@ function BookTradeForm() {
         </Section>
 
         {/* ── 4. Contract details / Payment ── */}
-        {!isCorn && (
+        {!isCorn && !isSesame && (
           <Section title="Contract details" description="Broker, tolerance, and payment — same fields on every trade in the file">
             <ContractDetailsFields
               values={tradeParams}

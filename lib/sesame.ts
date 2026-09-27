@@ -5,14 +5,30 @@ export function isSesameCommodity(code?: string | null, name?: string | null): b
   return ["SES", "SESAME"].includes(code?.trim().toUpperCase() ?? "") || /^sesame(?:\s+seeds?)?$/i.test(name?.trim() ?? "");
 }
 
-export const SESAME_TYPES = ["Machine Cleaned", "Raw", "CNF", "Sortex", "Impurities"] as const;
+export const SESAME_TYPES = ["Machine Cleaned", "Raw", "Sortex", "Impurities"] as const;
+export const SESAME_TRADING_ENTITIES = ["Kastros FZCO", "Kastros PAK"] as const;
+
+/** Preserve the entity implied by legacy routes without rewriting stored trades. */
+export function sesameTradingEntity(values: TradeParamValues) {
+  return values.tradingEntity ?? (values.tradeRoute === "Dubai" ? "Kastros FZCO" : "Kastros PAK");
+}
+
+/** Storage and downstream calculations use the price excluding commission. */
+export function sesameNetPrice(price: number | undefined, commission = 0): number | undefined {
+  if (price == null) return undefined;
+  if (!Number.isFinite(price) || !Number.isFinite(commission) || commission < 0 || commission >= price) {
+    throw new Error("Commission must be non-negative and less than the price with commission");
+  }
+  return price - commission;
+}
+
 export const SESAME_DEFAULTS: TradeParamValues = {
-  sesameType: "Machine Cleaned", tradeRoute: "Local", purity: 99, ffa: 2,
+  sesameType: "Machine Cleaned", tradingEntity: "Kastros PAK", purity: 99, ffa: 2,
   moisture: 7, oilContent: 49, admixture: 1,
 };
 export const SESAME_FIELDS: TradeParamDefinition[] = [
   { key: "sesameType", label: "Sesame type", type: "select", group: "contract", options: [...SESAME_TYPES], required: true },
-  { key: "tradeRoute", label: "Trade route", type: "select", group: "logistics", options: ["Local", "Dubai"], required: true },
+  { key: "tradingEntity", label: "Trading Entity", type: "select", group: "logistics", options: [...SESAME_TRADING_ENTITIES], required: true },
   ...[["purity", "Purity"], ["ffa", "FFA"], ["moisture", "Moisture"], ["oilContent", "Oil Content"], ["admixture", "Admixture"]].map(([key, label]): TradeParamDefinition => ({ key, label, type: "percent", unit: "%", group: "quality", required: true })),
   { key: "colour", label: "Color", type: "text", group: "quality", placeholder: "Type a color" },
 ];
@@ -29,7 +45,9 @@ export function normalizeSesameParams(values: TradeParamValues, paymentType: Pay
     if (value !== undefined) params[key] = value;
   }
   if (!(SESAME_TYPES as readonly unknown[]).includes(params.sesameType)) throw new Error("Select a Sesame type");
-  if (params.tradeRoute !== "Local" && params.tradeRoute !== "Dubai") throw new Error("Select Local or Dubai as the trade route");
+  params.tradingEntity = sesameTradingEntity(values);
+  if (!(SESAME_TRADING_ENTITIES as readonly unknown[]).includes(params.tradingEntity)) throw new Error("Select Kastros FZCO or Kastros PAK as the trading entity");
+  delete params.tradeRoute;
   for (const key of ["purity", "ffa", "moisture", "oilContent", "admixture"]) {
     const value = params[key];
     if (value == null || String(value).trim() === "" || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100) throw new Error(`${SESAME_FIELDS.find(d => d.key === key)?.label} must be between 0 and 100%`);

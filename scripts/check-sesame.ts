@@ -22,15 +22,17 @@ async function main() {
   const caller = (user: typeof saad) => traderRouter.createCaller({ prisma, session: { user: { id: user.id, name: user.name, email: user.email, role: user.role, isHead: false }, expires: "2099-01-01" } });
   const sesameApi = caller(saad), cornApi = caller(fahad);
   assert.deepEqual((await sesameApi.myCommodityDesks()).map(c => c.code), ["SES"]);
-  const input = { traderName: saad.name!, commodityId: sesame.id, counterpartyId: cp.id, direction: "BUY" as const, quantity: 10, quantityUnit: "MT", price: 100, priceBasis: "Fixed" as const, commissionPerUnit: 0, tradeDate: new Date(), deliveryStart: new Date(), deliveryEnd: new Date(), originName: "Karachi", incoterms: "Delivered" as const, paymentType: "ADVANCE_100" as const, tradeScope: "INTERNATIONAL" as const, tradeParams: { ...SESAME_DEFAULTS, sesameType: "Sortex", colour: "Ivory", tradeRoute: "Dubai", paymentPercentage: 35 } };
+  const input = { traderName: saad.name!, commodityId: sesame.id, counterpartyId: cp.id, direction: "BUY" as const, quantity: 10, quantityUnit: "MT", price: 100, priceIncludesCommission: true, priceBasis: "Fixed" as const, commissionPerUnit: 2, tradeDate: new Date(), deliveryStart: new Date(), deliveryEnd: new Date(), originName: "Karachi", incoterms: "Delivered" as const, paymentType: "ADVANCE_100" as const, tradeScope: "INTERNATIONAL" as const, tradeParams: { ...SESAME_DEFAULTS, sesameType: "Sortex", colour: "Ivory", tradingEntity: "Kastros FZCO", paymentPercentage: 35 } };
   const draft = await sesameApi.saveBookingDraft({ payload: { form: { commodityId: sesame.id }, tradeParams: input.tradeParams } });
   const restored = await sesameApi.bookingDraft({ id: draft.id });
   assert.deepEqual(restored.payload.tradeParams, input.tradeParams);
   const booked = await sesameApi.bookTrade(input);
   const persisted = await sesameApi.tradeByRef({ tradeRef: booked.tradeRef });
+  assert.equal(persisted?.price, 98);
+  assert.equal(persisted?.commissionAmount, 20);
   assert.equal(persisted?.paymentTerms, "35% Advance");
   assert.equal(persisted?.tradeParams?.colour, "Ivory");
-  assert.equal(persisted?.tradeParams?.tradeRoute, "Dubai");
+  assert.equal(persisted?.tradeParams?.tradingEntity, "Kastros FZCO");
   assert.equal(persisted?.tradeScope, "INTERNATIONAL");
   assert.equal(persisted?.maxMoisturePct, 7);
   assert.match(persisted?.qualityTolerances ?? "", /Purity.*99/);
@@ -43,14 +45,15 @@ async function main() {
   await assert.rejects(() => cornApi.bookTrade(input), /not assigned/);
   await assert.rejects(() => sesameApi.bookTrade({ ...input, tradeParams: { ...input.tradeParams, paymentPercentage: 101 } }), /percentage/);
   await assert.rejects(() => sesameApi.bookTrade({ ...input, tradeParams: { ...input.tradeParams, moisture: -1 } }), /Moisture/);
-  await assert.rejects(() => sesameApi.bookTrade({ ...input, tradeParams: { ...input.tradeParams, tradeRoute: "Invalid" } }), /route/);
-  const edited = await sesameApi.updateDraftTrade({ tradeRef: booked.tradeRef, patch: { paymentType: "AFTER_DELIVERY_100", tradeParams: { sesameType: "Raw", tradeRoute: "Local", paymentPercentage: 65, purity: 98 } } });
+  await assert.rejects(() => sesameApi.bookTrade({ ...input, tradeParams: { ...input.tradeParams, tradingEntity: "Invalid" } }), /entity/);
+  const edited = await sesameApi.updateDraftTrade({ tradeRef: booked.tradeRef, patch: { paymentType: "AFTER_DELIVERY_100", tradeParams: { sesameType: "Raw", tradingEntity: "Kastros PAK", paymentPercentage: 65, purity: 98 } } });
   assert.equal(edited.trade.paymentTerms, "65% After Delivery");
   assert.equal(edited.trade.tradeParams?.colour, undefined);
-  assert.equal(edited.trade.tradeParams?.tradeRoute, "Local");
+  assert.equal(edited.trade.tradeParams?.tradingEntity, "Kastros PAK");
   assert.match(edited.trade.qualityTolerances ?? "", /98/);
   assert.ok(!(await exportTradeFileCsv({ commodityCode: "SES" })).includes("100% After Delivery"));
   const cornBooking = await cornApi.bookTrade({ ...input, traderName: fahad.name!, commodityId: corn.id, season: "WINTER", tradeScope: "LOCAL", paymentType: "CREDIT", creditDays: 45, tradeParams: { creditDays: 45 } });
+  assert.equal(cornBooking.trade.price, 100);
   assert.equal(cornBooking.trade.season, "WINTER");
   assert.equal(cornBooking.trade.paymentTerms, "45 Day Credit");
   assert.equal(paymentTypeLabel("ADVANCE_100"), "100% Advance");
@@ -71,6 +74,6 @@ async function main() {
   await assert.rejects(() => assignCommodityTrader({ commodityId: sesame.id, traderId: saad.id, expectedVersion: 2, actorId: saad.id }), /CEO/);
   await prisma.user.update({ where: { id: fahad.id }, data: { disabled: true } });
   await assert.rejects(() => cornApi.bookTrade(input), /enabled trader/);
-  console.log("PASS: Sesame booking/persistence/editing, all five types, route independence, payment validation, Corn regression, desk isolation, CEO transfer and disabled-user checks");
+  console.log("PASS: Sesame booking/persistence/editing, all four types, entity independence, payment validation, Corn regression, desk isolation, CEO transfer and disabled-user checks");
 }
 main().finally(() => prisma.$disconnect()).catch(error => { console.error(error); process.exitCode = 1; });

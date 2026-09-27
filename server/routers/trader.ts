@@ -1,5 +1,5 @@
 import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
-import { isSesameCommodity, normalizeSesameParams } from "@/lib/sesame";
+import { isSesameCommodity, normalizeSesameParams, sesameNetPrice } from "@/lib/sesame";
 import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -167,6 +167,8 @@ const bookTradeInputSchema = z
     priceCurrency: priceCurrencySchema.optional(),
     priceWeightUnit: z.string().trim().min(1).optional(),
     priceKgPerUnit: z.number().positive().optional(),
+    /** Sesame booking UI sends a gross quote; legacy callers send net prices. */
+    priceIncludesCommission: z.boolean().optional(),
     /** Broker commission in the same price metric as `price`. */
     commissionPerUnit: z.number().min(0).optional(),
     /** Flat broker commission in the quoted price currency (PKR, USD, or US cents). */
@@ -867,6 +869,14 @@ export const traderRouter = router({
         try { tradeParams = normalizeSesameParams(tradeParams, input.paymentType); }
         catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invalid Sesame terms" }); }
       }
+      if (input.incoterms === "CNF" && (!sesame || input.tradeScope !== "INTERNATIONAL")) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "CNF is available for international Sesame trades only" });
+      }
+      let bookingPrice = input.price;
+      if (sesame && input.priceIncludesCommission) {
+        try { bookingPrice = sesameNetPrice(input.price, input.commissionPerUnit); }
+        catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invalid commission" }); }
+      }
       const cp = await getCounterpartyById(input.counterpartyId);
       if (!cp) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid counterparty" });
@@ -929,7 +939,7 @@ export const traderRouter = router({
           quantityUnit: "MT",
           quantityEntered: qtyEntered,
           quantityEnteredUnit: qtyEnteredUnit,
-          price: input.price,
+          price: bookingPrice,
           currency: input.currency,
           priceCurrency,
           priceWeightUnit,
