@@ -1,3 +1,4 @@
+import { filterDeskRows } from "@/server/execution/desk-scope";
 import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
 import { isSesameCommodity, normalizeSesameParams, sesameNetPrice } from "@/lib/sesame";
 import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
@@ -611,7 +612,10 @@ export const traderRouter = router({
     return mockTraderActionItems(name, input?.commodityId);
   }),
 
-  referenceData: protectedProcedure.query(() => getTraderReferenceData()),
+  referenceData: protectedProcedure.query(async ({ ctx }) => {
+    const data = await getTraderReferenceData();
+    return { ...data, commodities: filterDeskRows(data.commodities, ctx.executionCommodityCode, c => c.code) };
+  }),
 
   counterparties: roleProcedure(["TRADER", "ADMIN"]).query(() => getMergedCounterparties()),
 
@@ -1129,7 +1133,7 @@ export const traderRouter = router({
   }),
 
   /** The daily "Net Position" mail, computed live — one column per commodity + season. */
-  seasonNetPositions: protectedProcedure.query(() => getSeasonNetPositions()),
+  seasonNetPositions: protectedProcedure.query(async ({ ctx }) => filterDeskRows(await getSeasonNetPositions(), ctx.executionCommodityCode, r => r.commodityCode)),
 
   /** Buy and sell counterparty ledger accounts — same view as Execution → Ledgers. */
   counterpartyLedgers: protectedProcedure.query(() => getCounterpartyLedgers()),

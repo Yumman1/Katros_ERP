@@ -215,8 +215,8 @@ export async function exportTradeFileCsv(filter?: TradeFileFilter): Promise<stri
   return lines.join("\n");
 }
 
-export async function tradeFileFilterOptions() {
-  const trades = await mockAllTraderTrades();
+export async function tradeFileFilterOptions(commodityCode?: string) {
+  const trades = (await mockAllTraderTrades()).filter(t => !commodityCode || t.commodity.code === commodityCode);
   const commodities = new Map<string, string>();
   const counterparties = new Map<string, string>();
   const traders = new Set<string>();

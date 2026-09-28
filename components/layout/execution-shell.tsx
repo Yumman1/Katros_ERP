@@ -1,5 +1,7 @@
 "use client";
 
+import { ExecutionCommoditySwitcher, useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
+
 import {
   BookOpen,
   ClipboardList,
@@ -28,6 +30,7 @@ import { cn } from "@/lib/utils";
 
 export function ExecutionShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { active } = useExecutionCommodityDesk();
   const { role, isHead } = useTeam();
   const isExecutionHead = role != null && canActOnDepartment(role, isHead, "EXECUTION");
   // retry: false — non-execution visitors would otherwise 403-loop on these.
@@ -142,12 +145,13 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
 
   return (
     <AppShell
-      brandSubtitle="Execution Desk"
+      brandSubtitle={`${active.name} Execution`}
       contentScroll="page"
       pathname={pathname}
       nav={nav}
-      sidebarTop={
-        summary ? (
+      sidebarTop={<>
+        <ExecutionCommoditySwitcher />
+        {summary ? (
           <div className="mx-4 mb-2 mt-3 grid grid-cols-3 gap-1.5 rounded-xl border border-border bg-foreground/[0.03] p-2">
             <MiniStat
               label="In progress"
@@ -166,8 +170,8 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
               warn
             />
           </div>
-        ) : null
-      }
+        ) : null}
+      </>}
       header={
         <ShellHeader
           left={new Date().toLocaleDateString("en-PK", {

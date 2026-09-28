@@ -1,3 +1,4 @@
+import { deskLedgerWhere } from "@/server/execution/desk-scope";
 import type { CounterpartySide, Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
@@ -398,22 +399,23 @@ export function computeSharedPoolAvailablePkr(input: {
 export async function availableCreditPkr(
   counterpartyId: string,
   db: Db = prisma,
-  options?: { excludeTruckId?: string },
+  options?: { excludeTruckId?: string; commodityCode?: string },
 ): Promise<number> {
+  const deskWhere = await deskLedgerWhere(options?.commodityCode, db);
   const [creditAgg, debitEntries, settlementAgg] = await Promise.all([
     db.counterpartyLedgerEntry.aggregate({
       // Note vouchers pay a cancellation claim — never free credit.
-      where: { counterpartyId, side: "SELL", entryType: "CREDIT", ...NOT_A_NOTE_VOUCHER },
+      where: { AND: [deskWhere], counterpartyId, side: "SELL", entryType: "CREDIT", ...NOT_A_NOTE_VOUCHER },
       _sum: { amountPkr: true },
     }),
     db.counterpartyLedgerEntry.findMany({
-      where: { counterpartyId, side: "SELL", entryType: "DEBIT", truckId: { not: null } },
+      where: { AND: [deskWhere], counterpartyId, side: "SELL", entryType: "DEBIT", truckId: { not: null } },
       select: { truckId: true, amountPkr: true },
     }),
     // Settlement receivables earmark their credit just like a paid truck does —
     // money collected to settle a trade is never free to release another one.
     db.counterpartyLedgerEntry.aggregate({
-      where: { counterpartyId, side: "SELL", entryType: "DEBIT", invoiceId: { not: null } },
+      where: { AND: [deskWhere], counterpartyId, side: "SELL", entryType: "DEBIT", invoiceId: { not: null } },
       _sum: { amountPkr: true },
     }),
   ]);
@@ -458,12 +460,13 @@ export async function canFundTruck(
 ): Promise<TruckFundingCheck> {
   const trade = await db.trade.findUnique({
     where: { tradeRef: input.tradeRef },
-    select: { paymentType: true },
+    select: { paymentType: true, commodity: { select: { code: true } } },
   });
   if (!trade) return { ok: false, kind: "ADVANCE", availablePkr: 0, reason: "Trade not found" };
   const kind = tradeTermsKind(trade.paymentType);
   const available = await availableCreditPkr(input.counterpartyId, db, {
     excludeTruckId: input.excludeTruckId,
+    commodityCode: trade.commodity.code,
   });
   const ok = available + 0.005 >= input.amountPkr;
   return {
@@ -550,13 +553,15 @@ function emptyAging(): Record<AgingBucket, number> {
  * counterparty (voucher targets), plus a BUY account wherever buy-side
  * entries exist. Finance → Counterparty Ledgers, mirrored on execution.
  */
-export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]> {
+export async function getCounterpartyLedgers(commodityCode?: string): Promise<CounterpartyLedgerView[]> {
+  const deskWhere = await deskLedgerWhere(commodityCode);
   const [counterparties, entries, trucks] = await Promise.all([
     prisma.counterparty.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, code: true },
     }),
     prisma.counterpartyLedgerEntry.findMany({
+      where: deskWhere,
       orderBy: { entryDate: "desc" },
       include: { voucher: { select: { voucherNo: true, noteRef: true } } },
     }),
@@ -734,7 +739,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
           ? rawList.filter((e) => e.sourceType !== "PAYMENT")
           : rawList;
       // SELL accounts always shown (voucher targets); BUY only when active.
-      if (side === "BUY" && list.length === 0) continue;
+      if ((side === "BUY" || commodityCode) && list.length === 0) continue;
       let totalDebit = 0;
       let totalBilled = 0;
       let totalCredit = 0;
@@ -774,7 +779,7 @@ export async function getCounterpartyLedgers(): Promise<CounterpartyLedgerView[]
         counterpartyName: cp.name,
         counterpartyCode: cp.code,
         side,
-        ledgerAccountId: `${cp.code}-${side === "SELL" ? "S" : "B"}`,
+        ledgerAccountId: `${cp.code}${commodityCode ? `-${commodityCode}` : ""}-${side === "SELL" ? "S" : "B"}`,
         totalDebitPkr: Math.round(totalDebit * 100) / 100,
         totalCreditPkr: Math.round(totalCredit * 100) / 100,
         totalBilledPkr: Math.round(totalBilled * 100) / 100,
@@ -816,10 +821,10 @@ export type OverdueLedgerAlert = {
  * it is never overdue; when the trader holds one back that is a decision, not a
  * missed payment, and it must not raise an alert.
  */
-export async function getOverdueLedgerAlerts(): Promise<OverdueLedgerAlert[]> {
+export async function getOverdueLedgerAlerts(commodityCode?: string): Promise<OverdueLedgerAlert[]> {
   const now = new Date();
   const entries = await prisma.counterpartyLedgerEntry.findMany({
-    where: { side: "SELL", entryType: "DEBIT", dueDate: { lt: now } },
+    where: { AND: [await deskLedgerWhere(commodityCode)], side: "SELL", entryType: "DEBIT", dueDate: { lt: now } },
     include: { counterparty: { select: { name: true, code: true } } },
     orderBy: { dueDate: "asc" },
   });

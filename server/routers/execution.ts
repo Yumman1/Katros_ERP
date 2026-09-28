@@ -1,3 +1,4 @@
+import { executionDeskTradeRefs, filterDeskRows, filterDeskTradeRows } from "@/server/execution/desk-scope";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { Role } from "@prisma/client";
@@ -192,7 +193,18 @@ const tradeFileFilterSchema = z.object({
 });
 
 export const executionRouter = router({
-  deskSummary: roleProcedure([...execRoles]).query(() => getDeskSummary()),
+  commodityDesks: roleProcedure([...execRoles]).query(async () => {
+    const desks = await prisma.commodity.findMany({ select: { id: true, code: true, name: true }, orderBy: { name: "asc" } });
+    return desks.sort((a, b) => Number(["CORN", "CRN"].includes(b.code.toUpperCase())) - Number(["CORN", "CRN"].includes(a.code.toUpperCase())));
+  }),
+  referenceDesk: roleProcedure([...execRoles])
+    .input(z.object({ tradeRef: z.string().optional(), truckId: z.string().optional() }))
+    .query(async ({ input }) => {
+      if (input.tradeRef) return (await prisma.trade.findUnique({ where: { tradeRef: input.tradeRef }, select: { commodity: { select: { code: true } } } }))?.commodity.code ?? null;
+      if (input.truckId) return (await prisma.pendingTruck.findUnique({ where: { id: input.truckId }, select: { commodityCode: true } }))?.commodityCode ?? null;
+      return null;
+    }),
+  deskSummary: roleProcedure([...execRoles]).query(({ ctx }) => getDeskSummary(ctx.executionCommodityCode)),
 
   // ── Internal stock shifting (warehouse → warehouse, no trade) ────────────
   stockTransfers: roleProcedure([...execRoles])
@@ -205,7 +217,7 @@ export const executionRouter = router({
         })
         .optional(),
     )
-    .query(({ input }) => listStockTransfers(input)),
+    .query(({ ctx, input }) => listStockTransfers({ ...input, commodityCode: ctx.executionCommodityCode ?? input?.commodityCode })),
 
   createStockTransfer: roleProcedure([...execRoles])
     .input(
@@ -392,12 +404,12 @@ export const executionRouter = router({
       }
     }),
 
-  pendingForLock: roleProcedure([...execRoles]).query(() => {
-    return getPendingTradesForExecution();
+  pendingForLock: roleProcedure([...execRoles]).query(async ({ ctx }) => {
+    return filterDeskRows(await getPendingTradesForExecution(), ctx.executionCommodityCode, r => r.commodityCode);
   }),
 
-  openTrades: roleProcedure([...execRoles]).query(() => {
-    return getOpenTradesForExecution();
+  openTrades: roleProcedure([...execRoles]).query(async ({ ctx }) => {
+    return filterDeskRows(await getOpenTradesForExecution(), ctx.executionCommodityCode, r => r.commodityCode);
   }),
 
   openTradeByRef: roleProcedure([...execRoles])
@@ -465,8 +477,8 @@ export const executionRouter = router({
       }
     }),
 
-  pendingWarehouseAllocation: roleProcedure([...execRoles]).query(() => {
-    return getOpenTradesNeedingWarehouseAllocation();
+  pendingWarehouseAllocation: roleProcedure([...execRoles]).query(async ({ ctx }) => {
+    return filterDeskRows(await getOpenTradesNeedingWarehouseAllocation(), ctx.executionCommodityCode, r => r.commodityCode);
   }),
 
   approveOpenTradeWarehouseSplit: headProcedure("EXECUTION")
@@ -595,7 +607,7 @@ export const executionRouter = router({
         })
         .optional(),
     )
-    .query(({ input }) => getLockedContracts(input ?? undefined)),
+    .query(({ ctx, input }) => getLockedContracts({ ...input, commodityCode: ctx.executionCommodityCode })),
 
   contractByRef: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string() }))
@@ -619,8 +631,8 @@ export const executionRouter = router({
         incoterms: z.string().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
-      const csv = await exportLockedContractsCsv(input.from, input.to, input.profile, input.incoterms);
+    .mutation(async ({ ctx, input }) => {
+      const csv = await exportLockedContractsCsv(input.from, input.to, input.profile, input.incoterms, { commodityCode: ctx.executionCommodityCode });
       return {
         csv,
         filename: `locked-trades-${input.from.toISOString().slice(0, 10)}.csv`,
@@ -639,18 +651,18 @@ export const executionRouter = router({
 
   inboundReceipts: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string().optional() }).optional())
-    .query(({ input }) => getInboundReceipts(input?.tradeRef)),
+    .query(async ({ ctx, input }) => filterDeskTradeRows(await getInboundReceipts(input?.tradeRef), ctx.executionCommodityCode, r => r.tradeRef)),
 
   // Legacy outbound release path removed — sale trucks release only via the
   // payment workflow (confirmSalePayment / CEO clearance + markSaleReleased).
 
   outboundDispatches: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string().optional() }).optional())
-    .query(({ input }) => getOutboundDispatches(input?.tradeRef)),
+    .query(async ({ ctx, input }) => filterDeskTradeRows(await getOutboundDispatches(input?.tradeRef), ctx.executionCommodityCode, r => r.tradeRef)),
 
   spotPipeline: roleProcedure([...execRoles])
     .input(z.object({ profile: z.enum(["PURCHASE_SPOT"]).optional() }).optional())
-    .query(({ input }) => listSpotPipeline(input?.profile ?? "PURCHASE_SPOT")),
+    .query(async ({ ctx, input }) => filterDeskTradeRows(await listSpotPipeline(input?.profile ?? "PURCHASE_SPOT"), ctx.executionCommodityCode, r => r.tradeRef)),
 
   advanceSpot: roleProcedure([...execRoles])
     .input(
@@ -710,7 +722,7 @@ export const executionRouter = router({
         to: z.coerce.date().optional(),
       }).optional(),
     )
-    .query(({ input }) => getPendingTrucks(input ?? undefined)),
+    .query(async ({ ctx, input }) => filterDeskRows(await getPendingTrucks(input ?? undefined), ctx.executionCommodityCode, r => r.commodityCode)),
 
   createPendingTruck: roleProcedure([...execRoles])
     .input(
@@ -861,27 +873,27 @@ export const executionRouter = router({
         to: z.coerce.date().optional(),
       }).optional(),
     )
-    .mutation(async ({ input }) => {
-      const csv = await exportMovementsCsv(input ?? undefined);
+    .mutation(async ({ ctx, input }) => {
+      const csv = await exportMovementsCsv({ ...input, commodityCode: ctx.executionCommodityCode ?? input?.commodityCode });
       const today = new Date().toISOString().slice(0, 10);
       return { csv, filename: `movements-${today}.csv` };
     }),
 
-  tradeFileOptions: roleProcedure([...execRoles, Role.TRADER]).query(() => tradeFileFilterOptions()),
+  tradeFileOptions: roleProcedure([...execRoles, Role.TRADER]).query(({ ctx }) => tradeFileFilterOptions(ctx.executionCommodityCode)),
 
   tradeFilePreview: roleProcedure([...execRoles, Role.TRADER])
     .input(tradeFileFilterSchema.optional())
-    .query(({ input }) => previewTradeFile(input ?? undefined)),
+    .query(({ ctx, input }) => previewTradeFile({ ...input, commodityCode: ctx.executionCommodityCode ?? input?.commodityCode })),
 
   exportTradeFileCsv: roleProcedure([...execRoles, Role.TRADER])
     .input(tradeFileFilterSchema.optional())
-    .mutation(async ({ input }) => {
-      const csv = await exportTradeFileCsv(input ?? undefined);
+    .mutation(async ({ ctx, input }) => {
+      const csv = await exportTradeFileCsv({ ...input, commodityCode: ctx.executionCommodityCode ?? input?.commodityCode });
       const stamp = new Date().toISOString().slice(0, 10);
       return { csv, filename: `trade-file-${stamp}.csv` };
     }),
 
-  positionLedger: roleProcedure([...execRoles, Role.TRADER]).query(() => computePositionLedger()),
+  positionLedger: roleProcedure([...execRoles, Role.TRADER]).query(async ({ ctx }) => filterDeskRows(await computePositionLedger(), ctx.executionCommodityCode, r => r.commodityCode)),
 
   setPositionAdjustment: headProcedure("EXECUTION")
     .input(
@@ -898,7 +910,7 @@ export const executionRouter = router({
   // ─── Outbound sale payment workflow ────────────────────────────────────────
 
   /** Outbound trucks in the sale workflow with per-buyer ledger credit state. */
-  saleWorkflowRows: roleProcedure([...execRoles]).query(() => getSaleWorkflowRows()),
+  saleWorkflowRows: roleProcedure([...execRoles]).query(async ({ ctx }) => filterDeskTradeRows(await getSaleWorkflowRows(), ctx.executionCommodityCode, r => r.tradeRef)),
 
   /**
    * Generate a delivery order when funding covers the receivable (or after CEO
@@ -941,7 +953,7 @@ export const executionRouter = router({
       }
     }),
 
-  doExecutionApprovals: roleProcedure([...execRoles]).query(() => getDoExecutionApprovals()),
+  doExecutionApprovals: roleProcedure([...execRoles]).query(async ({ ctx }) => filterDeskTradeRows(await getDoExecutionApprovals(), ctx.executionCommodityCode, r => r.tradeRef)),
 
   approveDoExecution: headProcedure("EXECUTION")
     .input(z.object({ truckId: z.string() }))
@@ -1051,8 +1063,8 @@ export const executionRouter = router({
   // ─── Counterparty ledgers & payment vouchers ───────────────────────────────
 
   /** SELL-side counterparty ledgers (mirror of Finance → Counterparty Ledgers). */
-  counterpartyLedgers: roleProcedure([...execRoles, Role.FINANCE]).query(() =>
-    getCounterpartyLedgers(),
+  counterpartyLedgers: roleProcedure([...execRoles, Role.FINANCE]).query(({ ctx }) =>
+    getCounterpartyLedgers(ctx.executionCommodityCode),
   ),
 
   /** Counterparties for the voucher entry dropdown (single unified register). */
@@ -1079,10 +1091,11 @@ export const executionRouter = router({
         side: z.enum(["BUY", "SELL"]).optional(),
       }),
     )
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const trades = await prisma.trade.findMany({
         where: {
           counterpartyId: input.counterpartyId,
+          ...(ctx.executionCommodityCode ? { commodity: { code: ctx.executionCommodityCode } } : {}),
           ...(input.side === "BUY"
             ? // Money on a purchase only arrives through settlement.
               { direction: "BUY", directSettled: true, settlementClosedAt: null }
@@ -1125,7 +1138,7 @@ export const executionRouter = router({
         side: z.enum(["BUY", "SELL"]).optional(),
       }),
     )
-    .query(({ input }) => listOpenSettlementNotes(input.counterpartyId, input.side)),
+    .query(async ({ ctx, input }) => filterDeskTradeRows(await listOpenSettlementNotes(input.counterpartyId, input.side), ctx.executionCommodityCode, r => r.tradeRef)),
 
   /** True when bank + reference + date + amount match an existing pending/approved voucher. */
   findVoucherDuplicate: roleProcedure([...execRoles, Role.FINANCE])
@@ -1179,6 +1192,7 @@ export const executionRouter = router({
       try {
         return await createVoucher({
           ...input,
+          commodityCode: ctx.executionCommodityCode,
           enteredByName: ctx.session.user.name ?? ctx.session.user.email ?? "execution",
         });
       } catch (e) {
@@ -1195,7 +1209,7 @@ export const executionRouter = router({
         })
         .optional(),
     )
-    .query(({ input }) => listVouchers(input ?? undefined)),
+    .query(({ ctx, input }) => listVouchers({ ...input, commodityCode: ctx.executionCommodityCode })),
 
   // ─── Inventory valuation (execution inventory stat cards) ─────────────────
 
@@ -1204,14 +1218,18 @@ export const executionRouter = router({
    * (Σ receipt qty × its trade's contract rate ÷ Σ receipt qty, PKR/MT) and
    * the total quantity dispatched to buyers (MT).
    */
-  inventoryValuation: roleProcedure([...execRoles]).query(async () => {
+  inventoryValuation: roleProcedure([...execRoles]).query(async ({ ctx }) => {
+    const refs = await executionDeskTradeRefs(ctx.executionCommodityCode);
+    const tradeWhere = refs ? { tradeRef: { in: refs } } : {};
     const [inboundByTrade, outboundAgg, contracts] = await Promise.all([
       prisma.inboundReceipt.groupBy({
         by: ["tradeRef"],
+        where: tradeWhere,
         _sum: { allocatedQtyMt: true },
       }),
-      prisma.outboundDispatch.aggregate({ _sum: { allocatedQtyMt: true } }),
+      prisma.outboundDispatch.aggregate({ where: tradeWhere, _sum: { allocatedQtyMt: true } }),
       prisma.executionContract.findMany({
+        where: tradeWhere,
         select: { tradeRef: true, ratePerKg: true, ratePerMaund: true },
       }),
     ]);

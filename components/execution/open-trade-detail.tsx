@@ -1,5 +1,5 @@
 "use client";
-import { isSesameCommodity, sesameFields, isPercentagePayment } from "@/lib/sesame";
+import { isSesameCommodity, sesameFields, isPercentagePayment, sesameTradingEntity } from "@/lib/sesame";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -161,6 +161,7 @@ export function OpenTradeDetail({
         params[k] = v;
       }
     }
+    if (isSesameCommodity(trade.commodity.code, trade.commodity.name)) params.tradingEntity = sesameTradingEntity(params);
     setTradeParams(params);
     setWarehouseSelections(parseTraderWarehouseSelections(trade.tradeParams));
     setEditNote(trade.executionEditNote ?? "");
@@ -683,7 +684,7 @@ export function OpenTradeDetail({
           </div>
         </Section>
 
-        {isSesame && <Section title="Sesame specifications and route"><div className="grid gap-3 sm:grid-cols-2">{sesameFields(tradeParams).map(def => <Field key={def.key} label={def.label}><input readOnly value={`${tradeParams[def.key] ?? "—"}${def.type === "percent" ? "%" : ""}`} className={`${inputClass} opacity-80`} /></Field>)}</div></Section>}
+        {isSesame && <Section title="Sesame specifications and entity"><div className="grid gap-3 sm:grid-cols-2">{sesameFields(tradeParams).map(def => <Field key={def.key} label={def.label}><input readOnly value={`${tradeParams[def.key] ?? "—"}${def.type === "percent" ? "%" : ""}`} className={`${inputClass} opacity-80`} /></Field>)}</div></Section>}
 
         {/* ── 5. Specification (corn) ── */}
         {isCorn && (
@@ -819,6 +820,13 @@ export function OpenTradeDetail({
           </button>
         )}
 
+        {isSesame && trade.currency === "USD" && (
+          <p className="text-sm text-muted-foreground">
+            {isLockedMode
+              ? `Settlement FX: ${trade.tradeParams?.executionFxPkrPerUsd ?? "—"} PKR per USD.`
+              : "USD quotes settle in PKR. Set this commodity’s USD/PKR rate in Positions before locking; the rate is saved with the contract."}
+          </p>
+        )}
         {!isLockedMode && requiresWarehouse && !trade.warehouseSplitApproved && isExecutionUser && (
           <p className="text-xs text-warning">
             {trade.pendingWarehouseApproval

@@ -1,3 +1,4 @@
+import { assertDeskTarget } from "@/server/execution/desk-scope";
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { Context } from "./context";
@@ -18,9 +19,14 @@ function isExecutive(role: Role): boolean {
 
 const PRESENCE_THROTTLE_MS = 60_000;
 
-export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
+export const protectedProcedure = t.procedure.use(async ({ ctx, next, path, getRawInput }) => {
   if (!ctx.session?.user?.id) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
+  }
+  if (ctx.executionCommodityCode) {
+    const desk = await ctx.prisma.commodity.findUnique({ where: { code: ctx.executionCommodityCode }, select: { id: true } });
+    if (!desk) throw new TRPCError({ code: "BAD_REQUEST", message: "Unknown execution commodity" });
+    await assertDeskTarget(ctx.executionCommodityCode, path, await getRawInput());
   }
   // Presence heartbeat — at most one write per user per minute, fire-and-forget.
   const userId = ctx.session.user.id;

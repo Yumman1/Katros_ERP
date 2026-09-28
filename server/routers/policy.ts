@@ -1,3 +1,4 @@
+import { filterDeskRejections } from "@/server/execution/desk-scope";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { headProcedure, protectedProcedure, router } from "@/server/trpc/trpc";
@@ -80,13 +81,13 @@ export const policyRouter = router({
   }),
 
   /** Debits past their due date — the overdue alert card on every dashboard. */
-  overdueLedgerAlerts: protectedProcedure.query(() => getOverdueLedgerAlerts()),
+  overdueLedgerAlerts: protectedProcedure.query(({ ctx }) => getOverdueLedgerAlerts(ctx.executionCommodityCode)),
 
   /**
    * Rejections page data — traders see rejections on their own trades,
    * every other role sees everything.
    */
-  rejections: protectedProcedure.input(z.object({ fullHistory: z.boolean().optional() }).optional()).query(({ ctx, input }) => {
+  rejections: protectedProcedure.input(z.object({ fullHistory: z.boolean().optional() }).optional()).query(async ({ ctx, input }) => {
     const user = ctx.session.user;
     const fullHistory = input?.fullHistory === true && ["TRADER", "EXECUTION", "CEO"].includes(user.role);
     if (user.role === "TRADER") {
@@ -95,6 +96,6 @@ export const policyRouter = router({
         fullHistory,
       });
     }
-    return listRejections({ fullHistory });
+    return filterDeskRejections(await listRejections({ fullHistory }), ctx.executionCommodityCode);
   }),
 });

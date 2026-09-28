@@ -1,3 +1,4 @@
+import { filterDeskRows } from "@/server/execution/desk-scope";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { roleProcedure, router } from "@/server/trpc/trpc";
@@ -18,8 +19,8 @@ export const marketRouter = router({
     return getMarketPriceSnapshot();
   }),
 
-  dailyPrices: roleProcedure([...execRoles, "TRADER", "ADMIN"]).query(() => {
-    return listDailyMarketPrices();
+  dailyPrices: roleProcedure([...execRoles, "TRADER", "ADMIN"]).query(async ({ ctx }) => {
+    return filterDeskRows(await listDailyMarketPrices(), ctx.executionCommodityCode, r => r.code);
   }),
 
   options: roleProcedure([...execRoles]).query(() => ({

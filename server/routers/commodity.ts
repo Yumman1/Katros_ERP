@@ -6,6 +6,6 @@ import { mockCommodityList } from "@/server/dummy-data";
 export const commodityRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     if (isMockMode()) return (await mockCommodityList()) as unknown as Commodity[];
-    return ctx.prisma.commodity.findMany({ orderBy: { code: "asc" } });
+    return ctx.prisma.commodity.findMany({ where: ctx.executionCommodityCode ? { code: ctx.executionCommodityCode } : {}, orderBy: { code: "asc" } });
   }),
 });

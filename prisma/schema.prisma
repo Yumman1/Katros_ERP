@@ -1561,6 +1561,8 @@ enum VoucherStatus {
 /// Money-ingestion voucher entered by execution against a SELL-side
 /// counterparty. Credits the ledger only once finance approves it.
 model Voucher {
+  /// Commodity account for direct advances; linked vouchers inherit their trade.
+  commodityCode String?
   id             String        @id @default(cuid())
   voucherNo      String        @unique
   counterpartyId String
@@ -1594,6 +1596,8 @@ model Voucher {
   updatedAt      DateTime      @updatedAt
 
   ledgerEntry CounterpartyLedgerEntry?
+
+  @@index([commodityCode])
 
   @@index([status])
   @@index([counterpartyId])

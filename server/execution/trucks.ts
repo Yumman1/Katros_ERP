@@ -1,3 +1,4 @@
+import { executionTradeValuePkr } from "@/lib/execution-settlement";
 import { Prisma, TradeDirection, type Role } from "@prisma/client";
 import {
   DEFAULT_QUANTITY_TOLERANCE_MT,
@@ -1368,6 +1369,10 @@ export async function getGateInvoiceSummary(tradeRef: string): Promise<GateInvoi
       price: true,
       pricePerCanonicalQty: true,
       commissionAmount: true,
+      currency: true,
+      priceCurrency: true,
+      tradeParams: true,
+      commodity: { select: { code: true, name: true } },
       contract: { select: { contractualQtyMt: true } },
     },
   });
@@ -1375,7 +1380,7 @@ export async function getGateInvoiceSummary(tradeRef: string): Promise<GateInvoi
 
   const qtyMt = trade.contract ? num(trade.contract.contractualQtyMt) : num(trade.quantity);
   const pricePerQty = numOrNull(trade.pricePerCanonicalQty) ?? num(trade.price);
-  const totalTradeValuePkr = qtyMt * pricePerQty + (numOrNull(trade.commissionAmount) ?? 0);
+  const totalTradeValuePkr = executionTradeValuePkr({ ...trade, quantity: qtyMt, pricePerMt: pricePerQty, commissionAmount: numOrNull(trade.commissionAmount) ?? 0 });
 
   const rows = await prisma.pendingTruck.findMany({
     where: {
@@ -1506,8 +1511,11 @@ export async function getTraderInvoiceApprovals(
       price: true,
       pricePerCanonicalQty: true,
       commissionAmount: true,
+      currency: true,
+      priceCurrency: true,
+      tradeParams: true,
       counterparty: { select: { name: true } },
-      commodity: { select: { name: true } },
+      commodity: { select: { code: true, name: true } },
     },
   });
   const tradeByRef = new Map(trades.map((t) => [t.tradeRef, t]));
@@ -1582,8 +1590,7 @@ export async function getTraderInvoiceApprovals(
       counterpartyName: trade.counterparty.name,
       commodityName: trade.commodity.name,
       totalTradePricePkr:
-        num(trade.quantity) * (numOrNull(trade.pricePerCanonicalQty) ?? num(trade.price)) +
-        (numOrNull(trade.commissionAmount) ?? 0),
+        executionTradeValuePkr({ ...trade, quantity: num(trade.quantity), pricePerMt: numOrNull(trade.pricePerCanonicalQty) ?? num(trade.price), commissionAmount: numOrNull(trade.commissionAmount) ?? 0 }),
       paidPkr: Math.round((money.get(r.gatepassNo)?.paid ?? 0) * 100) / 100,
       // Before a receipt exists the invoice amount is all there is to release.
       remainingPkr: (() => {

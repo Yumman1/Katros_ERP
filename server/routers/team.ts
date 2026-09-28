@@ -1,3 +1,4 @@
+import { filterDeskRequests } from "@/server/execution/desk-scope";
 import { resolveCommodityRegistration } from "@/server/commodity-assignments";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -216,19 +217,19 @@ export const teamRouter = router({
     }),
 
   /** Requests the current user submitted. */
-  myChangeRequests: protectedProcedure.query(({ ctx }) =>
-    listChangeRequests({ requestedById: ctx.session.user.id }),
+  myChangeRequests: protectedProcedure.query(async ({ ctx }) =>
+    filterDeskRequests(await listChangeRequests({ requestedById: ctx.session.user.id }), ctx.executionCommodityCode),
   ),
 
   /** Department queue — heads only. */
   changeRequests: headProcedure()
     .input(z.object({ department: z.enum(DEPARTMENTS) }))
-    .query(({ ctx, input }) => {
+    .query(async ({ ctx, input }) => {
       const { role, isHead } = ctx.session.user;
       if (!canActOnDepartment(role, isHead, input.department)) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Not the head of this department" });
       }
-      return listChangeRequests({ department: input.department });
+      return filterDeskRequests(await listChangeRequests({ department: input.department }), ctx.executionCommodityCode);
     }),
 
   /** Head approves (auto-applies deletes) or rejects a request. */
@@ -313,6 +314,6 @@ export const teamRouter = router({
       if (!canActOnDepartment(role, isHead, input.department)) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Not the head of this department" });
       }
-      return (await listChangeRequests({ department: input.department, status: "PENDING" })).length;
+      return (await filterDeskRequests(await listChangeRequests({ department: input.department, status: "PENDING" }), ctx.executionCommodityCode)).length;
     }),
 });

@@ -1,3 +1,6 @@
+import { isSesameCommodity } from "@/lib/sesame";
+import { sesameSettlementFx } from "@/lib/execution-settlement";
+import { executionDeskTradeRefs } from "./desk-scope";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { TradeDirection, TradeStatus } from "@prisma/client";
 import {
@@ -626,6 +629,19 @@ export async function lockTradeInStore(
     ratePerKg = ratePerMaund / KG_PER_MAUND;
   }
 
+  // Execution invoices and ledgers settle in PKR. Snapshot the configured FX
+  // once; subsequent market-rate changes must never reprice this contract.
+  if (isSesameCommodity(trade.commodity.code, trade.commodity.name) && trade.currency === "USD") {
+    const configured = await prisma.positionMarketInput.findUnique({
+      where: { commodityCode_season: { commodityCode: trade.commodity.code, season: trade.season ?? "SUMMER" } },
+      select: { fxRate: true },
+    });
+    const fx = Number(trade.tradeParams?.executionFxPkrPerUsd ?? configured?.fxRate);
+    trade.tradeParams = { ...trade.tradeParams, executionFxPkrPerUsd: fx };
+    const settlementFx = sesameSettlementFx(trade);
+    ratePerKg *= settlementFx;
+    ratePerMaund *= settlementFx;
+  }
   trade.tradeStatus = TradeStatus.LOCKED;
   trade.lockedAt = new Date();
   trade.lockedBy = input.lockedBy;
@@ -676,6 +692,7 @@ export async function lockTradeInStore(
         executionProfile: profile,
         ratePerMaund,
         ratePerKg,
+        ...(trade.tradeParams ? { tradeParams: trade.tradeParams as Prisma.InputJsonValue } : {}),
         commissionPerMaund: trade.commissionPerMaund,
         qualityTolerancesDetail: trade.qualityTolerancesDetail as unknown as Prisma.InputJsonValue,
       },
@@ -861,6 +878,7 @@ async function batchFulfillmentByWarehouse(
 }
 
 export async function getLockedContracts(filter?: {
+  commodityCode?: string;
   profile?: ExecutionProfile;
   incoterms?: string;
   tradeScope?: TradeScope;
@@ -871,7 +889,7 @@ export async function getLockedContracts(filter?: {
   warehouseAllocated?: boolean;
   warehouseUnallocated?: boolean;
 }): Promise<ExecutionContractView[]> {
-  const where: Prisma.ExecutionContractWhereInput = {};
+  const where: Prisma.ExecutionContractWhereInput = filter?.commodityCode ? { commodityCode: filter.commodityCode } : {};
   if (filter?.profile) where.executionProfile = filter.profile;
   if (filter?.incoterms) where.incoterms = filter.incoterms;
   if (filter?.tradeScope) where.tradeScope = filter.tradeScope;
@@ -957,7 +975,10 @@ export async function getPendingTradesForExecution() {
   }));
 }
 
-export async function getDeskSummary() {
+export async function getDeskSummary(commodityCode?: string) {
+  const refs = await executionDeskTradeRefs(commodityCode);
+  const tradeWhere = refs ? { tradeRef: { in: refs } } : {};
+  const commodityWhere = commodityCode ? { commodityCode } : {};
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const [
@@ -969,15 +990,15 @@ export async function getDeskSummary() {
     pendingFinance,
     pendingTrucksUnassigned,
   ] = await Promise.all([
-    prisma.executionContract.findMany({ include: CONTRACT_INCLUDE }),
-    getPendingTradesForExecution(),
+    prisma.executionContract.findMany({ where: commodityWhere, include: CONTRACT_INCLUDE }),
+    getPendingTradesForExecution().then(rows => commodityCode ? rows.filter(r => r.commodityCode === commodityCode) : rows),
     prisma.trade.count({
-      where: { tradeStatus: TradeStatus.PENDING, submittedToExecution: true },
+      where: { ...tradeWhere, tradeStatus: TradeStatus.PENDING, submittedToExecution: true },
     }),
-    prisma.inboundReceipt.count({ where: { receiveDate: { gte: today } } }),
-    prisma.outboundDispatch.count({ where: { dispatchDate: { gte: today } } }),
-    prisma.paymentRequest.count({ where: { status: "PENDING" } }),
-    prisma.pendingTruck.count({ where: { status: { in: ["PENDING", "PARTIAL"] } } }),
+    prisma.inboundReceipt.count({ where: { ...tradeWhere, receiveDate: { gte: today } } }),
+    prisma.outboundDispatch.count({ where: { ...tradeWhere, dispatchDate: { gte: today } } }),
+    prisma.paymentRequest.count({ where: { ...tradeWhere, status: "PENDING" } }),
+    prisma.pendingTruck.count({ where: { ...commodityWhere, status: { in: ["PENDING", "PARTIAL"] } } }),
   ]);
   const locked = contractRows.map((r) => normalizeContract(contractRowToRuntime(r)));
   const open = locked.filter((c) => c.contractStatus === "Open");

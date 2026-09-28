@@ -1,5 +1,6 @@
 "use client";
 
+import { useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
@@ -52,6 +53,7 @@ const KPI_ICON: Record<KpiVariant, string> = {
 };
 
 export default function ExecutionDeskPage() {
+  const { active } = useExecutionCommodityDesk();
   const { data: session } = useSession();
   const { data: summary } = trpc.execution.deskSummary.useQuery(undefined, { refetchInterval: 30000 });
   const { data: openTradesQueue } = trpc.execution.openTrades.useQuery(undefined, { refetchInterval: 30000 });
@@ -153,7 +155,7 @@ export default function ExecutionDeskPage() {
     {
       label: "Finance Pending",
       value: summary?.pendingFinance ?? 0,
-      sub: commodityFilter === "ALL" ? "Awaiting approval" : "Global queue",
+      sub: commodityFilter === "ALL" ? "Awaiting approval" : "Desk queue",
       href: "/execution/purchase-delivered",
       variant: (summary?.pendingFinance ?? 0) > 0 ? "danger" : "muted",
       icon: (
@@ -173,7 +175,7 @@ export default function ExecutionDeskPage() {
             <span className="text-accent-secondary">{session?.user?.name?.split(" ")[0] ?? "User"}</span>
           </>
         }
-        subtitle={`Execution Operations · ${new Date().toLocaleDateString("en-PK", {
+        subtitle={`${active.name} Execution Operations · ${new Date().toLocaleDateString("en-PK", {
           weekday: "long",
           year: "numeric",
           month: "long",
@@ -186,7 +188,7 @@ export default function ExecutionDeskPage() {
               onChange={(e) => setCommodityFilter(e.target.value)}
               className="exec-filter"
             >
-              <option value="ALL">All commodities</option>
+              <option value="ALL">All {active.name} trades</option>
               {commodityOptions.map((c) => (
                 <option key={c.code} value={c.code}>
                   {c.name} ({c.code})
