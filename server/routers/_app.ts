@@ -1,4 +1,5 @@
 import { router } from "@/server/trpc/trpc";
+import { sesameExecutionRouter } from "./sesame-execution";
 import { positionsRouter } from "./positions";
 import { mtmRouter } from "./mtm";
 import { pnlRouter } from "./pnl";
@@ -20,6 +21,7 @@ import { policyRouter } from "./policy";
 import { accountRouter } from "./account";
 
 export const appRouter = router({
+  sesameExecution: sesameExecutionRouter,
   positions: positionsRouter,
   mtm: mtmRouter,
   pnl: pnlRouter,

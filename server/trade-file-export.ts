@@ -1,8 +1,11 @@
 import { calendarDay } from "@/lib/record-filters";
+import { tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
+import { isSesameCommodity } from "@/lib/sesame";
 import { mockAllTraderTrades } from "@/server/dummy-data";
 import type { MockTraderTrade } from "@/server/dummy-data";
 
 export type TradeFileFilter = {
+  executionEntity?: SesameEntity;
   fromDay?: string;
   toDay?: string;
   from?: Date;
@@ -42,6 +45,7 @@ export function filterTradesForTradeFile(
   if (!filter) return trades;
   const to = filter.to ? endOfDay(filter.to) : null;
   return trades.filter((t) => {
+    if (filter.executionEntity && isSesameCommodity(t.commodity.code) && tradeEntity(t.tradeParams) !== filter.executionEntity) return false;
     const booked = new Date(t.tradeDate);
     const day = calendarDay(t.tradeDate);
     if (filter.fromDay && (!day || day < filter.fromDay)) return false;
@@ -215,8 +219,8 @@ export async function exportTradeFileCsv(filter?: TradeFileFilter): Promise<stri
   return lines.join("\n");
 }
 
-export async function tradeFileFilterOptions(commodityCode?: string) {
-  const trades = (await mockAllTraderTrades()).filter(t => !commodityCode || t.commodity.code === commodityCode);
+export async function tradeFileFilterOptions(commodityCode?: string, executionEntity?: SesameEntity) {
+  const trades = filterTradesForTradeFile(await mockAllTraderTrades(), { commodityCode, executionEntity });
   const commodities = new Map<string, string>();
   const counterparties = new Map<string, string>();
   const traders = new Set<string>();

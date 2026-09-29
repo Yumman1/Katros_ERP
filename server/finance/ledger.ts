@@ -1,3 +1,5 @@
+import { tradeEntity } from "@/lib/sesame-entity";
+import { isSesameCommodity } from "@/lib/sesame";
 import { deskLedgerWhere } from "@/server/execution/desk-scope";
 import type { CounterpartySide, Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/server/db";
@@ -399,9 +401,9 @@ export function computeSharedPoolAvailablePkr(input: {
 export async function availableCreditPkr(
   counterpartyId: string,
   db: Db = prisma,
-  options?: { excludeTruckId?: string; commodityCode?: string },
+  options?: { excludeTruckId?: string; commodityCode?: string; executionEntity?: "PAK" | "FZCO" },
 ): Promise<number> {
-  const deskWhere = await deskLedgerWhere(options?.commodityCode, db);
+  const deskWhere = await deskLedgerWhere(options?.commodityCode, db, options?.executionEntity);
   const [creditAgg, debitEntries, settlementAgg] = await Promise.all([
     db.counterpartyLedgerEntry.aggregate({
       // Note vouchers pay a cancellation claim — never free credit.
@@ -460,13 +462,14 @@ export async function canFundTruck(
 ): Promise<TruckFundingCheck> {
   const trade = await db.trade.findUnique({
     where: { tradeRef: input.tradeRef },
-    select: { paymentType: true, commodity: { select: { code: true } } },
+    select: { paymentType: true, tradeParams: true, commodity: { select: { code: true } } },
   });
   if (!trade) return { ok: false, kind: "ADVANCE", availablePkr: 0, reason: "Trade not found" };
   const kind = tradeTermsKind(trade.paymentType);
   const available = await availableCreditPkr(input.counterpartyId, db, {
     excludeTruckId: input.excludeTruckId,
     commodityCode: trade.commodity.code,
+    executionEntity: isSesameCommodity(trade.commodity.code) ? tradeEntity(trade.tradeParams) : undefined,
   });
   const ok = available + 0.005 >= input.amountPkr;
   return {
@@ -553,8 +556,8 @@ function emptyAging(): Record<AgingBucket, number> {
  * counterparty (voucher targets), plus a BUY account wherever buy-side
  * entries exist. Finance → Counterparty Ledgers, mirrored on execution.
  */
-export async function getCounterpartyLedgers(commodityCode?: string): Promise<CounterpartyLedgerView[]> {
-  const deskWhere = await deskLedgerWhere(commodityCode);
+export async function getCounterpartyLedgers(commodityCode?: string, executionEntity?: "PAK" | "FZCO"): Promise<CounterpartyLedgerView[]> {
+  const deskWhere = await deskLedgerWhere(commodityCode, prisma, executionEntity);
   const [counterparties, entries, trucks] = await Promise.all([
     prisma.counterparty.findMany({
       orderBy: { name: "asc" },
@@ -821,10 +824,10 @@ export type OverdueLedgerAlert = {
  * it is never overdue; when the trader holds one back that is a decision, not a
  * missed payment, and it must not raise an alert.
  */
-export async function getOverdueLedgerAlerts(commodityCode?: string): Promise<OverdueLedgerAlert[]> {
+export async function getOverdueLedgerAlerts(commodityCode?: string, executionEntity?: "PAK" | "FZCO"): Promise<OverdueLedgerAlert[]> {
   const now = new Date();
   const entries = await prisma.counterpartyLedgerEntry.findMany({
-    where: { AND: [await deskLedgerWhere(commodityCode)], side: "SELL", entryType: "DEBIT", dueDate: { lt: now } },
+    where: { AND: [await deskLedgerWhere(commodityCode, prisma, executionEntity)], side: "SELL", entryType: "DEBIT", dueDate: { lt: now } },
     include: { counterparty: { select: { name: true, code: true } } },
     orderBy: { dueDate: "asc" },
   });

@@ -1,3 +1,4 @@
+import { internalEntity, paperTrade, tradeEntity } from "@/lib/sesame-entity";
 import { isSesameCommodity, normalizeSesameParams, SESAME_FIELDS } from "@/lib/sesame";
 import { qualitySummaryFromParams } from "@/lib/trade-parameters";
 import { TradeDirection, TradeStatus } from "@prisma/client";
@@ -283,6 +284,13 @@ async function applyPatchToTrade(
   patch: OpenTradePatch,
   meta: { editedBy: string; notifyTrader: boolean; editNote?: string | null },
 ): Promise<MockTraderTrade> {
+  if (trade.tradeStatus === "LOCKED" && isSesameCommodity(trade.commodity.code) && patch.tradeParams) {
+    const next = { ...trade.tradeParams, ...patch.tradeParams };
+    if (tradeEntity(next) !== tradeEntity(trade.tradeParams) || internalEntity(next) !== internalEntity(trade.tradeParams)) throw new Error("Trading entities cannot change after a Sesame trade is locked");
+  }
+  if (trade.tradeStatus === "LOCKED" && paperTrade(trade.commodity.code, trade.tradeParams)) {
+    throw new Error("Ownership contracts cannot be edited after locking. Book a separate correcting trade to preserve the ownership ledger.");
+  }
   if (patch.quantityEntered != null && patch.quantityEnteredUnit) {
     trade.quantityEntered = patch.quantityEntered;
     trade.quantityEnteredUnit = patch.quantityEnteredUnit;
@@ -704,6 +712,7 @@ export async function traderApproveExecutionEdits(
 
 /** Whether this trade profile uses warehouse allocation on lock. */
 export function openTradeRequiresWarehouse(trade: MockTraderTrade): boolean {
+  if (paperTrade(trade.commodity.code, trade.tradeParams)) return false;
   const profile = executionProfileFromTrade(trade.direction, trade.buyingCategory, trade.incoterms);
   return profile === "PURCHASE_DELIVERED" || profile === "SALE_EX_WAREHOUSE";
 }

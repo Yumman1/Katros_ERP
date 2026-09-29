@@ -1,4 +1,7 @@
 import { executionTradeValuePkr } from "@/lib/execution-settlement";
+import { isSesameCommodity } from "@/lib/sesame";
+import { lockSesameOwnership, pakistanAvailable } from "./sesame-stock";
+import { assertOwnershipWrite } from "./ownership-guards";
 import { Prisma, TradeDirection, type Role } from "@prisma/client";
 import {
   DEFAULT_QUANTITY_TOLERANCE_MT,
@@ -228,7 +231,9 @@ export async function updatePendingTruck(
   }>,
 ): Promise<PendingTruck> {
   const row = await prisma.pendingTruck.findUnique({ where: { id }, include: TRUCK_INCLUDE });
+  await assertOwnershipWrite("execution.updateGateEntry", { id });
   if (!row) throw new Error("Gate entry not found");
+  if (row.executionEntity === "FZCO") throw new Error("FZCO loads are immutable; cancel an unapproved load from the FZCO desk and record its replacement");
   if (row.status === "ASSIGNED") {
     throw new Error("Cannot edit an assigned gate entry — unassign or request head review");
   }
@@ -317,10 +322,12 @@ export async function updatePendingTruck(
  * (payment received/settled, released, or a paid receipt).
  */
 export async function deletePendingTruck(id: string): Promise<{ ok: true }> {
+  await assertOwnershipWrite("execution.deleteGateEntry", { id });
   const row = await prisma.pendingTruck.findUnique({
     where: { id },
     select: {
       gatepassNo: true,
+      executionEntity: true,
       saleStage: true,
       saleReleasedAt: true,
       inboundReceipts: { select: { id: true, tradeRef: true, status: true } },
@@ -328,6 +335,7 @@ export async function deletePendingTruck(id: string): Promise<{ ok: true }> {
     },
   });
   if (!row) throw new Error("Gate entry not found");
+  if (row.executionEntity === "FZCO") throw new Error("Cancel an unapproved FZCO load from the Dubai desk");
   if (row.saleReleasedAt || row.saleStage === "PAYMENT_RECEIVED" || row.saleStage === "SETTLED") {
     throw new Error(
       "This truck's payment is already confirmed/released — it can no longer be deleted. Reverse the payment first.",
@@ -462,8 +470,12 @@ export async function createPendingTruck(input: {
     const qtyMt = kgToQuantityUnit(input.weightKg, "MT");
     await assertSufficientOutboundStock(input.warehouseName, input.commodityCode, qtyMt);
   }
-  const createWithGatepass = (gatepassNo: string) =>
-    prisma.pendingTruck.create({
+  const createWithGatepass = (gatepassNo: string) => prisma.$transaction(async tx => {
+    if (isSesameCommodity(input.commodityCode)) {
+      await lockSesameOwnership(tx, input.commodityCode);
+      if (input.movementType === "OUTBOUND" && await pakistanAvailable(tx, input.commodityCode, input.warehouseName) + 0.000001 < input.weightKg/1000) throw new Error("Insufficient unreserved Pakistan-owned Sesame stock");
+    }
+    return tx.pendingTruck.create({
       data: {
         gatepassNo,
         arrivalDate: input.arrivalDate ?? new Date(),
@@ -492,6 +504,7 @@ export async function createPendingTruck(input: {
         remainingKg: input.weightKg,
       },
     });
+  });
 
   // An operator-supplied gatepass is theirs to own; anything else is drawn from
   // the sequence, which retries if the number turns out to be taken.
@@ -647,6 +660,7 @@ export async function assignTruckToTrade(
       include: TRUCK_INCLUDE,
     });
     if (!truckRow) throw new Error("Pending truck not found");
+    if (truckRow.commodityCode && isSesameCommodity(truckRow.commodityCode)) await lockSesameOwnership(tx, truckRow.commodityCode);
     const truck = truckRowToRuntime(truckRow);
     if (truck.status === "ASSIGNED") throw new Error("Truck already fully assigned");
 
@@ -655,6 +669,7 @@ export async function assignTruckToTrade(
       include: CONTRACT_INCLUDE,
     });
     if (!contractRow) throw new Error("Locked contract not found: " + tradeRef);
+    if (contractRow.paperOwnership || truckRow.executionEntity === "FZCO") throw new Error("Use the Sesame ownership desk or FZCO truck workflow for this trade");
     const contract = normalizeContract(contractRowToRuntime(contractRow));
     assertWithinDeliveryWindow(contract, truck.arrivalDate ?? new Date(), allowOutsideWindow);
     if (

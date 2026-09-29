@@ -29,6 +29,7 @@ export const SESAME_DEFAULTS: TradeParamValues = {
 export const SESAME_FIELDS: TradeParamDefinition[] = [
   { key: "sesameType", label: "Sesame type", type: "select", group: "contract", options: [...SESAME_TYPES], required: true },
   { key: "tradingEntity", label: "Trading Entity", type: "select", group: "logistics", options: [...SESAME_TRADING_ENTITIES], required: true },
+  { key: "internalCounterpartyEntity", label: "Internal counterparty (optional)", type: "select", group: "logistics", options: ["PAK", "FZCO"] },
   ...[["purity", "Purity"], ["ffa", "FFA"], ["moisture", "Moisture"], ["oilContent", "Oil Content"], ["admixture", "Admixture"]].map(([key, label]): TradeParamDefinition => ({ key, label, type: "percent", unit: "%", group: "quality", required: true })),
   { key: "colour", label: "Color", type: "text", group: "quality", placeholder: "Type a color" },
 ];
@@ -48,6 +49,10 @@ export function normalizeSesameParams(values: TradeParamValues, paymentType: Pay
   params.tradingEntity = sesameTradingEntity(values);
   if (!(SESAME_TRADING_ENTITIES as readonly unknown[]).includes(params.tradingEntity)) throw new Error("Select Kastros FZCO or Kastros PAK as the trading entity");
   delete params.tradeRoute;
+  if (params.internalCounterpartyEntity) {
+    if (!["PAK", "FZCO"].includes(String(params.internalCounterpartyEntity))) throw new Error("Invalid internal counterparty entity");
+    if ((params.tradingEntity === "Kastros FZCO" ? "FZCO" : "PAK") === params.internalCounterpartyEntity) throw new Error("An internal trade must be between Pakistan and FZCO");
+  } else delete params.internalCounterpartyEntity;
   for (const key of ["purity", "ffa", "moisture", "oilContent", "admixture"]) {
     const value = params[key];
     if (value == null || String(value).trim() === "" || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100) throw new Error(`${SESAME_FIELDS.find(d => d.key === key)?.label} must be between 0 and 100%`);

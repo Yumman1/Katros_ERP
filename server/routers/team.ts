@@ -218,7 +218,7 @@ export const teamRouter = router({
 
   /** Requests the current user submitted. */
   myChangeRequests: protectedProcedure.query(async ({ ctx }) =>
-    filterDeskRequests(await listChangeRequests({ requestedById: ctx.session.user.id }), ctx.executionCommodityCode),
+    filterDeskRequests(await listChangeRequests({ requestedById: ctx.session.user.id }), ctx.executionCommodityCode, ctx.executionEntity),
   ),
 
   /** Department queue — heads only. */
@@ -229,7 +229,7 @@ export const teamRouter = router({
       if (!canActOnDepartment(role, isHead, input.department)) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Not the head of this department" });
       }
-      return filterDeskRequests(await listChangeRequests({ department: input.department }), ctx.executionCommodityCode);
+      return filterDeskRequests(await listChangeRequests({ department: input.department }), ctx.executionCommodityCode, ctx.executionEntity);
     }),
 
   /** Head approves (auto-applies deletes) or rejects a request. */
@@ -314,6 +314,6 @@ export const teamRouter = router({
       if (!canActOnDepartment(role, isHead, input.department)) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Not the head of this department" });
       }
-      return (await filterDeskRequests(await listChangeRequests({ department: input.department, status: "PENDING" }), ctx.executionCommodityCode)).length;
+      return (await filterDeskRequests(await listChangeRequests({ department: input.department, status: "PENDING" }), ctx.executionCommodityCode, ctx.executionEntity)).length;
     }),
 });

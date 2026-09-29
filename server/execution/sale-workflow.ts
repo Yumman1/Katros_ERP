@@ -1,3 +1,5 @@
+import { releaseFzcoOwnership } from "./sesame-ownership";
+import { refreshContract } from "./contracts";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
 import { nextSerial, SERIALS } from "@/server/db/serials";
@@ -148,6 +150,15 @@ export async function markSaleTruckReleased(
     throw new Error("This truck is already released");
   }
   const releasedAt = new Date();
+  if (row.executionEntity === "FZCO") {
+    await prisma.$transaction(async tx => {
+      await releaseFzcoOwnership(tx, truckId, releasedByName);
+      await tx.pendingTruck.update({ where: { id: truckId }, data: { saleReleasedAt: releasedAt, saleReleasedBy: releasedByName } });
+      await tx.outboundDispatch.updateMany({ where: { gatepassNo: row.gatepassNo }, data: { status: "RELEASED", dispatchDate: releasedAt } });
+    });
+    if (row.assignedTradeRef) await refreshContract(row.assignedTradeRef);
+    return freshTruck(truckId);
+  }
   await prisma.pendingTruck.update({
     where: { id: truckId },
     data: { saleReleasedAt: releasedAt, saleReleasedBy: releasedByName },

@@ -1,3 +1,4 @@
+import { tradeEntity } from "@/lib/sesame-entity";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
 import { allocateSerial, SERIALS } from "@/server/db/serials";
@@ -10,6 +11,7 @@ import {
 } from "./ledger";
 
 export type VoucherView = {
+  executionEntity: string;
   commodityCode: string | null;
   id: string;
   voucherNo: string;
@@ -125,6 +127,7 @@ export async function findDuplicateVoucher(input: {
 
 function voucherRowToView(row: VoucherRow): VoucherView {
   return {
+    executionEntity: row.executionEntity,
     id: row.id,
     commodityCode: row.commodityCode,
     voucherNo: row.voucherNo,
@@ -151,6 +154,7 @@ function voucherRowToView(row: VoucherRow): VoucherView {
 
 /** Execution enters a payment voucher — pending until finance approves it. */
 export async function createVoucher(input: {
+  executionEntity?: "PAK" | "FZCO";
   commodityCode?: string;
   counterpartyId: string;
   /** Ledger account to credit — SELL (a sale) or BUY (a purchase settlement). */
@@ -245,8 +249,10 @@ export async function createVoucher(input: {
     throw new Error("A purchase voucher must be recorded against a settled purchase trade");
   }
 
-  const linkedTrade = tradeRef ? await prisma.trade.findUnique({ where: { tradeRef }, select: { commodity: { select: { code: true } } } }) : null;
+  const linkedTrade = tradeRef ? await prisma.trade.findUnique({ where: { tradeRef }, select: { tradeParams: true, commodity: { select: { code: true } } } }) : null;
   const commodityCode = linkedTrade?.commodity.code ?? input.commodityCode;
+  const executionEntity = linkedTrade ? tradeEntity(linkedTrade.tradeParams) : input.executionEntity ?? "PAK";
+  if (input.executionEntity && executionEntity !== input.executionEntity) throw new Error("Voucher trade belongs to another entity");
   if (input.commodityCode && linkedTrade && linkedTrade.commodity.code !== input.commodityCode) throw new Error("The voucher trade belongs to another execution commodity");
   if (!commodityCode) throw new Error("Select an execution commodity before entering a direct advance");
   if (!(await prisma.commodity.findUnique({ where: { code: commodityCode }, select: { id: true } }))) throw new Error("Unknown voucher commodity");
@@ -268,6 +274,7 @@ export async function createVoucher(input: {
       data: {
         voucherNo,
         commodityCode,
+        executionEntity,
         counterpartyId: input.counterpartyId,
         side,
         tradeRef,
@@ -287,12 +294,14 @@ export async function createVoucher(input: {
 }
 
 export async function listVouchers(filter?: {
+  executionEntity?: "PAK" | "FZCO";
   commodityCode?: string;
   status?: "PENDING_FINANCE" | "APPROVED" | "REJECTED";
   counterpartyId?: string;
 }): Promise<VoucherView[]> {
   const rows = await prisma.voucher.findMany({
     where: {
+      ...(filter?.executionEntity ? { executionEntity: filter.executionEntity } : {}),
       ...(filter?.commodityCode ? { commodityCode: filter.commodityCode } : {}),
       ...(filter?.status ? { status: filter.status } : {}),
       ...(filter?.counterpartyId ? { counterpartyId: filter.counterpartyId } : {}),

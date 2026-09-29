@@ -81,7 +81,7 @@ export const policyRouter = router({
   }),
 
   /** Debits past their due date — the overdue alert card on every dashboard. */
-  overdueLedgerAlerts: protectedProcedure.query(({ ctx }) => getOverdueLedgerAlerts(ctx.executionCommodityCode)),
+  overdueLedgerAlerts: protectedProcedure.query(({ ctx }) => getOverdueLedgerAlerts(ctx.executionCommodityCode, ctx.executionEntity)),
 
   /**
    * Rejections page data — traders see rejections on their own trades,
@@ -96,6 +96,6 @@ export const policyRouter = router({
         fullHistory,
       });
     }
-    return filterDeskRejections(await listRejections({ fullHistory }), ctx.executionCommodityCode);
+    return filterDeskRejections(await listRejections({ fullHistory }), ctx.executionCommodityCode, ctx.executionEntity);
   }),
 });

@@ -24,6 +24,7 @@ import { json, num, numOrNull } from "@/server/db/convert";
 // ─── Pending Truck (Gatepass) Types ───────────────────────────────────────────
 export type PendingTruckStatus = "PENDING" | "ASSIGNED" | "PARTIAL";
 export type PendingTruck = {
+  executionEntity?: string;
   id: string;
   /** Gatepass no. — the single unique gate-entry reference (truck no. can repeat). Auto-generated if not supplied. */
   gatepassNo: string;
@@ -135,6 +136,8 @@ export type SaleTruckStage =
 export type ContractStatus = "Open" | "Close";
 
 export type ExecutionContract = {
+  executionEntity?: string;
+  paperOwnership?: boolean;
   tradeRef: string;
   tradeId: string;
   contractDate: Date;
@@ -306,6 +309,7 @@ export type PendingTruckRowWithDocs = PendingTruckRow & {
 
 export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
   return {
+    executionEntity: row.executionEntity,
     id: row.id,
     gatepassNo: row.gatepassNo,
     arrivalDate: row.arrivalDate,
@@ -388,6 +392,8 @@ export type ExecutionContractRowWithAllocations = ExecutionContractRow & {
 
 export function contractRowToRuntime(row: ExecutionContractRowWithAllocations): ExecutionContract {
   return {
+    executionEntity: row.executionEntity,
+    paperOwnership: row.paperOwnership,
     tradeRef: row.tradeRef,
     tradeId: row.tradeId,
     contractDate: row.contractDate,

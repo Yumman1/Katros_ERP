@@ -405,6 +405,7 @@ function BookTradeForm() {
 
   const isCorn = isCornCommodity(selectedCommodity?.code);
   const isSesame = isSesameCommodity(selectedCommodity?.code, selectedCommodity?.name);
+  const paperOwnership = isSesame && (sesameTradingEntity(tradeParams) === "Kastros FZCO" || Boolean(tradeParams.internalCounterpartyEntity));
   useEffect(() => {
     if (isSesame) setTradeParams(current => ({ ...SESAME_DEFAULTS, ...current, tradingEntity: sesameTradingEntity(current) }));
   }, [isSesame, selectedCommodity?.id]);
@@ -706,7 +707,7 @@ function BookTradeForm() {
         if (data.paymentType === "CREDIT" && data.creditDays) {
           cleanedParams.creditDays = data.creditDays;
         }
-        if (selectedWarehouses.length) {
+        if (selectedWarehouses.length && !paperOwnership) {
           cleanedParams[TRADER_WAREHOUSE_SELECTIONS_KEY] = serializeTraderWarehouseSelections(
             selectedWarehouses,
           );
@@ -1005,8 +1006,14 @@ function BookTradeForm() {
                   </SearchableSelect>
                 </Field>
                 <Field label="Trading Entity">
-                  <SearchableSelect value={String(sesameTradingEntity(tradeParams))} onChange={e => setTradeParams(p => ({ ...p, tradingEntity: e.target.value }))} className="kastros-select w-full">
+                  <SearchableSelect value={String(sesameTradingEntity(tradeParams))} onChange={e => setTradeParams(p => ({ ...p, tradingEntity: e.target.value, internalCounterpartyEntity: "" }))} className="kastros-select w-full">
                     {SESAME_TRADING_ENTITIES.map(entity => <option key={entity} value={entity}>{entity}</option>)}
+                  </SearchableSelect>
+                </Field>
+                <Field label="Internal trade (optional)">
+                  <SearchableSelect value={String(tradeParams.internalCounterpartyEntity ?? "")} onChange={e => setTradeParams(p => ({ ...p, internalCounterpartyEntity: e.target.value }))} className="kastros-select w-full">
+                    <option value="">External counterparty</option>
+                    <option value={sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "PAK" : "FZCO"}>{sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "Buy / sell with Kastros Pakistan" : "Buy / sell with Dubai FZCO"}</option>
                   </SearchableSelect>
                 </Field>
               </>
@@ -1425,7 +1432,7 @@ function BookTradeForm() {
                 />
               </Field>
             )}
-            <Field label="Warehouses (optional)">
+            {!paperOwnership && <Field label="Warehouses (optional)">
               <WarehouseMultiSelect
                 warehouses={warehouseOptions}
                 value={selectedWarehouses}
@@ -1460,7 +1467,8 @@ function BookTradeForm() {
                       ? "Spare bale storage — free capacity in each warehouse's bale division."
                       : "Select a commodity to see spare storage capacity for its division."}
               </p>
-            </Field>
+            </Field>}
+            {paperOwnership && <p className="text-sm text-muted-foreground">Ownership is confirmed in Sesame execution. No warehouse allocation is required for this trade.</p>}
           </div>
         </Section>
 

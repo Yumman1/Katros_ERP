@@ -307,6 +307,7 @@ enum TradeSeason {
 }
 
 model Trade {
+  sesameOwnershipEntries SesameOwnershipEntry[]
   id        String         @id @default(cuid())
   tradeRef  String         @unique
   tradeDate DateTime
@@ -688,6 +689,8 @@ enum ContractStatus {
 /// the Trade; commodity / counterparty fields are intentional denormalized
 /// snapshots of terms at lock time.
 model ExecutionContract {
+  executionEntity String @default("PAK")
+  paperOwnership Boolean @default(false)
   id       String @id @default(cuid())
   tradeRef String @unique
   tradeId  String @unique
@@ -815,6 +818,8 @@ enum SaleTruckStage {
 
 /// Gatepass entry logged at the warehouse gate (public REST form).
 model PendingTruck {
+  sesameOwnershipEntries SesameOwnershipEntry[]
+  executionEntity String @default("PAK")
   id         String   @id @default(cuid())
   gatepassNo String   @unique
   arrivalDate DateTime
@@ -1561,6 +1566,7 @@ enum VoucherStatus {
 /// Money-ingestion voucher entered by execution against a SELL-side
 /// counterparty. Credits the ledger only once finance approves it.
 model Voucher {
+  executionEntity String @default("PAK")
   /// Commodity account for direct advances; linked vouchers inherit their trade.
   commodityCode String?
   id             String        @id @default(cuid())
@@ -1606,6 +1612,26 @@ model Voucher {
 
 /// Unfinished trade-booking form state, autosaved from the booking page so a
 /// closed tab or dropped connection never loses the trader's work.
+/// Ownership changes never create a physical receipt or dispatch.
+/// Null entity represents an external counterparty; null warehouse is off-site custody.
+model SesameOwnershipEntry {
+  id String @id @default(cuid())
+  tradeRef String
+  commodityCode String
+  fromEntity String?
+  toEntity String?
+  quantityMt Decimal @db.Decimal(18, 6)
+  warehouseName String?
+  truckId String?
+  recordedBy String
+  createdAt DateTime @default(now())
+  trade Trade @relation(fields: [tradeRef], references: [tradeRef], onDelete: Restrict)
+  truck PendingTruck? @relation(fields: [truckId], references: [id], onDelete: Restrict)
+  @@index([commodityCode, warehouseName])
+  @@index([tradeRef])
+  @@index([truckId])
+}
+
 model TradeDraft {
   id         String   @id @default(cuid())
   traderName String

@@ -359,7 +359,7 @@ export function LockedContractsPage() {
                         <td className="whitespace-nowrap">
                           <div className="flex items-center gap-1">
                             <Link
-                              href={executionWorkspacePath(c.tradeRef, c.executionProfile)}
+                              href={c.paperOwnership ? "/execution/ownership" : executionWorkspacePath(c.tradeRef, c.executionProfile)}
                               className={cn("text-[10px] font-medium hover:underline", profileClass)}
                             >
                               Open

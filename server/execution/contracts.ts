@@ -1,4 +1,5 @@
 import { isSesameCommodity } from "@/lib/sesame";
+import { paperTrade, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
 import { sesameSettlementFx } from "@/lib/execution-settlement";
 import { executionDeskTradeRefs } from "./desk-scope";
 import type { Prisma, PrismaClient } from "@prisma/client";
@@ -76,12 +77,14 @@ async function computeFulfilledQty(
   direction: TradeDirection,
   quantityUnit: string,
 ): Promise<number> {
+  const ownership = await db.sesameOwnershipEntry.aggregate({ where: { tradeRef, truckId: null }, _sum: { quantityMt: true } });
+  const paperQty = num(ownership._sum.quantityMt);
   if (direction === TradeDirection.SELL) {
     const agg = await db.outboundDispatch.aggregate({
       where: { tradeRef, status: { not: "AT_GATE" } },
       _sum: { allocatedQtyMt: true },
     });
-    return num(agg._sum.allocatedQtyMt);
+    return num(agg._sum.allocatedQtyMt) + paperQty;
   }
   const agg = await db.inboundReceipt.aggregate({
     where: { tradeRef, status: { not: "DRAFT" } },
@@ -91,7 +94,7 @@ async function computeFulfilledQty(
   const spotWeightKg = spot ? num(spot.warehouseReceiveWeightKg) : 0;
   const spotQty =
     spot?.state === "RECEIVED" && spotWeightKg ? kgToQuantityUnit(spotWeightKg, quantityUnit) : 0;
-  return num(agg._sum.allocatedQtyMt) + spotQty;
+  return num(agg._sum.allocatedQtyMt) + spotQty + paperQty;
 }
 
 async function getFulfillmentByWarehouse(
@@ -171,7 +174,7 @@ export async function refreshContract(tradeRef: string): Promise<void> {
     const contractualQtyMt = num(row.contractualQtyMt);
     const fulfilled = await computeFulfilledQty(tx, tradeRef, row.direction, row.quantityUnit);
     const open = Math.max(0, contractualQtyMt - fulfilled);
-    const autoClose = shouldAutoCloseContract({
+    const autoClose = row.paperOwnership ? fulfilled >= contractualQtyMt - 0.000001 : shouldAutoCloseContract({
       contractualQtyMt,
       receivedQtyMt: fulfilled,
       toleranceMt: num(row.quantityToleranceMt),
@@ -210,6 +213,7 @@ export async function refreshContract(tradeRef: string): Promise<void> {
 export async function syncAllLockedContracts(): Promise<void> {}
 
 export function contractRequiresWarehouse(c: ExecutionContract): boolean {
+  if (c.paperOwnership) return false;
   return c.executionProfile === "PURCHASE_DELIVERED" || c.executionProfile === "SALE_EX_WAREHOUSE";
 }
 
@@ -664,7 +668,8 @@ export async function lockTradeInStore(
     const match = companyWarehouses.find((w) => normWarehouse(w.name) === key);
     return match?.name ?? null;
   };
-  const requiresWarehouse = profile === "PURCHASE_DELIVERED" || profile === "SALE_EX_WAREHOUSE";
+  const paperOwnership = paperTrade(trade.commodity.code, trade.tradeParams);
+  const requiresWarehouse = !paperOwnership && (profile === "PURCHASE_DELIVERED" || profile === "SALE_EX_WAREHOUSE");
   const allocationLines: WarehouseAllocationLine[] =
     requiresWarehouse && splitPlan.length > 0 && trade.warehouseSplitApproved !== false
       ? splitPlan.map((line) => ({
@@ -704,6 +709,8 @@ export async function lockTradeInStore(
     const contract = await tx.executionContract.create({
       data: {
         tradeRef: trade.tradeRef,
+        executionEntity: isSesameCommodity(trade.commodity.code) ? tradeEntity(trade.tradeParams) : "PAK",
+        paperOwnership,
         tradeId: trade.id,
         contractDate: trade.tradeDate,
         direction: trade.direction,
@@ -798,6 +805,7 @@ export async function closeLockedContract(
   if (trade.tradeStatus !== TradeStatus.LOCKED) {
     throw new Error(`Only locked contracts can be closed (current: ${trade.tradeStatus})`);
   }
+  if (paperTrade(trade.commodity.code, trade.tradeParams)) throw new Error("Ownership contracts close automatically when their quantity is confirmed or released");
   await prisma.$transaction(async (tx) => {
     const updated = await tx.trade.updateMany({
       where: { tradeRef: ref, tradeStatus: TradeStatus.LOCKED },
@@ -878,6 +886,7 @@ async function batchFulfillmentByWarehouse(
 }
 
 export async function getLockedContracts(filter?: {
+  executionEntity?: SesameEntity;
   commodityCode?: string;
   profile?: ExecutionProfile;
   incoterms?: string;
@@ -890,6 +899,7 @@ export async function getLockedContracts(filter?: {
   warehouseUnallocated?: boolean;
 }): Promise<ExecutionContractView[]> {
   const where: Prisma.ExecutionContractWhereInput = filter?.commodityCode ? { commodityCode: filter.commodityCode } : {};
+  if (filter?.executionEntity && isSesameCommodity(filter.commodityCode)) where.executionEntity = filter.executionEntity;
   if (filter?.profile) where.executionProfile = filter.profile;
   if (filter?.incoterms) where.incoterms = filter.incoterms;
   if (filter?.tradeScope) where.tradeScope = filter.tradeScope;
@@ -975,10 +985,10 @@ export async function getPendingTradesForExecution() {
   }));
 }
 
-export async function getDeskSummary(commodityCode?: string) {
-  const refs = await executionDeskTradeRefs(commodityCode);
+export async function getDeskSummary(commodityCode?: string, executionEntity?: SesameEntity) {
+  const refs = await executionDeskTradeRefs(commodityCode, prisma, executionEntity);
   const tradeWhere = refs ? { tradeRef: { in: refs } } : {};
-  const commodityWhere = commodityCode ? { commodityCode } : {};
+  const commodityWhere = commodityCode ? { commodityCode, ...(executionEntity && isSesameCommodity(commodityCode) ? { executionEntity } : {}) } : {};
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const [
@@ -991,7 +1001,7 @@ export async function getDeskSummary(commodityCode?: string) {
     pendingTrucksUnassigned,
   ] = await Promise.all([
     prisma.executionContract.findMany({ where: commodityWhere, include: CONTRACT_INCLUDE }),
-    getPendingTradesForExecution().then(rows => commodityCode ? rows.filter(r => r.commodityCode === commodityCode) : rows),
+    getPendingTradesForExecution().then(rows => refs ? rows.filter(r => refs.includes(r.tradeRef)) : rows),
     prisma.trade.count({
       where: { ...tradeWhere, tradeStatus: TradeStatus.PENDING, submittedToExecution: true },
     }),
@@ -1046,9 +1056,9 @@ export async function exportLockedContractsCsv(
   to: Date,
   profile?: ExecutionProfile,
   incoterms?: string,
-  scope?: { commodityCode?: string; traderName?: string },
+  scope?: { commodityCode?: string; traderName?: string; executionEntity?: SesameEntity },
 ): Promise<string> {
-  const list = await getLockedContracts({ from, to, profile, incoterms });
+  const list = await getLockedContracts({ from, to, profile, incoterms, executionEntity: scope?.executionEntity, commodityCode: scope?.commodityCode });
   return lockedContractsToCsv(list.filter(c => (!scope?.commodityCode || c.commodityCode === scope.commodityCode) && (!scope?.traderName || c.traderName === scope.traderName)));
 }
 

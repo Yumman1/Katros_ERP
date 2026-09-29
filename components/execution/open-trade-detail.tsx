@@ -1,5 +1,6 @@
 "use client";
 import { isSesameCommodity, sesameFields, isPercentagePayment, sesameTradingEntity } from "@/lib/sesame";
+import { paperTrade } from "@/lib/sesame-entity";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -110,8 +111,8 @@ export function OpenTradeDetail({
   const isSesame = isSesameCommodity(trade?.commodity.code, trade?.commodity.name);
   const isCorn = isCornCommodity(trade?.commodity.code);
   const tradeScope = trade?.tradeScope ?? "LOCAL";
-  const requiresWarehouse =
-    trade?.expectedProfile === "PURCHASE_DELIVERED" || trade?.expectedProfile === "SALE_EX_WAREHOUSE";
+  const requiresWarehouse = trade ? !paperTrade(trade.commodity.code, trade.tradeParams) &&
+    (trade.expectedProfile === "PURCHASE_DELIVERED" || trade.expectedProfile === "SALE_EX_WAREHOUSE") : false;
 
   const bookingIncoterms = useMemo(
     () => (trade ? incotermsForBooking(trade.direction, tradeScope, trade.commodity.code) : []),

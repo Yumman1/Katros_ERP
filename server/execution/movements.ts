@@ -1,4 +1,7 @@
 import type { Prisma } from "@prisma/client";
+import { isSesameCommodity } from "@/lib/sesame";
+import { pakistanAvailable } from "./sesame-stock";
+import { assertOwnershipWrite } from "./ownership-guards";
 import { KG_PER_MAUND, type QualityTolerances } from "@/lib/trade-constants";
 import {
   countsAsReleasedOutbound,
@@ -99,6 +102,7 @@ export async function createInboundReceipt(
   },
 ): Promise<InboundReceipt> {
   const contract = await getContractByRef(input.tradeRef);
+  if (contract?.paperOwnership) throw new Error("Use the Sesame ownership workflow for this trade");
   if (!contract) throw new Error("Locked contract not found");
   assertWithinDeliveryWindow(
     contract,
@@ -240,6 +244,7 @@ export async function createOutboundDispatch(
 ): Promise<OutboundDispatch> {
   const contract = await getContractByRef(input.tradeRef);
   if (!contract) throw new Error("Locked sale contract not found");
+  if (contract.paperOwnership) throw new Error("Use the FZCO truck workflow for this trade");
   assertWithinDeliveryWindow(
     contract,
     input.dispatchDate ?? new Date(),
@@ -426,6 +431,7 @@ export async function updateInboundReceipt(
   }>,
 ): Promise<InboundReceipt> {
   const receipt = await prisma.inboundReceipt.findUnique({ where: { id } });
+  await assertOwnershipWrite("execution.updateInboundReceipt", { id });
   if (!receipt) throw new Error("Inbound receipt not found");
   const prevGatepass = receipt.gatepassNo;
   const prevTruckNo = receipt.truckNo;
@@ -498,6 +504,7 @@ export async function updateOutboundDispatch(
   }>,
 ): Promise<OutboundDispatch> {
   const dispatch = await prisma.outboundDispatch.findUnique({ where: { id } });
+  await assertOwnershipWrite("execution.updateOutboundDispatch", { id });
   if (!dispatch) throw new Error("Outbound dispatch not found");
   const prevGatepass = dispatch.gatepassNo;
   const prevTruckNo = dispatch.truckNo;
@@ -558,6 +565,7 @@ export async function updateOutboundDispatch(
 }
 
 export async function deleteInboundReceipt(id: string): Promise<{ ok: true }> {
+  await assertOwnershipWrite("execution.deleteInboundReceipt", { id });
   const receipt = await prisma.inboundReceipt.findUnique({ where: { id } });
   if (!receipt) throw new Error("Inbound receipt not found");
   if (receipt.status === "PAID") {
@@ -586,6 +594,7 @@ export async function deleteInboundReceipt(id: string): Promise<{ ok: true }> {
 }
 
 export async function deleteOutboundDispatch(id: string): Promise<{ ok: true }> {
+  await assertOwnershipWrite("execution.deleteOutboundDispatch", { id });
   const dispatch = await prisma.outboundDispatch.findUnique({ where: { id } });
   if (!dispatch) throw new Error("Outbound dispatch not found");
   if (dispatch.status === "RELEASED") {
@@ -717,6 +726,7 @@ export async function getAvailableOutboundStockMt(
   commodityCode: string,
   exclude?: { truckId?: string; dispatchId?: string },
 ): Promise<number> {
+  if (isSesameCommodity(commodityCode)) return Math.max(0, await pakistanAvailable(prisma, commodityCode, warehouseName, exclude?.truckId, exclude?.dispatchId));
   let available = await getWarehouseCommodityStockMt(warehouseName, commodityCode, {
     outboundId: exclude?.dispatchId,
   });
@@ -756,6 +766,7 @@ export async function assertSufficientOutboundStock(
 }
 
 export async function exportMovementsCsv(filter?: {
+  executionEntity?: "PAK" | "FZCO";
   warehouseName?: string;
   commodityCode?: string;
   movementType?: "INBOUND" | "OUTBOUND" | "ALL";
@@ -767,7 +778,7 @@ export async function exportMovementsCsv(filter?: {
     prisma.inboundReceipt.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.outboundDispatch.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.executionContract.findMany({
-      select: { tradeRef: true, commodityCode: true, currency: true },
+      select: { tradeRef: true, commodityCode: true, currency: true, executionEntity: true },
     }),
   ]);
   const contractByRef = new Map(contracts.map((c) => [c.tradeRef, c]));
@@ -784,6 +795,7 @@ export async function exportMovementsCsv(filter?: {
   const to = filter?.to;
 
   for (const t of trucks) {
+    if (filter?.executionEntity && t.executionEntity !== filter.executionEntity) continue;
     if (t.status === "ASSIGNED") continue;
     if (tp && tp !== t.movementType) continue;
     const d = new Date(t.arrivalDate);
@@ -824,6 +836,7 @@ export async function exportMovementsCsv(filter?: {
       if (to && d > to) continue;
       if (wh && r.warehouseName !== wh) continue;
       const c = contractByRef.get(r.tradeRef);
+      if (filter?.executionEntity && c?.executionEntity !== filter.executionEntity) continue;
       if (cm && c?.commodityCode !== cm) continue;
       rows.push(
         ["INBOUND", r.gatepassNo ?? r.kcsNo, r.billNo ?? "", fmtDate(d), r.truckNo, r.warehouseName, r.tradeRef,
@@ -839,6 +852,7 @@ export async function exportMovementsCsv(filter?: {
       if (to && d > to) continue;
       if (wh && d2.warehouseName !== wh) continue;
       const c = contractByRef.get(d2.tradeRef);
+      if (filter?.executionEntity && c?.executionEntity !== filter.executionEntity) continue;
       if (cm && c?.commodityCode !== cm) continue;
       rows.push(
         ["OUTBOUND", d2.gatepassNo ?? d2.doRef ?? d2.id, "", fmtDate(d), d2.truckNo, d2.warehouseName, d2.tradeRef,

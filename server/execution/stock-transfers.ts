@@ -22,6 +22,8 @@
 
 import type { Prisma } from "@prisma/client";
 import { StockTransferStatus } from "@prisma/client";
+import { isSesameCommodity } from "@/lib/sesame";
+import { lockSesameOwnership, pakistanAvailable } from "./sesame-stock";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
 import { allocateSerial, nextSerial, SERIALS } from "@/server/db/serials";
@@ -251,6 +253,11 @@ export async function dispatchStockTransfer(
     }
     const qty = overrideQtyMt ?? num(t.dispatchedQtyMt);
     if (!Number.isFinite(qty) || qty <= 0) throw new Error("Quantity must be greater than zero");
+
+    if (isSesameCommodity(t.commodityCode)) {
+      await lockSesameOwnership(tx, t.commodityCode);
+      if (t.fromWarehouseName && await pakistanAvailable(tx, t.commodityCode, t.fromWarehouseName) + TRANSIT_TOLERANCE_MT < qty) throw new Error("Insufficient Pakistan-owned stock; FZCO custody stock cannot be shifted");
+    }
 
     const outGatepassNo = await nextSerial(SERIALS.GATEPASS_OUTBOUND, tx);
     return tx.stockTransfer.update({

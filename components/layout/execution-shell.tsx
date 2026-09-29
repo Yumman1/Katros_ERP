@@ -27,10 +27,14 @@ import { trpc } from "@/lib/trpc/client";
 import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
 import { cn } from "@/lib/utils";
+import { isSesameCommodity } from "@/lib/sesame";
+import { FzcoOverview, FzcoTrucks, OwnershipTrades, SesameInventory, SesamePositions } from "@/components/execution/sesame-entity-panels";
 
 export function ExecutionShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { active } = useExecutionCommodityDesk();
+  const { active, entity, selectEntity } = useExecutionCommodityDesk();
+  const sesame = isSesameCommodity(active.code);
+  const fzco = sesame && entity === "FZCO";
   const { role, isHead } = useTeam();
   const isExecutionHead = role != null && canActOnDepartment(role, isHead, "EXECUTION");
   // retry: false — non-execution visitors would otherwise 403-loop on these.
@@ -94,6 +98,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         { href: "/execution/prices", label: "Daily Prices", icon: <TrendingUp className="h-4 w-4" /> },
         { href: "/execution/inventory", label: "Inventory", icon: <Warehouse className="h-4 w-4" /> },
         { href: "/execution/positions", label: "Positions", icon: <LineChart className="h-4 w-4" /> },
+        ...(sesame ? [{ href: "/execution/ownership", label: "Ownership Transfers", icon: <BookOpen className="h-4 w-4" /> }] : []),
         { href: "/execution/movements", label: "Truck Movements", icon: <Truck className="h-4 w-4" /> },
         { href: "/execution/shifting", label: "Internal Shifting", icon: <MoveRight className="h-4 w-4" /> },
         { href: "/execution/vouchers", label: "Vouchers", icon: <Receipt className="h-4 w-4" /> },
@@ -138,14 +143,21 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
               },
             ]),
         { href: "/execution/trade-files", label: "Trade Files", icon: <FileSpreadsheet className="h-4 w-4" /> },
-      ],
+      ].filter(item => !fzco || !["/execution/prices", "/execution/shifting", "/execution/warehouses", "/execution/ledgers"].includes(item.href)),
     },
     { href: "/account", label: "Account", icon: <User className="h-4 w-4" /> },
   ];
 
+  let content = children;
+  if (sesame && pathname === "/execution/positions") content = <div className="kastros-desk-page"><SesamePositions /></div>;
+  if (sesame && pathname === "/execution/inventory") content = <SesameInventory />;
+  if (fzco && pathname === "/execution") content = <FzcoOverview />;
+  if (fzco && pathname === "/execution/movements") content = <FzcoTrucks />;
+  if (fzco && (pathname === "/execution/contracts" || /^\/execution\/(purchase-delivered|purchase-spot|sales)\//.test(pathname))) content = <div className="kastros-desk-page"><OwnershipTrades allTrades /></div>;
+  if (fzco && ["/execution/prices", "/execution/shifting", "/execution/warehouses", "/execution/ledgers"].includes(pathname)) content = <div className="kastros-desk-page"><p>This page is managed in the Pakistan Sesame desk.</p><button className="kastros-btn-primary" onClick={() => selectEntity("PAK", pathname === "/execution/ledgers" ? "/execution/ledgers?entity=FZCO" : pathname)}>Open Pakistan desk</button></div>;
   return (
     <AppShell
-      brandSubtitle={`${active.name} Execution`}
+      brandSubtitle={`${active.name}${sesame ? fzco ? " · Dubai FZCO" : " · Pakistan" : ""} Execution`}
       contentScroll="page"
       pathname={pathname}
       nav={nav}
@@ -183,7 +195,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         />
       }
     >
-      {children}
+      {content}
     </AppShell>
   );
 }

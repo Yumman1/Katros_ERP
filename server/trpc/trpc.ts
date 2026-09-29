@@ -1,4 +1,5 @@
 import { assertDeskTarget } from "@/server/execution/desk-scope";
+import { assertOwnershipWrite } from "@/server/execution/ownership-guards";
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { Context } from "./context";
@@ -23,10 +24,12 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next, path, getR
   if (!ctx.session?.user?.id) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
+  const rawInput = await getRawInput();
+  await assertOwnershipWrite(path, rawInput);
   if (ctx.executionCommodityCode) {
     const desk = await ctx.prisma.commodity.findUnique({ where: { code: ctx.executionCommodityCode }, select: { id: true } });
     if (!desk) throw new TRPCError({ code: "BAD_REQUEST", message: "Unknown execution commodity" });
-    await assertDeskTarget(ctx.executionCommodityCode, path, await getRawInput());
+    await assertDeskTarget(ctx.executionCommodityCode, path, rawInput, ctx.executionEntity);
   }
   // Presence heartbeat — at most one write per user per minute, fire-and-forget.
   const userId = ctx.session.user.id;

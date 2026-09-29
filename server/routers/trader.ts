@@ -44,6 +44,7 @@ import { exportTradeFileCsv } from "@/server/trade-file-export";
 import { loadStockTransfersForStock } from "@/server/execution/stock-transfer-load";
 import { computePositionLedger } from "@/server/position-ledger";
 import { getSeasonNetPositions, setPositionMarketInput } from "@/server/net-position";
+import { fzcoCustody } from "@/server/execution/sesame-stock";
 import { getCounterpartyLedgers } from "@/server/finance/ledger";
 import { buildTraderCounterpartyReport } from "@/server/trader-reports";
 import {
@@ -690,6 +691,14 @@ export const traderRouter = router({
     }
 
     // Sell commitment already promised out of each warehouse but not yet
+    if (commodity && isSesameCommodity(commodity.code)) {
+      for (const [name, qty] of await fzcoCustody(prisma, commodity.code)) {
+        const key = normWarehouseName(name);
+        stockOnHandByWarehouse.set(key, (stockOnHandByWarehouse.get(key) ?? 0) - qty);
+      }
+    }
+
+    // Sell commitment already promised out of each warehouse but not yet
     // dispatched. Open SELL contracts only: their allocation lines carry the
     // qty per warehouse, and fulfilledQtyMt is kept in step with outbound
     // dispatches, so a load that leaves the yard drops out of stock and out of
@@ -702,6 +711,7 @@ export const traderRouter = router({
         if (c.direction !== TradeDirection.SELL) continue;
         if (c.contractStatus !== "Open") continue;
         if (c.commodityCode !== commodity.code) continue;
+        if (c.executionEntity === "FZCO") continue;
 
         const lines = c.warehouseAllocationProgress ?? [];
         if (lines.length === 0) {
