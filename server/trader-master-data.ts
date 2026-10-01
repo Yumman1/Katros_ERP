@@ -1,3 +1,4 @@
+import { validateWarehouseCapacity } from "@/lib/warehouse-basis";
 import {
   CommodityCategory,
   CounterpartySide,
@@ -74,6 +75,7 @@ export type MockCounterpartyOption = {
 };
 
 export type MockLocationOption = {
+  warehouseBasis?: "LEASE" | "USE";
   id: string;
   name: string;
   code?: string | null;
@@ -140,6 +142,7 @@ export function counterpartyRowToOption(row: Counterparty): MockCounterpartyOpti
 
 export function locationRowToOption(row: Location): MockLocationOption {
   return {
+    warehouseBasis: row.warehouseBasis,
     id: row.id,
     name: row.name,
     code: row.code,
@@ -569,7 +572,7 @@ export async function getLocationByName(name: string): Promise<MockLocationOptio
 
 /** True for the company's own storage warehouses (have capacity or a K-coded id) vs. ports/FOB points. */
 export function isCompanyWarehouse(loc: MockLocationOption): boolean {
-  return loc.capacitySqFt != null || (loc.code?.trim().toUpperCase().startsWith("K") ?? false);
+  return loc.warehouseBasis === "USE" || loc.capacitySqFt != null || (loc.code?.trim().toUpperCase().startsWith("K") ?? false);
 }
 
 /** Company-owned warehouses the execution head can allocate contracts to. */
@@ -583,6 +586,7 @@ async function nextWarehouseCode(): Promise<string> {
 }
 
 export async function addCustomLocation(input: {
+  warehouseBasis?: "LEASE" | "USE";
   name: string;
   code?: string;
   lsp?: string;
@@ -601,16 +605,17 @@ export async function addCustomLocation(input: {
 }): Promise<MockLocationOption> {
   const n = input.name.trim();
   if (!n) throw new Error("Location name is required");
+  if (input.warehouseBasis != null || input.capacitySqFt != null) validateWarehouseCapacity(input);
   const dupe = await prisma.location.findFirst({
     where: { name: { equals: n, mode: "insensitive" } },
     select: { id: true },
   });
   if (dupe) throw new Error("Location already exists");
-  // Company warehouses (they have storage capacity) get an auto-generated
-  // K-code; plain load/delivery points stay code-less.
+  // Registered lease/use-basis warehouses get an auto-generated K-code;
+  // plain load/delivery points stay code-less.
   const code =
     input.code?.trim() ||
-    (input.capacitySqFt != null ? await nextWarehouseCode() : null);
+    (input.warehouseBasis != null || input.capacitySqFt != null ? await nextWarehouseCode() : null);
   const row = await prisma.location.create({
     data: {
       name: n,
@@ -621,12 +626,13 @@ export async function addCustomLocation(input: {
       address: input.address?.trim() || null,
       city: input.city?.trim() || null,
       province: input.province?.trim() || null,
-      capacitySqFt: input.capacitySqFt ?? null,
+      warehouseBasis: input.warehouseBasis ?? "LEASE",
+      capacitySqFt: input.warehouseBasis === "USE" ? null : input.capacitySqFt ?? null,
       costPerSqFt: input.costPerSqFt ?? null,
       // Bales division is sq ft per MT of baled goods (same metric as grain);
       // left unset unless provided — no meaningful universal default.
-      balesDivisionSqFt: input.balesDivisionSqFt ?? null,
-      grainDivisionSqFt: input.grainDivisionSqFt ?? 7,
+      balesDivisionSqFt: input.warehouseBasis === "USE" ? null : input.balesDivisionSqFt ?? null,
+      grainDivisionSqFt: input.warehouseBasis === "USE" ? null : input.grainDivisionSqFt ?? 7,
       serviceStartDate: input.serviceStartDate?.trim()
         ? new Date(input.serviceStartDate.trim())
         : null,
@@ -648,7 +654,14 @@ export async function updateWarehouseLocation(
 ): Promise<MockLocationOption> {
   const existing = await prisma.location.findUnique({ where: { id } });
   if (!existing) throw new Error("Warehouse not found");
-  const data: Prisma.LocationUpdateInput = {};
+  const basis = patch.warehouseBasis ?? existing.warehouseBasis;
+  validateWarehouseCapacity({
+    warehouseBasis: basis,
+    capacitySqFt: patch.capacitySqFt !== undefined ? patch.capacitySqFt : numOrNull(existing.capacitySqFt),
+    grainDivisionSqFt: patch.grainDivisionSqFt !== undefined ? patch.grainDivisionSqFt : numOrNull(existing.grainDivisionSqFt),
+    balesDivisionSqFt: patch.balesDivisionSqFt !== undefined ? patch.balesDivisionSqFt : numOrNull(existing.balesDivisionSqFt),
+  });
+  const data: Prisma.LocationUpdateInput = { warehouseBasis: basis };
   if (patch.name !== undefined && patch.name != null) data.name = patch.name.trim();
   if (patch.code !== undefined) data.code = patch.code?.trim() || null;
   if (patch.lsp !== undefined) data.lsp = patch.lsp?.trim() || null;
@@ -671,6 +684,11 @@ export async function updateWarehouseLocation(
     data.laborLines = (patch.laborLines?.length
       ? patch.laborLines
       : Prisma.JsonNull) as Prisma.InputJsonValue;
+  }
+  if (basis === "USE") {
+    data.capacitySqFt = null;
+    data.grainDivisionSqFt = null;
+    data.balesDivisionSqFt = null;
   }
   const row = await prisma.location.update({ where: { id }, data });
   return locationRowToOption(row);

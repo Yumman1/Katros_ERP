@@ -72,6 +72,7 @@ export function OpenTradeWarehouseAllocation({
     if (direction === "SELL") {
       return `${name} — Stock ${fmtCapacityMt(row.stockOnHandMt)} MT · Booked ${fmtCapacityMt(row.bookedQtyMt)} MT · Free to sell ${fmtCapacityMt(row.freeToSellMt)} MT`;
     }
+    if (row.warehouseBasis === "USE") return `${name} — Use basis · confirm space by phone`;
     const mt = row.trueAvailableMt ?? row.divisionAvailableMt;
     const pct = row.trueAvailabilityPct ?? row.divisionAvailabilityPct;
     return `${name} — Available ${fmtCapacityMt(mt)} MT${pct == null ? "" : ` · ${pct.toFixed(0)}%`}`;

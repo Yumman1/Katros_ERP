@@ -8,6 +8,7 @@ import {
 } from "@/lib/warehouse-utilization";
 
 export type WarehouseAvailabilityRow = {
+  warehouseBasis?: "LEASE" | "USE";
   id: string;
   name: string;
   code: string | null;
@@ -50,6 +51,7 @@ export type WarehouseAvailabilityRow = {
 };
 
 type WarehouseLoc = {
+  warehouseBasis?: "LEASE" | "USE";
   id: string;
   name: string;
   code?: string | null;
@@ -87,6 +89,7 @@ export type WarehouseAvailabilityCommodity = {
 };
 
 const EMPTY_ROW = (loc: WarehouseLoc): WarehouseAvailabilityRow => ({
+  warehouseBasis: loc.warehouseBasis ?? "LEASE",
   id: loc.id,
   name: loc.name,
   code: loc.code ?? null,
@@ -123,7 +126,7 @@ export function computeWarehouseAvailability(
   asOf: Date | null = null,
   commodity?: WarehouseAvailabilityCommodity | null,
   /** Physical inventory split (MT) per warehouse — allocated (assigned to trades) vs unallocated (gatepassed, unassigned) — keyed by normWarehouseName. */
-  inventoryByWarehouse?: ReadonlyMap<string, { allocatedMt: number; unallocatedMt: number }> | null,
+  inventoryByWarehouse?: ReadonlyMap<string, { allocatedMt: number; unallocatedMt: number; stock?: { stockMt: number; stockBales: number } }> | null,
 ): WarehouseAvailabilityRow[] {
   const contractByRef = new Map(
     contracts.map((c) => [
@@ -144,7 +147,12 @@ export function computeWarehouseAvailability(
     const inv = inventoryByWarehouse?.get(normWarehouseName(loc.name));
     const allocatedInvMt = inv?.allocatedMt ?? 0;
     const unallocatedInvMt = inv?.unallocatedMt ?? 0;
-    const stock = stockAsOf(loc.name, inbound, outbound, contractByRef, asOf);
+    const stock = inv?.stock ?? stockAsOf(loc.name, inbound, outbound, contractByRef, asOf);
+    if (loc.warehouseBasis === "USE") return {
+      ...EMPTY_ROW(loc), grainDivisionSqFt: null, balesDivisionSqFt: null, capacitySqFt: null,
+      utilizationPct: 100, storageDivision, allocatedInvMt, unallocatedInvMt,
+      stockMt: stock.stockMt, stockBales: stock.stockBales,
+    };
     const view = buildWarehouseUtilizationView(loc, stock);
     if (!view) return { ...EMPTY_ROW(loc), allocatedInvMt, unallocatedInvMt };
 
@@ -163,8 +171,9 @@ export function computeWarehouseAvailability(
     const freeOfUnallocatedMt =
       capacityMt != null ? Math.max(0, capacityMt - unallocatedInvMt) : null;
     // True free space: capacity minus ALL physical inventory (allocated + unallocated).
-    const trueAvailableMt =
-      capacityMt != null
+    const trueAvailableMt = inv?.stock
+      ? (storageDivision === "bale" ? view.balanceBales : view.availableGrainMt)
+      : capacityMt != null
         ? Math.max(0, capacityMt - allocatedInvMt - unallocatedInvMt)
         : null;
     const trueAvailabilityPct =
@@ -173,6 +182,7 @@ export function computeWarehouseAvailability(
         : null;
 
     return {
+      warehouseBasis: loc.warehouseBasis ?? "LEASE",
       id: loc.id,
       name: loc.name,
       code: loc.code ?? null,

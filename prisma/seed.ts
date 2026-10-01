@@ -145,13 +145,18 @@ type WarehouseSeed = {
   address: string | null;
   city: string;
   province: string;
-  capacitySqFt: number;
+  warehouseBasis?: "LEASE" | "USE";
+  capacitySqFt: number | null;
   costPerSqFt: number | null;
-  balesDivisionSqFt: number;
-  grainDivisionSqFt: number;
+  balesDivisionSqFt: number | null;
+  grainDivisionSqFt: number | null;
 };
 
 const KASTROS_WAREHOUSES: WarehouseSeed[] = [
+  { name: "Gama WH", code: "K011", lsp: "Seagold", address: null, city: "Vehari", province: "Punjab", warehouseBasis: "LEASE", capacitySqFt: 47000, costPerSqFt: null, balesDivisionSqFt: null, grainDivisionSqFt: null },
+  { name: "Umar WH", code: "K012", lsp: "Seagold", address: null, city: "Tiba Sultan Pur", province: "Punjab", warehouseBasis: "LEASE", capacitySqFt: 37000, costPerSqFt: null, balesDivisionSqFt: null, grainDivisionSqFt: 9.01 },
+  { name: "Silver WH", code: "K013", lsp: "GodamTech", address: null, city: "Port Qasim", province: "Sindh", warehouseBasis: "LEASE", capacitySqFt: 20000, costPerSqFt: null, balesDivisionSqFt: null, grainDivisionSqFt: 6.24 },
+  { name: "MA oil", code: "K014", lsp: "MA Oil", address: null, city: "Port Qasim", province: "Sindh", warehouseBasis: "USE", capacitySqFt: null, costPerSqFt: null, balesDivisionSqFt: null, grainDivisionSqFt: null },
   {
     name: "K001-Al Amin WH SWL",
     code: "K001",
@@ -273,10 +278,11 @@ async function seedLocations(adminId: string) {
       address: w.address,
       city: w.city,
       province: w.province,
-      capacitySqFt: d(w.capacitySqFt),
+      warehouseBasis: w.warehouseBasis ?? "LEASE",
+      capacitySqFt: w.capacitySqFt != null ? d(w.capacitySqFt) : null,
       costPerSqFt: w.costPerSqFt != null ? d(w.costPerSqFt) : null,
-      balesDivisionSqFt: d(w.balesDivisionSqFt),
-      grainDivisionSqFt: d(w.grainDivisionSqFt),
+      balesDivisionSqFt: w.balesDivisionSqFt != null ? d(w.balesDivisionSqFt) : null,
+      grainDivisionSqFt: w.grainDivisionSqFt != null ? d(w.grainDivisionSqFt) : null,
     };
     rows.push(
       await prisma.location.upsert({

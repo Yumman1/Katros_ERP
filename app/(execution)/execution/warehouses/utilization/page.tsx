@@ -24,6 +24,7 @@ import { useMemo, useState } from "react";
 
 export default function WarehouseUtilizationPage() {
   const { data: locations, isLoading } = trpc.execution.warehouseLocations.useQuery();
+  const { data: liveAvailability } = trpc.trader.warehouseAvailability.useQuery(undefined, { refetchInterval: 60_000 });
   const { data: contracts } = trpc.execution.lockedContracts.useQuery({});
   const { data: inbound } = trpc.execution.inboundReceipts.useQuery({});
   const { data: outbound } = trpc.execution.outboundDispatches.useQuery({});
@@ -52,11 +53,14 @@ export default function WarehouseUtilizationPage() {
 
   const enriched = useMemo(() => {
     return (locations ?? []).map((loc) => {
-      const stock = stockAsOf(loc.name, inbound ?? [], outbound ?? [], contractByRef, asOfDate);
+      const live = liveAvailability?.warehouses.find((w) => w.id === loc.id);
+      const stock = !asOfDate && live?.stockMt != null && live.stockBales != null
+        ? { stockMt: live.stockMt, stockBales: live.stockBales }
+        : stockAsOf(loc.name, inbound ?? [], outbound ?? [], contractByRef, asOfDate);
       const view = buildWarehouseUtilizationView(loc, stock);
       return { loc, stock, view };
     });
-  }, [locations, inbound, outbound, contractByRef, asOfDate]);
+  }, [locations, inbound, outbound, contractByRef, asOfDate, liveAvailability]);
 
   const cityOptions = useMemo(() => {
     const set = new Set<string>();
@@ -80,22 +84,23 @@ export default function WarehouseUtilizationPage() {
   }, [enriched, search, cityFilter, minUtilPct]);
 
   const filterKey = `${search}|${cityFilter}|${minUtilPct}|${dateFrom}|${dateTo}`;
-  const listFilters = useRecordFilters("utilization", filtered.map((r) => ({ ...r, utilizationBand: !r.view ? "Not configured" : r.view.utilizationPct >= 100 ? "Full / over capacity" : r.view.utilizationPct <= 0 ? "Empty" : "Partially occupied" })), { fields: [field("warehouse", "Warehouse", "loc.name"), field("band", "Utilization", "utilizationBand")], searchPaths: ["loc.name", "loc.code", "loc.city"] });
+  const listFilters = useRecordFilters("utilization", filtered.map((r) => ({ ...r, utilizationBand: r.loc.warehouseBasis === "USE" ? "Use basis — manual space confirmation" : !r.view ? "Not configured" : r.view.utilizationPct >= 100 ? "Full / over capacity" : r.view.utilizationPct <= 0 ? "Empty" : "Partially occupied" })), { fields: [field("warehouse", "Warehouse", "loc.name"), field("band", "Utilization", "utilizationBand")], searchPaths: ["loc.name", "loc.code", "loc.city"] });
   const utilizationPagination = useListPagination(listFilters.rows, { resetKey: filterKey + listFilters.resetKey });
 
   function exportExcel() {
     if (listFilters.rows.length === 0) return;
-    const rows = listFilters.rows.map(({ loc, view }) => {
+    const rows = listFilters.rows.map(({ loc, view, stock }) => {
       const costing = computeWarehouseCosting(costingInputFromLocation(loc));
       return {
         Warehouse: loc.name,
         Code: loc.code ?? "",
         City: loc.city ?? "",
-        StockMT: view?.stockMt.toFixed(2) ?? "",
-        StockBales: view?.stockBales.toFixed(0) ?? "",
+        StockMT: stock.stockMt.toFixed(2),
+        StockBales: stock.stockBales.toFixed(0),
         GrainDivisionSqFt: view?.grainDivisionSqFt ?? "",
         BaleDivisionSqFt: view?.balesDivisionSqFt ?? "",
-        UtilizationPct: view ? view.utilizationPct.toFixed(1) : "",
+        WarehouseBasis: loc.warehouseBasis ?? "LEASE",
+        UtilizationPct: loc.warehouseBasis === "USE" ? "100.0" : view ? view.utilizationPct.toFixed(1) : "",
         AvailGrainMT: view ? view.availableGrainMt.toFixed(1) : "",
         AvailBaleAsGrainMT: view ? view.availableBaleAsGrainMt.toFixed(1) : "",
         UsedSqFt: view ? view.consumedSqFt.toFixed(0) : "",
@@ -192,7 +197,9 @@ export default function WarehouseUtilizationPage() {
                     </div>
                   </div>
                 </div>
-                {view ? (
+                {loc.warehouseBasis === "USE" ? (
+                  <p className="mt-3 text-xs text-subtle">Use basis · utilization 100% (reporting convention). No fixed capacity. Confirm space by phone before adding inventory.</p>
+                ) : view ? (
                   <>
                     <WarehouseCapacityStats view={view} />
                     <div className="mt-3 h-2 overflow-hidden rounded-full bg-foreground/[0.08]">
@@ -214,11 +221,11 @@ export default function WarehouseUtilizationPage() {
                     No capacity configured — add sq ft and divisions in Warehouses → Setup.
                   </p>
                 )}
-                <WarehouseCostingSummaryCard
+                {loc.warehouseBasis !== "USE" && <WarehouseCostingSummaryCard
                   loc={loc}
                   actualUtilPct={view ? view.utilizationPct / 100 : null}
                   stockMt={view?.stockMt}
-                />
+                />}
               </div>
             ))}
           </div>

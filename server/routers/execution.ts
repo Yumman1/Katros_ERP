@@ -102,6 +102,7 @@ const warehouseLaborLineSchema = z.object({
 });
 
 const warehouseLocationFieldsSchema = z.object({
+  warehouseBasis: z.enum(["LEASE", "USE"]).optional(),
   name: z.string().trim().min(1),
   code: z.string().trim().optional(),
   lsp: z.string().trim().optional(),
@@ -555,7 +556,7 @@ export const executionRouter = router({
       try {
         return await addCustomLocation({
           ...input,
-          capacitySqFt: input.capacitySqFt ?? 1,
+          warehouseBasis: input.warehouseBasis ?? "LEASE",
         });
       } catch (e) {
         throw new TRPCError({

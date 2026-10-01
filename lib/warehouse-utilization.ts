@@ -196,14 +196,16 @@ export type WarehouseUtilizationView = {
 
 export function buildWarehouseUtilizationView(
   loc: {
+    warehouseBasis?: "LEASE" | "USE";
     capacitySqFt?: number | null;
     balesDivisionSqFt?: number | null;
     grainDivisionSqFt?: number | null;
   },
   stock: WarehouseStockInput,
 ): WarehouseUtilizationView | null {
+  if (loc.warehouseBasis === "USE") return null;
   const capacitySqFt = loc.capacitySqFt ?? 0;
-  if (capacitySqFt <= 0) return null;
+  if (capacitySqFt <= 0 || (loc.grainDivisionSqFt === null && loc.balesDivisionSqFt === null)) return null;
 
   const capacity: WarehouseCapacityInput = {
     capacitySqFt,

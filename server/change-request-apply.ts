@@ -57,7 +57,7 @@ export async function applyChangeRequestCreation(req: {
 }): Promise<boolean> {
   try {
     if (req.department === "EXECUTION" && req.entityType === "WAREHOUSE" && req.payload) {
-      await addCustomLocation(req.payload as Parameters<typeof addCustomLocation>[0]);
+      await addCustomLocation({ ...req.payload, warehouseBasis: req.payload.warehouseBasis ?? "LEASE" } as Parameters<typeof addCustomLocation>[0]);
       return true;
     }
     if (req.department === "TRADING" && req.entityType === "COMMODITY" && req.payload) {

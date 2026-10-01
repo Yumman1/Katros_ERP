@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { TradeDirection } from "@prisma/client";
 
 export type WarehouseOption = {
+  warehouseBasis?: "LEASE" | "USE";
   id: string;
   name: string;
   code?: string | null;
@@ -104,12 +105,12 @@ export function WarehouseMultiSelect({
                 {w.name}
                 {w.code ? <span className="font-normal text-subtle"> ({w.code})</span> : null}
               </div>
-              {showDivisionScoped && w.grainDivisionSqFt != null && storageDivision === "grain" && (
+              {w.warehouseBasis !== "USE" && showDivisionScoped && w.grainDivisionSqFt != null && storageDivision === "grain" && (
                 <p className="mt-0.5 text-[10px] text-subtle">
                   Grain division: {w.grainDivisionSqFt} sq ft / MT
                 </p>
               )}
-              {showDivisionScoped && w.balesDivisionSqFt != null && storageDivision === "bale" && (
+              {w.warehouseBasis !== "USE" && showDivisionScoped && w.balesDivisionSqFt != null && storageDivision === "bale" && (
                 <p className="mt-0.5 text-[10px] text-subtle">
                   Bale division: {w.balesDivisionSqFt} sq ft / MT
                 </p>

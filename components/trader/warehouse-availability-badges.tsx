@@ -1,5 +1,7 @@
 "use client";
 
+import { USE_BASIS_MESSAGE } from "@/lib/warehouse-basis";
+
 import { availabilityTone, fmtCapacityMt } from "@/lib/warehouse-availability";
 import type { WarehouseStorageDivision } from "@/lib/warehouse-utilization";
 import type { WarehouseOption } from "@/components/trader/warehouse-multi-select";
@@ -104,6 +106,8 @@ export function WarehouseAvailabilityBadges({
             Free to sell {fmtMt(freeToSellMt)} MT
           </span>
         </>
+      ) : w.warehouseBasis === "USE" ? (
+        <span className="text-xs text-subtle">{USE_BASIS_MESSAGE}</span>
       ) : badgeMt != null ? (
         <span
           className={cn(

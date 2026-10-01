@@ -9,6 +9,7 @@ export type WarehouseLaborLine = {
 };
 
 export type WarehouseCostingInput = {
+  warehouseBasis?: "LEASE" | "USE";
   capacitySqFt?: number | null;
   grainDivisionSqFt?: number | null;
   rentalPerSqFtMonth?: number | null;
@@ -50,6 +51,7 @@ export function normalizeLaborLines(lines?: WarehouseLaborLine[] | null): Wareho
 }
 
 export function computeWarehouseCosting(input: WarehouseCostingInput): WarehouseCostingSummary | null {
+  if (input.warehouseBasis === "USE" || input.grainDivisionSqFt === null) return null;
   const squareFeet = input.capacitySqFt ?? 0;
   if (squareFeet <= 0) return null;
 
@@ -106,6 +108,7 @@ export function fmtPkr(n: number, decimals = 0) {
 }
 
 export function costingInputFromLocation(loc: {
+  warehouseBasis?: "LEASE" | "USE";
   capacitySqFt?: number | null;
   costPerSqFt?: number | null;
   rentalPerSqFtMonth?: number | null;
@@ -115,6 +118,7 @@ export function costingInputFromLocation(loc: {
   managementFeePct?: number | null;
 }): WarehouseCostingInput {
   return {
+    warehouseBasis: loc.warehouseBasis,
     capacitySqFt: loc.capacitySqFt,
     grainDivisionSqFt: loc.grainDivisionSqFt,
     rentalPerSqFtMonth: loc.rentalPerSqFtMonth ?? loc.costPerSqFt,
@@ -134,6 +138,7 @@ function asNumber(v: unknown): number {
 export function storageMetricsFromWarehousePayload(
   payload: Record<string, unknown>,
 ): WarehouseCostingSummary | null {
+  if (payload.warehouseBasis === "USE") return null;
   return computeWarehouseCosting({
     capacitySqFt: asNumber(payload.capacitySqFt),
     grainDivisionSqFt: asNumber(payload.grainDivisionSqFt) || 7,

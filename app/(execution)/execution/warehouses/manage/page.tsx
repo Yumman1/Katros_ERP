@@ -23,6 +23,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 type FormState = {
+  warehouseBasis: "LEASE" | "USE";
   name: string;
   code: string;
   lsp: string;
@@ -36,6 +37,7 @@ type FormState = {
 };
 
 type Loc = {
+  warehouseBasis?: "LEASE" | "USE";
   id: string;
   name: string;
   code?: string | null;
@@ -56,6 +58,7 @@ type Loc = {
 
 function locToForm(loc: Loc): FormState {
   return {
+    warehouseBasis: loc.warehouseBasis ?? "LEASE",
     name: loc.name,
     code: loc.code ?? "",
     lsp: loc.lsp ?? "",
@@ -65,12 +68,13 @@ function locToForm(loc: Loc): FormState {
     capacitySqFt: loc.capacitySqFt != null ? String(loc.capacitySqFt) : "",
     costPerSqFt: loc.costPerSqFt != null ? String(loc.costPerSqFt) : "",
     balesDivisionSqFt: loc.balesDivisionSqFt != null ? String(loc.balesDivisionSqFt) : "",
-    grainDivisionSqFt: loc.grainDivisionSqFt != null ? String(loc.grainDivisionSqFt) : "7",
+    grainDivisionSqFt: loc.grainDivisionSqFt != null ? String(loc.grainDivisionSqFt) : "",
   };
 }
 
 function parseForm(form: FormState, costing: WarehouseCostingFormState) {
   return {
+    warehouseBasis: form.warehouseBasis,
     name: form.name.trim(),
     // WH code is auto-generated and immutable.
     code: undefined,
@@ -78,11 +82,11 @@ function parseForm(form: FormState, costing: WarehouseCostingFormState) {
     address: form.address.trim() || undefined,
     city: form.city.trim() || undefined,
     province: form.province.trim() || undefined,
-    capacitySqFt: form.capacitySqFt ? Number(form.capacitySqFt) : undefined,
+    capacitySqFt: form.warehouseBasis === "USE" ? undefined : form.capacitySqFt ? Number(form.capacitySqFt) : undefined,
     costPerSqFt: form.costPerSqFt ? Number(form.costPerSqFt) : undefined,
-    balesDivisionSqFt: form.balesDivisionSqFt ? Number(form.balesDivisionSqFt) : undefined,
-    grainDivisionSqFt: form.grainDivisionSqFt ? Number(form.grainDivisionSqFt) : undefined,
-    ...parseCostingForm(costing),
+    balesDivisionSqFt: form.warehouseBasis === "USE" ? undefined : form.balesDivisionSqFt ? Number(form.balesDivisionSqFt) : undefined,
+    grainDivisionSqFt: form.warehouseBasis === "USE" ? undefined : form.grainDivisionSqFt ? Number(form.grainDivisionSqFt) : undefined,
+    ...(form.warehouseBasis === "USE" ? {} : parseCostingForm(costing)),
   };
 }
 
@@ -100,6 +104,8 @@ export default function WarehouseManagePage() {
       setEditingId(null);
       setModal(null);
       void utils.execution.warehouseLocations.invalidate();
+      void utils.trader.referenceData.invalidate();
+      void utils.trader.warehouseAvailability.invalidate();
     },
   });
   const submitRequest = trpc.team.submitChangeRequest.useMutation({
@@ -114,6 +120,7 @@ export default function WarehouseManagePage() {
       setModal(null);
       void utils.execution.warehouseLocations.invalidate();
       void utils.trader.referenceData.invalidate();
+      void utils.trader.warehouseAvailability.invalidate();
     },
   });
 
@@ -217,7 +224,7 @@ export default function WarehouseManagePage() {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="font-medium text-foreground">{loc.name}</div>
-                  <div className="text-xs text-subtle">{loc.code ?? loc.id}</div>
+                  <div className="text-xs text-subtle">{loc.code ?? loc.id} · {loc.warehouseBasis === "USE" ? "Use basis" : "Lease basis"}</div>
                 </div>
                 <div className="flex gap-1">
                   <button
@@ -260,6 +267,16 @@ export default function WarehouseManagePage() {
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-xl">
             <h3 className="text-sm font-semibold text-foreground">Edit warehouse</h3>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <label className="block text-xs text-subtle">
+            Warehouse basis
+            <select className="kastros-input mt-1 w-full" value={form.warehouseBasis}
+              onChange={(e) => setForm((s) => s ? ({ ...s, warehouseBasis: e.target.value as "LEASE" | "USE" }) : s)}>
+              <option value="LEASE">Lease basis — fixed capacity</option>
+              <option value="USE">Use basis — confirm space by phone</option>
+            </select>
+          </label>
+          {form.warehouseBasis === "USE" && <p className="text-xs text-subtle">No fixed capacity. Confirm space by phone before adding inventory. Reported utilization is 100%; incoming allocations remain available.</p>}
+
               {(
                 [
                   ["name", "Name"],
@@ -270,7 +287,7 @@ export default function WarehouseManagePage() {
                   ["balesDivisionSqFt", "Bales division (sq ft/MT)"],
                   ["grainDivisionSqFt", "Grain division (sq ft/MT)"],
                 ] as const
-              ).map(([key, label]) => (
+              ).filter(([key]) => form.warehouseBasis !== "USE" || !["capacitySqFt", "costPerSqFt", "grainDivisionSqFt", "balesDivisionSqFt"].includes(key)).map(([key, label]) => (
                 <label key={key} className="block text-xs text-subtle">
                   {label}
                   <input
@@ -281,10 +298,11 @@ export default function WarehouseManagePage() {
                 </label>
               ))}
             </div>
-            <WarehouseCostingFields
+            {form.warehouseBasis === "LEASE" && <WarehouseCostingFields
               costing={costing}
               onChange={setCosting}
-            />
+            />}
+            {updateWarehouse.error && <p role="alert" className="mt-2 text-xs text-destructive">{updateWarehouse.error.message}</p>}
             <div className="mt-4 flex flex-wrap gap-2">
               {isExecutionHead ? (
                 <button type="button" onClick={saveDirect} disabled={updateWarehouse.isPending} className="kastros-btn-primary text-xs">

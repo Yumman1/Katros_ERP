@@ -23,6 +23,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 type FormState = {
+  warehouseBasis: "LEASE" | "USE";
   name: string;
   code: string;
   lsp: string;
@@ -36,6 +37,7 @@ type FormState = {
 };
 
 const emptyForm = (): FormState => ({
+  warehouseBasis: "LEASE",
   name: "",
   code: "",
   lsp: "",
@@ -50,6 +52,7 @@ const emptyForm = (): FormState => ({
 
 function parseForm(form: FormState, costing: WarehouseCostingFormState) {
   return {
+    warehouseBasis: form.warehouseBasis,
     name: form.name.trim(),
     // WH code is auto-generated server-side (next free K###).
     code: undefined,
@@ -57,11 +60,11 @@ function parseForm(form: FormState, costing: WarehouseCostingFormState) {
     address: form.address.trim() || undefined,
     city: form.city.trim() || undefined,
     province: form.province.trim() || undefined,
-    capacitySqFt: form.capacitySqFt ? Number(form.capacitySqFt) : undefined,
+    capacitySqFt: form.warehouseBasis === "USE" ? undefined : form.capacitySqFt ? Number(form.capacitySqFt) : undefined,
     costPerSqFt: form.costPerSqFt ? Number(form.costPerSqFt) : undefined,
-    balesDivisionSqFt: form.balesDivisionSqFt ? Number(form.balesDivisionSqFt) : undefined,
-    grainDivisionSqFt: form.grainDivisionSqFt ? Number(form.grainDivisionSqFt) : undefined,
-    ...parseCostingForm(costing),
+    balesDivisionSqFt: form.warehouseBasis === "USE" ? undefined : form.balesDivisionSqFt ? Number(form.balesDivisionSqFt) : undefined,
+    grainDivisionSqFt: form.warehouseBasis === "USE" ? undefined : form.grainDivisionSqFt ? Number(form.grainDivisionSqFt) : undefined,
+    ...(form.warehouseBasis === "USE" ? {} : parseCostingForm(costing)),
   };
 }
 
@@ -179,6 +182,16 @@ export default function WarehouseSetupPage() {
           </p>
         </div>
         <div className="grid gap-3 pt-4 md:grid-cols-2 lg:grid-cols-3">
+          <label className="block text-xs text-subtle">
+            Warehouse basis
+            <select className="kastros-input mt-1 w-full" value={form.warehouseBasis}
+              onChange={(e) => setForm((s) => s ? ({ ...s, warehouseBasis: e.target.value as "LEASE" | "USE" }) : s)}>
+              <option value="LEASE">Lease basis — fixed capacity</option>
+              <option value="USE">Use basis — confirm space by phone</option>
+            </select>
+          </label>
+          {form.warehouseBasis === "USE" && <p className="text-xs text-subtle">No fixed capacity. Confirm space by phone before adding inventory. Reported utilization is 100%; incoming allocations remain available.</p>}
+
           {(
             [
               ["name", "Warehouse name", "Al Amin WH SWL"],
@@ -190,7 +203,7 @@ export default function WarehouseSetupPage() {
               ["balesDivisionSqFt", "Bales division (sq ft/MT)", ""],
               ["grainDivisionSqFt", "Grain division (sq ft/MT)", "6.04"],
             ] as const
-          ).map(([key, label, placeholder]) => (
+          ).filter(([key]) => form.warehouseBasis !== "USE" || !["capacitySqFt", "costPerSqFt", "grainDivisionSqFt", "balesDivisionSqFt"].includes(key)).map(([key, label, placeholder]) => (
             <label key={key} className="block text-xs text-subtle">
               {label}
               <input
@@ -238,22 +251,23 @@ export default function WarehouseSetupPage() {
             </label>
           )}
         </div>
-        <WarehouseCostingFields
+        {form.warehouseBasis === "LEASE" && <WarehouseCostingFields
           costing={costing}
           onChange={(next) => {
             setCosting(next);
             setRequestSent(false);
           }}
-        />
-        <div className="mt-4">
+        />}
+        {form.warehouseBasis === "LEASE" && <div className="mt-4">
           <WarehouseStorageMetricsPreview summary={storageMetricsSummary} />
-        </div>
+        </div>}
         <div className="mt-4">
           <button
             type="button"
             onClick={submit}
             disabled={
               !form.name.trim() ||
+              (form.warehouseBasis === "LEASE" && !(Number(form.capacitySqFt) > 0)) ||
               submitRequest.isPending ||
               (!isExecutionHead && !comment.trim())
             }
@@ -291,7 +305,7 @@ export default function WarehouseSetupPage() {
             <table className="kastros-table text-xs">
               <thead>
                 <tr>
-                  {["Name", "Code", "City", "Province", "Capacity sq ft", "LSP"].map((h) => (
+                  {["Name", "Code", "City", "Province", "Basis", "Capacity sq ft", "LSP"].map((h) => (
                     <th key={h}>{h}</th>
                   ))}
                 </tr>
@@ -303,8 +317,9 @@ export default function WarehouseSetupPage() {
                     <td className="text-muted-foreground">{loc.code ?? "—"}</td>
                     <td className="text-muted-foreground">{loc.city ?? "—"}</td>
                     <td className="text-muted-foreground">{loc.province ?? "—"}</td>
+                    <td>{loc.warehouseBasis === "USE" ? "Use" : "Lease"}</td>
                     <td className="tabular-nums text-muted-foreground">
-                      {loc.capacitySqFt?.toLocaleString() ?? "—"}
+                      {loc.warehouseBasis === "USE" ? "Not applicable" : loc.capacitySqFt?.toLocaleString() ?? "—"}
                     </td>
                     <td className="text-muted-foreground">{loc.lsp ?? "—"}</td>
                   </tr>

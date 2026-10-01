@@ -1,3 +1,4 @@
+import { isBaleCommodity } from "@/lib/warehouse-utilization";
 import { filterDeskRows } from "@/server/execution/desk-scope";
 import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
 import { isSesameCommodity, normalizeSesameParams, sesameNetPrice } from "@/lib/sesame";
@@ -674,13 +675,15 @@ export const traderRouter = router({
         return { code: c.commodityCode, name: c.commodityName, unit: c.quantityUnit };
       },
     });
-    const inventoryByWarehouse = new Map<string, { allocatedMt: number; unallocatedMt: number }>();
+    const inventoryByWarehouse = new Map<string, { allocatedMt: number; unallocatedMt: number; stock: { stockMt: number; stockBales: number } }>();
     const stockOnHandByWarehouse = new Map<string, number>();
     for (const row of inventoryRows) {
       const key = normWarehouseName(row.warehouseName);
-      const cur = inventoryByWarehouse.get(key) ?? { allocatedMt: 0, unallocatedMt: 0 };
+      const cur = inventoryByWarehouse.get(key) ?? { allocatedMt: 0, unallocatedMt: 0, stock: { stockMt: 0, stockBales: 0 } };
       cur.allocatedMt += row.allocatedQty;
       cur.unallocatedMt += row.unallocatedQty;
+      if (isBaleCommodity(row.commodityCode, row.quantityUnit)) cur.stock.stockBales += Math.max(0, row.netQty);
+      else cur.stock.stockMt += Math.max(0, row.netQty);
       inventoryByWarehouse.set(key, cur);
       if (commodity && row.commodityCode === commodity.code) {
         stockOnHandByWarehouse.set(

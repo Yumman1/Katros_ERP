@@ -1,5 +1,7 @@
 "use client";
 
+import { USE_BASIS_MESSAGE } from "@/lib/warehouse-basis";
+
 import {
   computeWarehouseCosting,
   fmtCostPerMaund,
@@ -45,6 +47,7 @@ type Props =
   | { payload: Record<string, unknown>; summary?: never; input?: never };
 
 export function WarehouseStorageMetricsPreview(props: Props) {
+  if (props.payload?.warehouseBasis === "USE") return <p className="text-xs text-subtle">{USE_BASIS_MESSAGE}. No fixed capacity.</p>;
   const summary =
     "summary" in props && props.summary != null
       ? props.summary

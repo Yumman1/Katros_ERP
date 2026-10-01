@@ -223,6 +223,11 @@ enum LocationType {
   FARM
 }
 
+enum WarehouseBasis {
+  LEASE
+  USE
+}
+
 model Location {
   id      String       @id @default(cuid())
   name    String       @unique
@@ -235,6 +240,7 @@ model Location {
   city     String?
   province String?
   // ── Warehouse capacity & costing (type WAREHOUSE) ──
+  warehouseBasis      WarehouseBasis @default(LEASE)
   capacitySqFt        Decimal? @db.Decimal(14, 2)
   costPerSqFt         Decimal? @db.Decimal(14, 4)
   balesDivisionSqFt   Decimal? @db.Decimal(14, 2)

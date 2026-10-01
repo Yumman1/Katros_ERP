@@ -9,10 +9,6 @@ import { summarizeQtyByUnit } from "@/lib/formatters/execution-units";
 import {
   buildLocationCommodityInventory,
 } from "@/lib/inventory-stock";
-import {
-  aggregateWarehouseStock,
-  warehouseUtilizationSummary,
-} from "@/lib/warehouse-utilization";
 import { DESK_REFETCH_MS } from "@/lib/invalidate-caches";
 import { ArrowUpFromLine, Banknote, Boxes, Package, Truck, Warehouse } from "lucide-react";
 import Link from "next/link";
@@ -26,6 +22,7 @@ export default function ExecutionInventoryPage() {
   const { data: contracts, isLoading: loadingContracts } = trpc.execution.lockedContracts.useQuery({
     warehouseAllocated: true,
   });
+  const { data: sharedAvailability } = trpc.trader.warehouseAvailability.useQuery(undefined, { refetchInterval: DESK_REFETCH_MS });
   const { data: warehouseLocations } = trpc.execution.warehouseLocations.useQuery();
   const { data: inbound, isLoading: loadingInbound } = trpc.execution.inboundReceipts.useQuery({});
   const { data: outbound, isLoading: loadingOutbound } = trpc.execution.outboundDispatches.useQuery({});
@@ -336,21 +333,13 @@ export default function ExecutionInventoryPage() {
               </div>
               {(() => {
                 const cfg = warehouseConfigByName.get(w.name);
+                if (cfg?.warehouseBasis === "USE") return <p className="mt-3 text-xs text-subtle">Use basis · utilization 100% (reporting convention). Confirm space by phone before adding inventory.</p>;
                 const capSqFt = cfg?.capacitySqFt ?? 0;
                 if (!capSqFt) return null;
-                const capacity = {
-                  capacitySqFt: capSqFt,
-                  balesDivisionSqFt: cfg?.balesDivisionSqFt ?? 4.5,
-                  grainDivisionSqFt: cfg?.grainDivisionSqFt ?? 7,
-                };
-                const stock = aggregateWarehouseStock(
-                  [...w.commodities.values()].map((c) => ({
-                    commodityCode: c.code,
-                    quantityUnit: c.unit,
-                    netQty: c.qty,
-                  })),
-                );
-                const util = warehouseUtilizationSummary(stock, capacity);
+                if (cfg?.grainDivisionSqFt == null && cfg?.balesDivisionSqFt == null) return <p className="mt-3 text-xs text-subtle">Confirm storage divisions in Warehouses → Update &amp; delete to calculate utilization.</p>;
+                const shared = sharedAvailability?.warehouses.find((row) => row.id === cfg?.id);
+                if (shared?.utilizationPct == null) return <p className="mt-3 text-xs text-subtle">Shared warehouse utilization unavailable.</p>;
+                const util = { utilizationPct: shared.utilizationPct / 100 };
                 return (
                   <div className="mt-3 rounded-xl border border-border bg-foreground/[0.02] p-3">
                     <div className="flex items-center justify-between text-xs">
