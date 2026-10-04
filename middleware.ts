@@ -15,6 +15,6 @@ export default withAuth(
 
 export const config = {
   matcher: [
-    "/((?!login|warehouse/gatepass|api/auth|api/warehouse-gatepass|_next/static|_next/image|favicon.ico|branding).*)",
+    "/((?!login|warehouse/gatepass|warehouse/internal-gate|api/auth|api/warehouse-gatepass|api/internal-gate|_next/static|_next/image|favicon.ico|branding).*)",
   ],
 };

@@ -10,7 +10,7 @@ import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 import { ReceiptText } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -61,12 +61,25 @@ export default function ExecutionVouchersPage() {
   const [voucherDate, setVoucherDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
+  const [builtyNumber, setBuiltyNumber] = useState("");
+  const [transporterName, setTransporterName] = useState("");
+  const [advanceWeightKg, setAdvanceWeightKg] = useState("");
+  const [manualAmount, setManualAmount] = useState(false);
+  const [adjustVoucher, setAdjustVoucher] = useState("");
+  const [adjustTruck, setAdjustTruck] = useState("");
+  const [adjustAmount, setAdjustAmount] = useState("");
+  const targets = trpc.execution.advanceAdjustmentTargets.useQuery();
+  const adjust = trpc.execution.applyAdvanceBalance.useMutation({ onSuccess: () => { void utils.execution.vouchers.invalidate(); void utils.execution.counterpartyLedgers.invalidate(); setAdjustVoucher(""); } });
 
   // Open SELL trades of the chosen counterparty — feeds the "against trade" select.
   const { data: sellTrades } = trpc.execution.sellTradesForCounterparty.useQuery(
     { counterpartyId, side },
     { enabled: counterpartyId !== "" },
   );
+  const selectedTrade = sellTrades?.find(t => t.tradeRef === tradeRef);
+  const isAdvance = side === "BUY" && !!selectedTrade && !selectedTrade.isSettlement;
+  const calculatedAdvance = Math.round(Number(advanceWeightKg) * (selectedTrade?.ratePerKg ?? 0) * (selectedTrade?.advancePercentage ?? 0)) / 100;
+  useEffect(() => { if (isAdvance && !manualAmount) setAmount(String(calculatedAdvance)); }, [isAdvance, manualAmount, calculatedAdvance]);
   // Cancellation / short-close notes still owed on this account — the same
   // select lists them, and picking one fills in the amount that is due.
   const { data: openNotes } = trpc.execution.openSettlementNotes.useQuery(
@@ -77,6 +90,7 @@ export default function ExecutionVouchersPage() {
   const clearAgainst = () => {
     setTradeRef("");
     setNoteRef("");
+    setBuiltyNumber(""); setTransporterName(""); setAdvanceWeightKg(""); setManualAmount(false);
   };
 
   const create = trpc.execution.createVoucher.useMutation({
@@ -127,6 +141,7 @@ export default function ExecutionVouchersPage() {
   const canSubmit =
     counterpartyId !== "" &&
     Number(amount) > 0 &&
+    (!isAdvance || (!!builtyNumber && !!transporterName.trim() && Number(advanceWeightKg) > 0 && (selectedTrade?.advancePercentage ?? 0) > 0)) &&
     (side === "SELL" || tradeRef !== "" || noteRef !== "") &&
     !(method === "Bank transfer" && !bankName.trim()) &&
     reference.trim() !== "" &&
@@ -154,7 +169,7 @@ export default function ExecutionVouchersPage() {
           </>
         }
         title="Vouchers"
-        subtitle="Record money received from a counterparty — finance approval credits it into their ledger, unlocking their trucks and closing settled trades once the full amount is in."
+        subtitle="Record payments and purchase advances against trades; finance approval updates the counterparty ledger."
       />
 
       {/* Form stays compact at the top; history grows below and the whole page scrolls. */}
@@ -226,6 +241,7 @@ export default function ExecutionVouchersPage() {
                   } else {
                     setNoteRef("");
                     setTradeRef(v.startsWith("trade:") ? v.slice(6) : "");
+                    setManualAmount(false); setAdvanceWeightKg(""); setBuiltyNumber(""); setTransporterName("");
                   }
                 }}
                 disabled={counterpartyId === ""}
@@ -236,7 +252,7 @@ export default function ExecutionVouchersPage() {
                   <option value="">No trade reference</option>
                 ) : (
                   <option value="" disabled>
-                    Select settled purchase or note (required)
+                    Select purchase trade or note (required)
                   </option>
                 )}
                 {(sellTrades ?? []).map((t) => (
@@ -272,18 +288,24 @@ export default function ExecutionVouchersPage() {
                 </span>
               ) : (
                 <span className="text-[10px] leading-snug text-subtle">
-                  Required — settled purchase or open note. Debit notes can be paid in pieces until within
-                  500 PKR of the full amount.
+                  Select an advance purchase, settled purchase or open note.
                 </span>
               )}
             </label>
+            {isAdvance && <>
+              <label className="text-xs text-muted-foreground">Advance percentage<input className="kastros-input w-full opacity-60" readOnly value={`${selectedTrade?.advancePercentage ?? 0}%`} /></label>
+              <label className="text-xs text-muted-foreground">Advance weight (kg)<input className="kastros-input w-full" type="number" min="0" value={advanceWeightKg} onChange={e => setAdvanceWeightKg(e.target.value)} /></label>
+              <label className="text-xs text-muted-foreground">Builty number<input className="kastros-input w-full" value={builtyNumber} onChange={e => setBuiltyNumber(e.target.value.replace(/\D/g, ""))} /></label>
+              <label className="text-xs text-muted-foreground">Transporter<input className="kastros-input w-full" value={transporterName} onChange={e => setTransporterName(e.target.value)} /></label>
+              <div className="text-xs">Calculated: {fmtPkr(calculatedAdvance)}<button type="button" className="block underline" onClick={() => setManualAmount(false)}>Use calculated amount</button>{manualAmount && <span>Manual override</span>}</div>
+            </>}
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Amount (PKR)
               <input
                 type="number"
                 min={0}
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => { setAmount(e.target.value); if (isAdvance) setManualAmount(true); }}
                 title={
                   noteRef
                     ? `Partial payment allowed — remaining due shown when the note was selected`
@@ -367,6 +389,9 @@ export default function ExecutionVouchersPage() {
                   side,
                   tradeRef: tradeRef || undefined,
                   noteRef: noteRef || undefined,
+                  builtyNumber: isAdvance ? builtyNumber : undefined,
+                  transporterName: isAdvance ? transporterName : undefined,
+                  advanceWeightKg: isAdvance ? Number(advanceWeightKg) : undefined,
                   amountPkr: Number(amount),
                   method,
                   bankName: method === "Bank transfer" ? bankName : undefined,
@@ -395,6 +420,13 @@ export default function ExecutionVouchersPage() {
           </div>
         </div>
 
+      {adjustVoucher && <div className="exec-panel p-4 space-y-3">
+        <p>Apply remaining advance to a future truck (no new cash payment)</p>
+        <select aria-label="Future truck" className="kastros-select" value={adjustTruck} onChange={e => setAdjustTruck(e.target.value)}><option value="">Select invoiced truck</option>{targets.data?.map(t => <option key={t.id} value={t.id}>{t.assignedTradeRef} · Builty {t.builtyDetails} · {t.counterpartyName}</option>)}</select>
+        <input aria-label="Adjustment amount PKR" className="kastros-input" type="number" min="0" value={adjustAmount} onChange={e => setAdjustAmount(e.target.value)} />
+        <button className="kastros-btn-primary" disabled={!adjustTruck || Number(adjustAmount) <= 0 || adjust.isPending} onClick={() => adjust.mutate({ voucherId: adjustVoucher, truckId: adjustTruck, amountPkr: Number(adjustAmount) })}>Apply adjustment</button>
+        {adjust.error && <p className="text-destructive">{adjust.error.message}</p>}
+      </div>}
       <section className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-foreground">Voucher history</h2>
@@ -476,6 +508,7 @@ export default function ExecutionVouchersPage() {
                   </td>
                   <td className="px-5 py-3">
                     <StatusChip status={v.status} />
+                    {v.builtyNumber && <div className="mt-2 space-y-1"><p>Builty {v.builtyNumber} · {v.advancePercentage}% advance / {100 - (v.advancePercentage ?? 0)}% remaining terms</p><p>Invoice {v.invoiceNo ?? "pending"}</p>{v.adjustments.map((a, i) => <p key={i}>Applied {fmtPkr(a.amountPkr)} · {a.tradeRef} · Builty {a.builty} · Invoice {a.invoice ?? "pending"}</p>)}<p className={v.truckPaid ? "text-success" : "text-warning"}>{v.truckPaid ? "Paid" : "Truck settlement pending"}</p>{v.truckPaid && v.availableAdvancePkr > 0 && <button className="underline" onClick={() => { setAdjustVoucher(v.id); setAdjustAmount(String(v.availableAdvancePkr)); }}>Adjust excess {fmtPkr(v.availableAdvancePkr)} with future truck</button>}</div>}
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">{v.enteredByName ?? "—"}</td>
                   <td className="px-5 py-3 whitespace-nowrap text-muted-foreground">

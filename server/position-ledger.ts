@@ -1,3 +1,5 @@
+import { isSesameCommodity } from "@/lib/sesame";
+import { sesameGrade } from "@/lib/sesame-processing";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
 import {
@@ -127,8 +129,12 @@ export async function computePositionLedger(options?: {
   }
 
   const tradeRefs = new Set(trades.map((t) => t.tradeRef));
+  const sesameTrades = await prisma.trade.findMany({select:{tradeRef:true,tradeParams:true,commodity:{select:{code:true}}}});
+  const impurityRefs = new Set(sesameTrades.filter(t=>isSesameCommodity(t.commodity.code) && sesameGrade(t.tradeParams)==="Impurities").map(t=>t.tradeRef));
+  const scopedSesameCodes = new Set(sesameTrades.filter(t=>isSesameCommodity(t.commodity.code) && (!options?.traderName || tradeRefs.has(t.tradeRef))).map(t=>t.commodity.code));
 
   for (const c of contracts) {
+    if (impurityRefs.has(c.tradeRef)) continue;
     if (options?.traderName && !tradeRefs.has(c.tradeRef)) continue;
     const row = addCommodity(map, c.commodityCode, c.commodityName, c.quantityUnit);
     const open = c.openQtyMt;
@@ -142,6 +148,7 @@ export async function computePositionLedger(options?: {
   }
 
   for (const r of await getInboundReceipts()) {
+    if (impurityRefs.has(r.tradeRef)) continue;
     const c = contractByRef.get(r.tradeRef);
     if (options?.traderName && c && !tradeRefs.has(c.tradeRef)) continue;
     const code = c?.commodityCode ?? "UNK";
@@ -154,6 +161,7 @@ export async function computePositionLedger(options?: {
   }
 
   for (const d of await getOutboundDispatches()) {
+    if (impurityRefs.has(d.tradeRef)) continue;
     const c = contractByRef.get(d.tradeRef);
     if (options?.traderName && c && !tradeRefs.has(c.tradeRef)) continue;
     const code = c?.commodityCode ?? "UNK";
@@ -163,6 +171,22 @@ export async function computePositionLedger(options?: {
     const delta = outboundStockDelta(d.status, d.allocatedQtyMt);
     if (delta < 0) row.physicalOutbound += Math.abs(delta);
     row.physicalNet += delta;
+  }
+
+  const [processing, transfers] = await Promise.all([
+    prisma.sesameProcessing.findMany(),
+    prisma.stockTransfer.findMany({where:{status:{in:["IN_TRANSIT","RECEIVED"]}}}),
+  ]);
+  const inScope = (code: string) => isSesameCommodity(code) && (!options?.traderName || scopedSesameCodes.has(code));
+  for (const t of transfers) {
+    if (!inScope(t.commodityCode) || t.sesameType === "Impurities") continue;
+    const row = addCommodity(map,t.commodityCode,t.commodityName,"MT");
+    if (t.fromWarehouseName) row.physicalNet -= num(t.dispatchedQtyMt);
+    if (t.status === "RECEIVED") row.physicalNet += Number(t.receivedQtyMt ?? t.dispatchedQtyMt);
+  }
+  for (const p of processing) {
+    if (!inScope(p.commodityCode)) continue;
+    addCommodity(map,p.commodityCode,"Sesame","MT").physicalNet -= num(p.impuritiesKg)/1000;
   }
 
   for (const row of map.values()) {

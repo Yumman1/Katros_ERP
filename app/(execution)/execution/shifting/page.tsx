@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import { useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
+import { isSesameCommodity, SESAME_TYPES } from "@/lib/sesame";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
@@ -35,6 +38,7 @@ const mt = (n: number | null | undefined) =>
 
 export default function ExecutionShiftingPage() {
   const utils = trpc.useUtils();
+  const {active} = useExecutionCommodityDesk();
   const { data: transfers, isLoading } = trpc.execution.stockTransfers.useQuery(
     {},
     { refetchInterval: DESK_REFETCH_MS },
@@ -46,6 +50,7 @@ export default function ExecutionShiftingPage() {
   const [showForm, setShowForm] = useState(false);
 
   const refresh = () => {
+    void utils.invalidate();
     void utils.execution.stockTransfers.invalidate();
     void utils.execution.inboundReceipts.invalidate();
     void utils.execution.outboundDispatches.invalidate();
@@ -120,6 +125,7 @@ export default function ExecutionShiftingPage() {
         </button>
       </header>
 
+      <div className="kastros-card p-4 flex flex-wrap gap-3 items-center"><span className="text-sm font-medium">Internal gate links</span><Link className="kastros-btn-secondary" href="/execution/internal-gate?direction=out">Internal gate out</Link><Link className="kastros-btn-secondary" href="/execution/internal-gate?direction=in">Internal gate in</Link></div>
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard icon={<Truck className="h-4 w-4" />} label="On the road" value={mt(inTransitMt)} />
         <StatCard
@@ -144,7 +150,7 @@ export default function ExecutionShiftingPage() {
       {showForm ? (
         <NewShiftForm
           warehouses={(warehouses ?? []).map((w) => w.name)}
-          commodities={(commodities ?? []).map((c) => ({ code: c.code, name: c.name }))}
+          commodities={(commodities ?? []).filter(c=>c.code===active.code).map((c) => ({ code: c.code, name: c.name }))}
           submitting={create.isPending}
           onSubmit={(v) => create.mutate(v)}
         />
@@ -207,8 +213,11 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string
 type ShiftRowData = {
   id: string;
   transferRef: string;
+  internalGateToken: string;
   commodityCode: string;
   commodityName: string;
+  sesameType?: string;
+  purpose?: string;
   fromWarehouseName: string | null;
   externalOrigin: string | null;
   toWarehouseName: string;
@@ -243,6 +252,7 @@ function ShiftRow({
     <tr className="border-b last:border-0 align-top">
       <td className="px-4 py-3 font-medium">
         {row.transferRef}
+        <div className="mt-1 flex gap-2 text-xs"><Link target="_blank" href={`/warehouse/internal-gate?token=${row.internalGateToken}&direction=out`}>Gate out link</Link><Link target="_blank" href={`/warehouse/internal-gate?token=${row.internalGateToken}&direction=in`}>Gate in link</Link></div>
         <div className="mt-0.5 text-xs text-muted-foreground">
           {row.outGatepassNo ?? "—"}
           {row.inGatepassNo ? ` → ${row.inGatepassNo}` : ""}
@@ -260,7 +270,7 @@ function ShiftRow({
           <div className="mt-0.5 text-xs text-muted-foreground">from outside our warehouses</div>
         ) : null}
       </td>
-      <td className="px-4 py-3">{row.commodityName}</td>
+      <td className="px-4 py-3">{row.commodityName}{isSesameCommodity(row.commodityCode) && <div className="text-xs text-subtle">{row.sesameType} · {row.purpose === "PROCESSING" ? "Processing" : "Shifting"}</div>}</td>
       <td className="px-4 py-3">{row.truckNo}</td>
       <td className="px-4 py-3 text-right tabular-nums">{mt(row.dispatchedQtyMt)}</td>
       <td className="px-4 py-3 text-right tabular-nums">
@@ -342,6 +352,8 @@ function NewShiftForm({
   onSubmit: (v: {
     commodityCode: string;
     commodityName: string;
+    sesameType?: "Raw" | "Machine Cleaned" | "Sortex" | "Impurities";
+    purpose?: "SHIFT" | "PROCESSING";
     fromWarehouseName: string | null;
     externalOrigin: string | null;
     toWarehouseName: string;
@@ -362,6 +374,8 @@ function NewShiftForm({
   const [biltyNo, setBiltyNo] = useState("");
   const [bags, setBags] = useState("");
   const [reason, setReason] = useState("");
+  const [sesameType,setSesameType] = useState<typeof SESAME_TYPES[number]>("Raw");
+  const [purpose,setPurpose] = useState<"SHIFT"|"PROCESSING">("SHIFT");
   const [season, setSeason] = useState<"WINTER" | "SUMMER">("SUMMER");
 
   const fromOutside = fromWarehouse === "__external__";
@@ -374,6 +388,7 @@ function NewShiftForm({
         e.preventDefault();
         onSubmit({
           commodityCode,
+          ...(isSesameCommodity(commodityCode) ? {sesameType,purpose} : {}),
           commodityName: commodity?.name ?? commodityCode,
           fromWarehouseName: fromOutside ? null : fromWarehouse,
           externalOrigin: fromOutside ? externalOrigin.trim() || null : null,
@@ -416,6 +431,10 @@ function NewShiftForm({
           </SearchableSelect>
         </Field>
 
+        {isSesameCommodity(commodityCode) && <>
+          <Field label="Purpose"><select className="kastros-select w-full" value={purpose} onChange={e=>{setPurpose(e.target.value as typeof purpose);if(e.target.value==="PROCESSING")setSesameType("Raw");}}><option value="SHIFT">Internal shifting / return from processing</option><option value="PROCESSING">Send for processing</option></select></Field>
+          <Field label="Sesame type"><select className="kastros-select w-full" value={sesameType} onChange={e=>setSesameType(e.target.value as typeof sesameType)}>{SESAME_TYPES.filter(t=>purpose!=="PROCESSING" || t==="Raw" || t==="Machine Cleaned").map(t=><option key={t}>{t}</option>)}</select></Field>
+        </>}
         <Field label="From">
           <SearchableSelect
             value={fromWarehouse}

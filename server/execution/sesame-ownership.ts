@@ -1,3 +1,5 @@
+import { sesameGrades, assertGradeAvailable } from "./sesame-processing";
+import { sesameGrade } from "@/lib/sesame-processing";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { tradeEntity, internalEntity, ownershipSides, type SesameEntity } from "@/lib/sesame-entity";
@@ -26,6 +28,7 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
     let warehouseName: string | null = input.warehouseName?.trim() || null;
     if (sides.fromEntity === "PAK") {
       if (!warehouseName) throw new Error("Select the Pakistan warehouse holding this stock");
+      await assertGradeAvailable(db,t.commodity.code,warehouseName,sesameGrade(t.tradeParams),input.quantityMt);
       if (await pakistanAvailable(db, t.commodity.code, warehouseName) + 0.000001 < input.quantityMt) throw new Error("Insufficient unreserved Pakistan-owned stock at this warehouse");
     } else if (sides.fromEntity === "FZCO") {
       if (!warehouseName) throw new Error("Pakistan execution must identify the existing custody warehouse for an internal return");
@@ -50,20 +53,25 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
 }
 
 export async function sesameBook(code: string) {
-  const [trades, entries, custody, physical, reserved] = await Promise.all([
+  const [trades, entries, custody, physical, reserved, gradeRows] = await Promise.all([
     prisma.trade.findMany({ where: { commodity: { code } }, include: { contract: true, counterparty: { select: { name: true } } }, orderBy: { tradeDate: "desc" } }),
     prisma.sesameOwnershipEntry.findMany({ where: { commodityCode: code }, orderBy: { createdAt: "desc" } }),
-    fzcoCustody(prisma, code), physicalStock(prisma, code), reservedFzco(prisma, code),
+    fzcoCustody(prisma, code), physicalStock(prisma, code), reservedFzco(prisma, code), sesameGrades(prisma,code),
   ]);
   const confirmed = new Map<string, number>();
   for (const e of entries) if (!e.truckId) confirmed.set(e.tradeRef, (confirmed.get(e.tradeRef) ?? 0) + n(e.quantityMt));
   const rows = trades.filter(t => !["CANCELLED", "REJECTED"].includes(t.tradeStatus)).map(t => ({
-    tradeRef: t.tradeRef, entity: tradeEntity(t.tradeParams), internalEntity: internalEntity(t.tradeParams), direction: t.direction,
+    sesameType: sesameGrade(t.tradeParams), tradeRef: t.tradeRef, entity: tradeEntity(t.tradeParams), internalEntity: internalEntity(t.tradeParams), direction: t.direction,
     quantityMt: n(t.quantity), confirmedMt: confirmed.get(t.tradeRef) ?? 0, openMt: n(t.contract?.openQtyMt ?? t.quantity),
     counterparty: t.counterparty.name, status: t.tradeStatus, submitted: t.submittedToExecution, price: n(t.pricePerCanonicalQty ?? t.price), currency: t.currency,
     confirmedValue: (confirmed.get(t.tradeRef) ?? 0) * n(t.pricePerCanonicalQty ?? t.price),
   }));
-  const ownedFzco = [...custody.values()].reduce((a,b) => a+b, 0);
+  const impurities = gradeRows.reduce((s,r)=>s+r.grades.Impurities,0);
+  const impurityRefs = new Set(trades.filter(t=>sesameGrade(t.tradeParams)==="Impurities").map(t=>t.tradeRef));
+  const impurityEntries = entries.filter(e=>impurityRefs.has(e.tradeRef));
+  const fzcoImpurities = impurityEntries.reduce((s,e)=>s+(e.toEntity==="FZCO"?n(e.quantityMt):0)-(e.fromEntity==="FZCO"?n(e.quantityMt):0),0);
+  const heldImpurities = impurityEntries.filter(e=>e.warehouseName).reduce((s,e)=>s+(e.toEntity==="FZCO"?n(e.quantityMt):0)-(e.fromEntity==="FZCO"?n(e.quantityMt):0),0);
+  const ownedFzco = [...custody.values()].reduce((a,b) => a+b, 0)-fzcoImpurities;
   const physicalPak = [...physical.values()].reduce((a,b) => a+b, 0);
   const heldForFzco = [...custody].filter(([wh]) => wh).reduce((a,[,qty]) => a+qty, 0);
   const market = (await getSeasonNetPositions()).find(p => p.commodityCode === code);
@@ -72,17 +80,17 @@ export async function sesameBook(code: string) {
   const purchased = acquisitions.reduce((s,e) => s+n(e.quantityMt),0);
   const fzcoEntry = purchased > 0 ? acquisitions.reduce((s,e) => s+n(e.quantityMt)*n(contracts.get(e.tradeRef)?.ratePerMaund),0)/purchased : null;
   const positions = (["PAK", "FZCO"] as const).map(entity => {
-    const own = rows.filter(t => t.entity === entity || t.internalEntity === entity);
+    const own = rows.filter(t => t.sesameType !== "Impurities" && (t.entity === entity || t.internalEntity === entity));
     const open = own.filter(t => ["PENDING", "LOCKED"].includes(t.status) && t.submitted);
     const side = (t: typeof rows[number]) => t.entity === entity ? t.direction : t.direction === "BUY" ? "SELL" : "BUY";
     const buys = open.filter(t => side(t) === "BUY").reduce((sum,t) => sum+t.openMt, 0);
     const sells = open.filter(t => side(t) === "SELL").reduce((sum,t) => sum+t.openMt, 0);
-    const owned = entity === "FZCO" ? ownedFzco : physicalPak-heldForFzco;
+    const owned = entity === "FZCO" ? ownedFzco : physicalPak-heldForFzco-impurities+heldImpurities;
     const entryRate = entity === "FZCO" ? fzcoEntry : market?.tradeEntryRatePkrPerMaund ?? null;
     const marketRate = market?.marketRatePkrPerMaund ?? null;
     const inOut = entryRate != null && marketRate != null ? marketRate-entryRate : null;
     const valuePkr = inOut != null ? inOut*(owned+buys-sells)*25 : null;
-    return { entity, ownedMt: owned, openBuyMt: buys, bookedNotLeftMt: sells, freeMt: owned-sells, netPositionMt: owned+buys-sells, physicalInPakistanMt: entity === "PAK" ? physicalPak : heldForFzco, loadingMt: entity === "FZCO" ? [...reserved.values()].reduce((a,b)=>a+b,0) : 0, entryRatePkrPerMaund: entryRate, marketRatePkrPerMaund: marketRate, inOutPkrPerMaund: inOut, inOutValuePkr: valuePkr, inOutValueUsd: valuePkr != null && market?.fxRate ? valuePkr/market.fxRate : null };
+    return { entity, ownedMt: owned, openBuyMt: buys, bookedNotLeftMt: sells, freeMt: owned-sells, netPositionMt: owned+buys-sells, physicalInPakistanMt: entity === "PAK" ? physicalPak-impurities : heldForFzco-heldImpurities, loadingMt: entity === "FZCO" ? [...reserved.values()].reduce((a,b)=>a+b,0) : 0, entryRatePkrPerMaund: entryRate, marketRatePkrPerMaund: marketRate, inOutPkrPerMaund: inOut, inOutValuePkr: valuePkr, inOutValueUsd: valuePkr != null && market?.fxRate ? valuePkr/market.fxRate : null };
   });
   return { trades: rows, positions, warehouses: [...physical].map(([name, quantityMt]) => ({ name, quantityMt, fzcoOwnedMt: custody.get(name) ?? 0, pakistanOwnedMt: quantityMt-(custody.get(name) ?? 0) })), entries: entries.map(e => ({ ...e, quantityMt: n(e.quantityMt) })) };
 }

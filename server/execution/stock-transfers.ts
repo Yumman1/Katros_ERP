@@ -24,6 +24,7 @@ import type { Prisma } from "@prisma/client";
 import { StockTransferStatus } from "@prisma/client";
 import { isSesameCommodity } from "@/lib/sesame";
 import { lockSesameOwnership, pakistanAvailable } from "./sesame-stock";
+import { assertGradeAvailable } from "./sesame-processing";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
 import { allocateSerial, nextSerial, SERIALS } from "@/server/db/serials";
@@ -40,6 +41,9 @@ const TRANSIT_TOLERANCE_MT = 0.005;
 export type StockTransferRow = {
   id: string;
   transferRef: string;
+  internalGateToken: string;
+  sesameType: string;
+  purpose: string;
   commodityCode: string;
   season: "SUMMER" | "WINTER";
   commodityName: string;
@@ -76,6 +80,9 @@ function toRow(t: TransferRecord): StockTransferRow {
   return {
     id: t.id,
     transferRef: t.transferRef,
+    internalGateToken: t.internalGateToken,
+    sesameType: t.sesameType,
+    purpose: t.purpose,
     commodityCode: t.commodityCode,
     season: t.season,
     commodityName: t.commodityName,
@@ -183,12 +190,21 @@ export async function createStockTransfer(input: {
   /** Crop season the shifted stock belongs to (position book). */
   season?: "WINTER" | "SUMMER";
   createdByName?: string | null;
+  sesameType?: string;
+  purpose?: "SHIFT" | "PROCESSING";
 }): Promise<StockTransferRow> {
   const from = input.fromWarehouseName?.trim() || null;
   const to = input.toWarehouseName.trim();
   const origin = input.externalOrigin?.trim() || null;
   const qty = input.dispatchedQtyMt;
+  if (input.purpose === "PROCESSING" && !["Raw","Machine Cleaned"].includes(input.sesameType ?? "Machine Cleaned")) throw new Error("Only Raw or Machine Cleaned stock can be sent for processing");
+  if (isSesameCommodity(input.commodityCode)) {
+    const names = [from,to].filter((v): v is string=>Boolean(v));
+    const locations = await prisma.location.findMany({where:{type:"WAREHOUSE",name:{in:names}}});
+    if (locations.length !== new Set(names).size) throw new Error("Register the source and processing warehouse before moving stock");
+  }
 
+  if (input.purpose === "PROCESSING" && (!from || !isSesameCommodity(input.commodityCode))) throw new Error("Processing requires a Sesame source warehouse");
   if (!to) throw new Error("A destination warehouse is required");
   if (!from && !origin) {
     throw new Error(
@@ -215,6 +231,8 @@ export async function createStockTransfer(input: {
     prisma.stockTransfer.create({
       data: {
         transferRef,
+        sesameType: input.sesameType ?? "Machine Cleaned",
+        purpose: input.purpose ?? "SHIFT",
         season: input.season ?? "SUMMER",
         commodityCode: input.commodityCode.trim(),
         commodityName: input.commodityName.trim() || input.commodityCode.trim(),
@@ -246,6 +264,7 @@ export async function dispatchStockTransfer(
   overrideQtyMt?: number,
 ): Promise<StockTransferRow> {
   const row = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "StockTransfer" WHERE "id" = ${id} FOR UPDATE`;
     const t = await tx.stockTransfer.findUnique({ where: { id } });
     if (!t) throw new Error("Transfer not found");
     if (t.status !== StockTransferStatus.DRAFT) {
@@ -256,10 +275,11 @@ export async function dispatchStockTransfer(
 
     if (isSesameCommodity(t.commodityCode)) {
       await lockSesameOwnership(tx, t.commodityCode);
+      if (t.fromWarehouseName) await assertGradeAvailable(tx, t.commodityCode, t.fromWarehouseName, t.sesameType, qty);
       if (t.fromWarehouseName && await pakistanAvailable(tx, t.commodityCode, t.fromWarehouseName) + TRANSIT_TOLERANCE_MT < qty) throw new Error("Insufficient Pakistan-owned stock; FZCO custody stock cannot be shifted");
     }
 
-    const outGatepassNo = await nextSerial(SERIALS.GATEPASS_OUTBOUND, tx);
+    const outGatepassNo = `INT-${await nextSerial(SERIALS.GATEPASS_OUTBOUND, tx)}`;
     return tx.stockTransfer.update({
       where: { id },
       data: {
@@ -267,6 +287,7 @@ export async function dispatchStockTransfer(
         dispatchedQtyMt: qty,
         outGatepassNo,
         dispatchedAt: new Date(),
+        dispatchedBy: actorName,
         remarks: t.remarks,
         createdByName: t.createdByName ?? actorName,
       },
@@ -285,8 +306,8 @@ export async function receiveStockTransfer(
   actorName: string,
   receivedQtyMt: number,
 ): Promise<StockTransferRow> {
-  void actorName;
   const row = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "StockTransfer" WHERE "id" = ${id} FOR UPDATE`;
     const t = await tx.stockTransfer.findUnique({ where: { id } });
     if (!t) throw new Error("Transfer not found");
     if (t.status !== StockTransferStatus.IN_TRANSIT) {
@@ -300,7 +321,7 @@ export async function receiveStockTransfer(
         `Received ${receivedQtyMt.toFixed(3)} MT is more than the ${num(t.dispatchedQtyMt).toFixed(3)} MT that left — check the weighbridge before booking it in`,
       );
     }
-    const inGatepassNo = await nextSerial(SERIALS.GATEPASS_INBOUND, tx);
+    const inGatepassNo = `INT-${await nextSerial(SERIALS.GATEPASS_INBOUND, tx)}`;
     return tx.stockTransfer.update({
       where: { id },
       data: {
@@ -308,6 +329,7 @@ export async function receiveStockTransfer(
         receivedQtyMt,
         inGatepassNo,
         receivedAt: new Date(),
+        receivedBy: actorName,
       },
     });
   });
@@ -323,14 +345,14 @@ export async function cancelStockTransfer(
   if (!why) throw new Error("A cancellation reason is required");
   const t = await prisma.stockTransfer.findUnique({ where: { id } });
   if (!t) throw new Error("Transfer not found");
-  if (t.status === StockTransferStatus.RECEIVED) {
+  if (t.status !== StockTransferStatus.DRAFT && t.status !== StockTransferStatus.CANCELLED) {
     throw new Error(
       "This transfer has already been received — shift the stock back instead of cancelling it",
     );
   }
   if (t.status === StockTransferStatus.CANCELLED) return toRow(t);
   const row = await prisma.stockTransfer.update({
-    where: { id },
+    where: { id, status: StockTransferStatus.DRAFT },
     data: {
       status: StockTransferStatus.CANCELLED,
       cancelledAt: new Date(),

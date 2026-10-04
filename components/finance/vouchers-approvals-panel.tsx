@@ -146,6 +146,7 @@ export function FinanceVouchersPanel() {
                       <div className="text-right">
                         <div className="text-[10px] uppercase tracking-wider text-subtle">Amount</div>
                         <div className="text-lg font-bold tabular-nums text-foreground">{fmtPkr(v.amountPkr)}</div>
+                        {v.builtyNumber && <p className="text-xs text-subtle">Builty {v.builtyNumber} · {v.advanceWeightKg} kg · {v.advancePercentage}% advance · Calculated {fmtPkr(v.calculatedAdvancePkr ?? 0)}{Math.abs(v.amountPkr - (v.calculatedAdvancePkr ?? 0)) > .005 ? " · Manual override" : ""}</p>}
                       </div>
                     </div>
 

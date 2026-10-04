@@ -483,6 +483,7 @@ export async function canFundTruck(
 }
 
 export type LedgerEntryView = {
+  purchaseAdvanceFlow: boolean;
   id: string;
   entryDate: Date;
   entryType: "DEBIT" | "CREDIT";
@@ -688,13 +689,14 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
     // grows with each part-payment finance approves. Open notes post only what
     // vouchers have collected so far; the full claim stays on billedPkr.
     const postedPkr =
-      isOpenNote || (e.entryType === "DEBIT" && e.side === "BUY")
+      isOpenNote || (e.entryType === "DEBIT" && e.side === "BUY" && !e.purchaseAdvanceFlow)
         ? paidPkr
         : billedPkr;
     // A deliberate hold is a decision, not an overdue payable — it never ages.
     const held = e.side === "BUY" && e.sourceRef != null && heldGatepasses.has(e.sourceRef);
 
     const view: LedgerEntryView = {
+      purchaseAdvanceFlow: e.purchaseAdvanceFlow,
       id: e.id,
       entryDate: e.entryDate,
       entryType: e.entryType,
@@ -731,6 +733,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
 
   const earmarkStages = new Set<string>(VOUCHER_EARMARK_STAGES);
 
+  const advanceVouchers = await prisma.voucher.findMany({ where: { status: "APPROVED", builtyNumber: { not: null }, ...(commodityCode ? { commodityCode } : {}), ...(executionEntity ? { executionEntity } : {}) }, include: { advanceAllocations: true, advanceTruck: true } });
   const accounts: CounterpartyLedgerView[] = [];
   for (const cp of counterparties) {
     for (const side of ["SELL", "BUY"] as const) {
@@ -739,7 +742,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
       // legacy audit noise and must not appear in the payable view or totals.
       const list =
         side === "BUY"
-          ? rawList.filter((e) => e.sourceType !== "PAYMENT")
+          ? rawList.filter((e) => e.sourceType !== "PAYMENT" || e.purchaseAdvanceFlow)
           : rawList;
       // SELL accounts always shown (voucher targets); BUY only when active.
       if ((side === "BUY" || commodityCode) && list.length === 0) continue;
@@ -792,7 +795,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
         outstandingDebitPkr: Math.round((totalBilled - settledDebit) * 100) / 100,
         balancePkr: Math.round((totalCredit - totalBilled) * 100) / 100,
         availableCreditPkr:
-          side === "SELL" ? Math.round(Math.max(0, totalCredit - earmarked) * 100) / 100 : 0,
+          side === "SELL" ? Math.round(Math.max(0, totalCredit - earmarked) * 100) / 100 : Math.round(advanceVouchers.filter(v => v.counterpartyId === cp.id && !!v.advanceTruck && paidGatepasses.has(v.advanceTruck.gatepassNo)).reduce((s, v) => s + Math.max(0, num(v.amountPkr) - v.advanceAllocations.reduce((a, r) => a + num(r.amountPkr), 0)), 0) * 100) / 100,
         aging,
         entries: list,
       });

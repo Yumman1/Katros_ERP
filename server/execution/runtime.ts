@@ -278,6 +278,10 @@ export type SpotPurchaseEvent = {
 };
 
 export type PaymentRequest = {
+  builtyNumber?: string | null;
+  invoiceNumber?: string | null;
+  advanceVoucherNo?: string | null;
+  remainingPercentage?: number | null;
   id: string;
   sourceType: PaymentSourceType;
   sourceId: string;
@@ -551,6 +555,9 @@ export function spotRowToRuntime(row: SpotPurchaseEventRowWithPayment): SpotPurc
 
 export function paymentRowToRuntime(row: PaymentRequestRow): PaymentRequest {
   return {
+    builtyNumber: row.builtyNumber, invoiceNumber: row.invoiceNumber,
+    advanceVoucherNo: row.advanceVoucherNo,
+    remainingPercentage: numOrNull(row.remainingPercentage),
     // Runtime id is the business requestRef ("pay-7") — the DB cuid stays internal.
     id: row.requestRef,
     sourceType: row.sourceType,

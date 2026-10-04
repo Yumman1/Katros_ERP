@@ -76,6 +76,7 @@ export function WarehouseAvailabilityBadges({
   }
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {w.sesameGrades && <div className="w-full text-xs text-subtle">{Object.entries(w.sesameGrades).map(([grade,qty])=>`${grade}: ${qty.toLocaleString("en-PK",{maximumFractionDigits:3})} MT`).join(" · ")}</div>}
       {isSell ? (
         <>
           <span

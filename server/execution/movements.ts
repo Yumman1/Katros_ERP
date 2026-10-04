@@ -170,6 +170,7 @@ export async function getInboundReceipts(tradeRef?: string): Promise<InboundRece
  */
 export async function submitInboundForFinance(receiptId: string, amountPkr?: number) {
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "InboundReceipt" WHERE id = ${receiptId} FOR UPDATE`;
     const r = await tx.inboundReceipt.findUnique({ where: { id: receiptId } });
     if (!r) throw new Error("Receipt not found");
     if (r.status === "PAID") throw new Error("Already paid");
@@ -208,12 +209,19 @@ export async function submitInboundForFinance(receiptId: string, amountPkr?: num
       where: { tradeRef: r.tradeRef },
       select: { currency: true },
     });
+    const allocation = await tx.purchaseAdvanceAllocation.findFirst({ where: { receiptId: r.id }, include: { voucher: true } });
+    const advanceTruck = r.gatepassNo ? await tx.pendingTruck.findUnique({ where: { gatepassNo: r.gatepassNo }, include: { purchaseAdvance: true } }) : null;
+    const advance = advanceTruck?.purchaseAdvance ?? allocation?.voucher;
     const requestRef = await nextSerial(SERIALS.PAYMENT, tx);
     const pr = await tx.paymentRequest.create({
       data: {
         requestRef,
         sourceType: "INBOUND",
         sourceId: r.id,
+        builtyNumber: r.biltyNo,
+        invoiceNumber: advanceTruck?.gateInvoiceNo ?? r.billNo,
+        advanceVoucherNo: advance?.voucherNo,
+        remainingPercentage: advance ? 100 - num(advance.advancePercentage) : null,
         tradeRef: r.tradeRef,
         counterpartyName: r.sellerName,
         amount: requested,
@@ -299,11 +307,12 @@ export async function getOutboundDispatches(tradeRef?: string): Promise<Outbound
 async function syncPaymentAmountForInbound(receipt: {
   paymentRequestId: string | null;
   amountDue: Prisma.Decimal | number;
+  paidAmountPkr: Prisma.Decimal | number;
 }): Promise<void> {
   if (!receipt.paymentRequestId) return;
   await prisma.paymentRequest.updateMany({
     where: { id: receipt.paymentRequestId, status: "PENDING" },
-    data: { amount: receipt.amountDue },
+    data: { amount: Math.max(0, num(receipt.amountDue) - num(receipt.paidAmountPkr)) },
   });
 }
 
@@ -433,6 +442,7 @@ export async function updateInboundReceipt(
   const receipt = await prisma.inboundReceipt.findUnique({ where: { id } });
   await assertOwnershipWrite("execution.updateInboundReceipt", { id });
   if (!receipt) throw new Error("Inbound receipt not found");
+  if (await prisma.purchaseAdvanceAllocation.count({ where: { receiptId: id } })) throw new Error("Receipt has an applied advance and cannot be edited");
   const prevGatepass = receipt.gatepassNo;
   const prevTruckNo = receipt.truckNo;
   const contract = await getContractByRef(receipt.tradeRef);

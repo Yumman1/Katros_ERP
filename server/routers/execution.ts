@@ -1,3 +1,6 @@
+import { purchaseAdvancePercentage } from "@/lib/purchase-advance";
+import { isSesameCommodity } from "@/lib/sesame";
+import { applyAdvance } from "@/server/finance/purchase-advances";
 import { tradeEntity } from "@/lib/sesame-entity";
 import { executionDeskTradeRefs, filterDeskRows, filterDeskTradeRows } from "@/server/execution/desk-scope";
 import { z } from "zod";
@@ -229,7 +232,9 @@ export const executionRouter = router({
         fromWarehouseName: z.string().nullish(),
         externalOrigin: z.string().nullish(),
         toWarehouseName: z.string().min(1),
-        dispatchedQtyMt: z.number().positive(),
+        dispatchedQtyMt: z.number().finite().positive(),
+        sesameType: z.enum(["Raw", "Machine Cleaned", "Sortex", "Impurities"]).optional(),
+        purpose: z.enum(["SHIFT", "PROCESSING"]).optional(),
         truckNo: z.string().min(1),
         driverName: z.string().nullish(),
         driverPhone: z.string().nullish(),
@@ -778,6 +783,7 @@ export const executionRouter = router({
         truckId: z.string(),
         tradeRef: z.string(),
         overrideWeightKg: z.number().positive().optional(),
+        totalDeductionsKg: z.number().finite().nonnegative().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -788,6 +794,7 @@ export const executionRouter = router({
           input.tradeRef,
           input.overrideWeightKg,
           true,
+          input.totalDeductionsKg,
         );
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });
@@ -1100,7 +1107,10 @@ export const executionRouter = router({
           ...(ctx.executionCommodityCode ? { commodity: { code: ctx.executionCommodityCode } } : {}),
           ...(input.side === "BUY"
             ? // Money on a purchase only arrives through settlement.
-              { direction: "BUY", directSettled: true, settlementClosedAt: null }
+              { direction: "BUY", OR: [
+                { directSettled: true, settlementClosedAt: null },
+                ...(isSesameCommodity(ctx.executionCommodityCode) && ctx.executionEntity !== "FZCO" ? [{ directSettled: false, tradeStatus: { in: ["LOCKED", "CONFIRMED"] as ("LOCKED" | "CONFIRMED")[] } }] : []),
+              ] }
             : {
                 OR: [
                   { direction: "SELL", tradeStatus: { in: ["LOCKED", "CONFIRMED", "PENDING"] } },
@@ -1113,12 +1123,14 @@ export const executionRouter = router({
           tradeRef: true,
           paymentType: true,
           paymentTerms: true,
+          tradeParams: true,
           quantity: true,
           quantityUnit: true,
           directSettled: true,
         },
         take: 50,
       });
+      const contracts = await prisma.executionContract.findMany({ where: { tradeRef: { in: trades.map(t => t.tradeRef) } }, select: { tradeRef: true, ratePerKg: true } });
       return (await filterDeskTradeRows(trades, ctx.executionCommodityCode, t => t.tradeRef, ctx.executionEntity)).map((t) => ({
         tradeRef: t.tradeRef,
         paymentType: t.paymentType,
@@ -1126,6 +1138,8 @@ export const executionRouter = router({
         quantity: num(t.quantity),
         quantityUnit: t.quantityUnit,
         isSettlement: t.directSettled,
+        advancePercentage: purchaseAdvancePercentage(t.paymentType, t.tradeParams),
+        ratePerKg: num(contracts.find(c => c.tradeRef === t.tradeRef)?.ratePerKg),
       }));
     }),
 
@@ -1161,6 +1175,31 @@ export const executionRouter = router({
       }),
     ),
 
+  truckAdvanceSummary: roleProcedure([...execRoles, Role.TRADER, Role.FINANCE])
+    .input(z.object({ truckId: z.string() }))
+    .query(async ({ input, ctx }) => {
+      const v = await prisma.voucher.findUnique({ where: { advanceTruckId: input.truckId }, include: { advanceTruck: true } });
+      if (!v?.advanceTruck || !(await filterDeskTradeRows([v], ctx.executionCommodityCode, r => r.tradeRef!, ctx.executionEntity)).length) return null;
+      const receipts = await prisma.inboundReceipt.findMany({ where: { gatepassNo: v.advanceTruck.gatepassNo } });
+      const due = receipts.reduce((s, r) => s + num(r.amountDue), 0) || num(v.advanceTruck.gateInvoiceExpectedPkr);
+      const paid = receipts.reduce((s, r) => s + num(r.paidAmountPkr), 0);
+      return { voucherNo: v.voucherNo, advancePkr: num(v.amountPkr), remainingPercentage: 100 - num(v.advancePercentage), outstandingPkr: Math.max(0, due - Math.max(paid, num(v.amountPkr))), paid: !!receipts.length && receipts.every(r => r.status === "PAID") };
+    }),
+
+  advanceAdjustmentTargets: roleProcedure([...execRoles])
+    .query(async ({ ctx }) => {
+      const rows = await prisma.pendingTruck.findMany({ where: { movementType: "INBOUND", assignedTradeRef: { not: null }, gateInvoiceNo: { not: null } }, select: { id: true, assignedTradeRef: true, gatepassNo: true, builtyDetails: true, counterpartyName: true } });
+      return filterDeskTradeRows(rows, ctx.executionCommodityCode, r => r.assignedTradeRef!, ctx.executionEntity);
+    }),
+  applyAdvanceBalance: roleProcedure([...execRoles])
+    .input(z.object({ voucherId: z.string(), truckId: z.string(), amountPkr: z.number().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id: input.voucherId } });
+      if (!voucher.tradeRef || !(await filterDeskTradeRows([voucher], ctx.executionCommodityCode, r => r.tradeRef!, ctx.executionEntity)).length) throw new Error("Voucher belongs to another desk");
+      await prisma.$transaction(tx => applyAdvance(tx, input.voucherId, input.truckId, ctx.session.user.name ?? "execution", input.amountPkr));
+      return { ok: true };
+    }),
+
   /** Enter a payment voucher — credits the ledger once finance approves it. */
   createVoucher: roleProcedure([...execRoles])
     .input(
@@ -1173,6 +1212,9 @@ export const executionRouter = router({
           tradeRef: z.string().optional(),
           /** Cancellation / short-close note being settled — overrides tradeRef. */
           noteRef: z.string().optional(),
+          builtyNumber: z.string().trim().optional(),
+          transporterName: z.string().trim().optional(),
+          advanceWeightKg: z.number().positive().optional(),
           amountPkr: z.number().positive(),
           method: z.string().optional(),
           reference: z.string().trim().min(1, "Payment reference is required"),

@@ -1,3 +1,4 @@
+import { sesameGrade } from "@/lib/sesame-processing";
 import { isSesameCommodity } from "@/lib/sesame";
 import type { TradeSeason } from "@prisma/client";
 import { prisma } from "@/server/db";
@@ -63,6 +64,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
       where: { tradeStatus: { not: "CANCELLED" } },
       select: {
         tradeRef: true,
+        tradeParams: true,
         direction: true,
         season: true,
         commodity: { select: { code: true, name: true } },
@@ -90,8 +92,8 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
       _sum: { allocatedQtyMt: true },
     }),
     prisma.stockTransfer.findMany({
-      where: { status: "RECEIVED" },
-      select: { commodityCode: true, season: true, receivedQtyMt: true, dispatchedQtyMt: true, externalOrigin: true },
+      where: { status: {in:["IN_TRANSIT","RECEIVED"]} },
+      select: { status: true, sesameType: true, commodityCode: true, season: true, receivedQtyMt: true, dispatchedQtyMt: true, externalOrigin: true },
     }),
     prisma.positionMarketInput.findMany(),
     prisma.deskMarketPrice.findMany({
@@ -109,13 +111,14 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
     }),
   ]);
 
+  const processing = await prisma.sesameProcessing.findMany({include:{transfer:{select:{season:true,commodityName:true}}}});
   const contractByRef = new Map(contracts.map((c) => [c.tradeRef, c]));
   const inboundByRef = new Map(receipts.map((r) => [r.tradeRef, num(r._sum.allocatedQtyMt)]));
   const outboundByRef = new Map(outbound.map((r) => [r.tradeRef, num(r._sum.allocatedQtyMt)]));
   const ratePkrPerMtByRef = buildRatePkrPerMtByRef(contracts);
   const buyTradeMeta = new Map(
     trades
-      .filter((t) => t.direction === "BUY")
+      .filter((t) => t.direction === "BUY" && (!isSesameCommodity(t.commodity.code) || sesameGrade(t.tradeParams) !== "Impurities"))
       .map((t) => [t.tradeRef, { commodityCode: t.commodity.code, season: t.season }]),
   );
 
@@ -145,7 +148,10 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
     return b;
   };
 
+  for (const p of processing) bucketOf(p.commodityCode,p.transfer.commodityName,p.transfer.season).inventoryMt -= num(p.impuritiesKg)/1000;
+
   for (const t of trades) {
+    if (isSesameCommodity(t.commodity.code) && sesameGrade(t.tradeParams) === "Impurities") continue;
     const b = bucketOf(t.commodity.code, t.commodity.name, t.season);
     const contract = contractByRef.get(t.tradeRef);
     const openMt = contract && contract.contractStatus === "Open" ? num(contract.openQtyMt) : 0;
@@ -160,9 +166,12 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
   }
 
   for (const s of transfers) {
-    if (!s.externalOrigin) continue;
+    if (isSesameCommodity(s.commodityCode) && s.sesameType === "Impurities") continue;
+    const sesame = isSesameCommodity(s.commodityCode);
+    if (!sesame && (!s.externalOrigin || s.status !== "RECEIVED")) continue;
     const b = bucketOf(s.commodityCode, s.commodityCode, s.season);
-    b.inventoryMt += numOrNull(s.receivedQtyMt) ?? num(s.dispatchedQtyMt);
+    if (sesame && !s.externalOrigin) b.inventoryMt -= num(s.dispatchedQtyMt);
+    if (s.status === "RECEIVED") b.inventoryMt += numOrNull(s.receivedQtyMt) ?? num(s.dispatchedQtyMt);
   }
 
   const inputByKey = new Map(inputs.map((i) => [bucketKey(i.commodityCode, i.season), i]));

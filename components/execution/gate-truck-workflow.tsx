@@ -23,6 +23,8 @@ export type WorkflowTruck = {
   commodityCode?: string | null;
   warehouseName: string;
   remainingKg: number;
+  totalDeductionsKg?: number | null;
+  warehouseWeightKg?: number | null;
   assignedTradeRef?: string | null;
   gateInvoiceNo?: string | null;
   gateInvoiceAmount?: number | null;
@@ -183,6 +185,7 @@ export function GateTruckWorkflow({
   contracts: WorkflowContract[];
 }) {
   const inbound = truck.movementType === "INBOUND";
+
   return (
     <div className={cn("grid gap-2 sm:grid-cols-2", inbound && "lg:grid-cols-3")}>
       <TradeStep truck={truck} contracts={contracts} />
@@ -198,6 +201,7 @@ export function GateTruckWorkflow({
 function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: WorkflowContract[] }) {
   const utils = trpc.useUtils();
   const inbound = truck.movementType === "INBOUND";
+  const [deduction, setDeduction] = useState(String(truck.totalDeductionsKg ?? 0));
   const overStage = inbound ? truck.overDeliveryStage ?? null : null;
   // Pre-select the approved trade so execution can complete the assignment.
   const [tradeRef, setTradeRef] = useState(() =>
@@ -234,6 +238,7 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
         <span className="font-mono text-xs font-semibold text-foreground">
           {truck.assignedTradeRef}
         </span>
+        {inbound && <span className="block text-xs text-subtle">Quality deduction: {truck.totalDeductionsKg ?? 0} kg</span>}
       </StepPanel>
     );
   }
@@ -277,6 +282,10 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
           Over-delivery approved — assign now
         </span>
       )}
+      {inbound && truck.status === "PENDING" && <label className="block text-xs">Quality deduction (kg)
+        <input type="number" min="0" step="0.001" value={deduction} onChange={e => setDeduction(e.target.value)} className="kastros-input mt-1 w-full" />
+        <span className="text-subtle">Enter 0 if there is no deduction. Saved when the truck is assigned and locked.</span>
+      </label>}
       {showAssignControl && (
         <div className="flex items-center gap-2">
           <SearchableSelect
@@ -303,7 +312,7 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
           <button
             type="button"
             disabled={!tradeRef || assign.isPending}
-            onClick={() => assign.mutate({ truckId: truck.id, tradeRef })}
+            onClick={() => assign.mutate({ truckId: truck.id, tradeRef, ...(inbound && truck.status === "PENDING" ? { totalDeductionsKg: Number(deduction) } : {}) })}
             className="kastros-btn-primary shrink-0 px-3 py-1.5 text-[11px] disabled:opacity-50"
           >
             {assign.isPending ? "Assigning…" : "Assign"}
@@ -336,6 +345,8 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
 // ─── Step 2 · Gate invoice ────────────────────────────────────────────────────
 
 function InvoiceStep({ truck }: { truck: WorkflowTruck }) {
+  const advance = trpc.execution.truckAdvanceSummary.useQuery({ truckId: truck.id });
+  const advanceInfo = advance.data && <p className="text-xs text-muted-foreground">Advance {advance.data.voucherNo}: {formatCurrency(advance.data.advancePkr, "PKR")} · {advance.data.remainingPercentage}% remaining terms · Actual outstanding {formatCurrency(advance.data.outstandingPkr, "PKR")}{advance.data.paid ? " · Paid" : ""}</p>;
   const utils = trpc.useUtils();
   const [editing, setEditing] = useState(false);
   const [invoiceNo, setInvoiceNo] = useState("");
@@ -371,6 +382,7 @@ function InvoiceStep({ truck }: { truck: WorkflowTruck }) {
   if (hasInvoice && !editing && !wrongInvoicing) {
     return (
       <StepPanel step={2} title="Invoice" state="done" headline="Recorded">
+        {advanceInfo}
         <span className="truncate font-mono text-xs font-semibold text-foreground">
           {truck.gateInvoiceNo}
           {truck.gateInvoiceAmount != null && (
@@ -431,6 +443,7 @@ function InvoiceStep({ truck }: { truck: WorkflowTruck }) {
   // Entry / edit form.
   return (
     <StepPanel step={2} title="Enter invoice" state="active">
+      {advanceInfo}
       {expected != null && (
         <div
           className="flex items-baseline justify-between rounded-md border border-kastros-border/70 bg-black/10 px-2.5 py-1.5"

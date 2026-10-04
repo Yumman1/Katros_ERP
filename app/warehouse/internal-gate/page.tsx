@@ -1,0 +1,16 @@
+"use client";
+import { Suspense,useEffect,useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
+type Movement={transferRef:string;status:string;truckNo:string;fromWarehouseName:string|null;externalOrigin:string|null;toWarehouseName:string;commodityName:string;sesameType:string;purpose:string;dispatchedKg:number;biltyNo:string|null};
+export default function Page(){return <Suspense fallback={<p>Loading internal gate…</p>}><Gate /></Suspense>;}
+function Gate(){
+ const params=useSearchParams(),token=params.get("token")??"",direction=params.get("direction")==="in"?"in":"out";
+ const [row,setRow]=useState<Movement|null>(null),[error,setError]=useState(""),[success,setSuccess]=useState(""),[busy,setBusy]=useState(false),[name,setName]=useState(""),[kg,setKg]=useState("");
+ useEffect(()=>{let alive=true;setRow(null);setSuccess("");setError("");fetch(`/api/internal-gate?token=${encodeURIComponent(token)}`,{cache:"no-store"}).then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error);if(alive)setRow(d);}).catch(e=>{if(alive)setError(e.message);});return()=>{alive=false;};},[token]);
+ const eligible=row?.status===(direction==="in"?"IN_TRANSIT":"DRAFT");
+ return <main className="min-h-screen bg-background p-5"><div className="mx-auto max-w-2xl space-y-5"><header className="flex justify-between"><div><p className="text-sm text-subtle">Kastros · Warehouse</p><h1 className="text-2xl font-semibold">Internal Gate {direction==="in"?"In":"Out"}</h1></div><ThemeToggle /></header><p className="text-sm text-subtle">Internal shifting and processing movement</p>
+ {row && <section className="kastros-card p-5 space-y-2"><strong>{row.transferRef} · {row.truckNo}</strong><p>{row.fromWarehouseName??row.externalOrigin} → {row.toWarehouseName}</p><p>{row.commodityName} · {row.sesameType} · {row.purpose}</p><p>Dispatched weight: {row.dispatchedKg.toLocaleString()} kg</p><p>Bilty: {row.biltyNo??"—"} · Status: {row.status}</p></section>}
+ {eligible && !success && <form className="kastros-card p-5 space-y-4" onSubmit={async e=>{e.preventDefault();setBusy(true);setError("");try{const r=await fetch("/api/internal-gate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token,direction,recordedBy:name,...(direction==="in"?{receivedKg:Number(kg)}:{})})});const d=await r.json();if(!r.ok)throw Error(d.error);setSuccess(`Recorded: ${d.gatepassNo}`);}catch(e){setError(e instanceof Error?e.message:"Could not save");}finally{setBusy(false);}}}><label className="block">Recorded by<input required maxLength={120} className="kastros-input mt-1 w-full" value={name} onChange={e=>setName(e.target.value)} /></label>{direction==="in" && <label className="block">Received warehouse weight (kg)<input required type="number" min="0.001" step="0.001" className="kastros-input mt-1 w-full" value={kg} onChange={e=>setKg(e.target.value)} /></label>}<button className="kastros-btn-primary" disabled={busy}>{busy?"Saving…":`Confirm internal gate ${direction}`}</button></form>}
+ {row && !eligible && !success && <p>This movement is not awaiting gate {direction}. Check its current status above.</p>}{error && <p role="alert" className="text-destructive">{error}</p>}{success && <p role="status" className="kastros-card p-5">{success}</p>}</div></main>;
+}

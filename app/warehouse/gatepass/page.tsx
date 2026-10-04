@@ -32,6 +32,7 @@ import { formatPkDateTime } from "@/lib/formatters/datetime";
 const RECORDED_BY_KEY = "kastros-gatepass-recorded-by";
 
 type ReferenceData = {
+  advances?: { id: string; tradeRef: string; builtyNumber: string; counterpartyName: string; commodityCode: string; transporterName: string; advanceWeightKg: number }[];
   warehouses: string[];
   inboundCounterparties: GatepassCounterparty[];
   outboundCounterparties: GatepassCounterparty[];
@@ -41,6 +42,8 @@ type ReferenceData = {
 type MovementType = "INBOUND" | "OUTBOUND";
 
 const emptyForm = {
+  advanceVoucherId: "",
+  advanceTradeRef: "",
   movementType: "INBOUND" as MovementType,
   recordedByName: "",
   counterpartyName: "",
@@ -200,6 +203,8 @@ export default function WarehouseGatepassPage() {
       counterpartyName: form.counterpartyName,
       warehouseName: form.warehouseName,
       truckNo: form.truckNo,
+      advanceVoucherId: form.advanceVoucherId || undefined,
+      advanceTradeRef: form.advanceTradeRef || undefined,
       transporterName: form.transporterName.trim() || undefined,
       transporterPhone: form.transporterPhone.trim() || undefined,
       builtyDetails: form.builtyDetails.trim(),
@@ -412,6 +417,11 @@ export default function WarehouseGatepassPage() {
                 </Field>
               </div>
             </FormSection>
+
+            {form.movementType === "INBOUND" && <FormSection title="Paid advance builty" icon={<ClipboardList className="h-4 w-4" />} color={accentColor}>
+              <Field label="Trade reference"><select className={inputClass} value={form.advanceTradeRef} onChange={e => setForm(f => ({ ...f, advanceTradeRef: e.target.value, advanceVoucherId: "" }))}><option value="">No advance voucher</option>{Array.from(new Set((reference.advances ?? []).filter(v => v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => v.tradeRef))).map(ref => <option key={ref}>{ref}</option>)}</select></Field>
+              {form.advanceTradeRef && <Field label="Approved advance builty"><select className={inputClass} value={form.advanceVoucherId} onChange={e => { const v = reference.advances?.find(a => a.id === e.target.value); setForm(f => ({ ...f, advanceVoucherId: v?.id ?? "", builtyDetails: v?.builtyNumber ?? "", transporterName: v?.transporterName ?? "", weightAsPerBuiltyKg: String(v?.advanceWeightKg ?? "") })); }}><option value="">Select paid builty</option>{reference.advances?.filter(v => v.tradeRef === form.advanceTradeRef && v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => <option key={v.id} value={v.id}>{v.builtyNumber}</option>)}</select></Field>}
+            </FormSection>}
 
             <FormSection title="Vehicle" icon={<Truck className="h-4 w-4" />} color={accentColor}>
               <div className="grid gap-3 sm:grid-cols-2">

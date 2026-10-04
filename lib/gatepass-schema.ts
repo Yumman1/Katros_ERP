@@ -9,6 +9,8 @@ const qualitySchema = z.object({
 });
 
 export const gatepassSchema = z.object({
+  advanceVoucherId: z.string().optional(),
+  advanceTradeRef: z.string().optional(),
   movementType: z.enum(["INBOUND", "OUTBOUND"]),
   counterpartyName: z.string().trim().min(1, "Counterparty is required"),
   warehouseName: z.string().trim().min(1, "Warehouse is required"),

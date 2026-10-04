@@ -861,6 +861,15 @@ function BookTradeForm() {
               )}
             </Field>
 
+            {isSesame && (
+                <Field label="Internal trade (optional)">
+                  <SearchableSelect value={String(tradeParams.internalCounterpartyEntity ?? "")} onChange={e => setTradeParams(p => ({ ...p, internalCounterpartyEntity: e.target.value }))} className="kastros-select w-full">
+                    <option value="">External counterparty</option>
+                    <option value={sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "PAK" : "FZCO"}>{sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "Buy / sell with Kastros Pakistan" : "Buy / sell with Dubai FZCO"}</option>
+                  </SearchableSelect>
+                </Field>
+            )}
+
             <Field label="Counterparty" error={errors.counterpartyId?.message}>
               <SearchableSelect
                 searchable
@@ -1010,12 +1019,7 @@ function BookTradeForm() {
                     {SESAME_TRADING_ENTITIES.map(entity => <option key={entity} value={entity}>{entity}</option>)}
                   </SearchableSelect>
                 </Field>
-                <Field label="Internal trade (optional)">
-                  <SearchableSelect value={String(tradeParams.internalCounterpartyEntity ?? "")} onChange={e => setTradeParams(p => ({ ...p, internalCounterpartyEntity: e.target.value }))} className="kastros-select w-full">
-                    <option value="">External counterparty</option>
-                    <option value={sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "PAK" : "FZCO"}>{sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "Buy / sell with Kastros Pakistan" : "Buy / sell with Dubai FZCO"}</option>
-                  </SearchableSelect>
-                </Field>
+
               </>
             ) : (
               <Field label="Season" error={errors.season?.message}>

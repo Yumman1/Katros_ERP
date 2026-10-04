@@ -172,11 +172,13 @@ export async function approvePayment(
     if (pr.sourceType === "INBOUND") {
       // Money actually paid accumulates; the receipt is only PAID once it
       // covers the amount due, so a held remainder keeps it partially paid.
+      await tx.$queryRaw`SELECT id FROM "InboundReceipt" WHERE id = ${pr.sourceId} FOR UPDATE`;
       const receipt = await tx.inboundReceipt.findUnique({
         where: { id: pr.sourceId },
         select: { amountDue: true, paidAmountPkr: true, gatepassNo: true },
       });
       if (receipt) {
+        if (num(pr.amount) > num(receipt.amountDue) - num(receipt.paidAmountPkr) + .005) throw new Error("Payment exceeds the current truck balance");
         const paid = Math.round((num(receipt.paidAmountPkr) + num(pr.amount)) * 100) / 100;
         const fully = paid + 0.005 >= num(receipt.amountDue);
         await tx.inboundReceipt.updateMany({
@@ -209,6 +211,14 @@ export async function approvePayment(
     // Inbound payables settle on the gatepass DEBIT when the receipt reaches
     // PAID — no buy-side credit row. Spot purchases still credit the ledger
     // because they have no gatepass debit settlement path.
+    if (pr.sourceType === "INBOUND" && pr.advanceVoucherNo) {
+      const trade = await tx.trade.findUniqueOrThrow({ where: { tradeRef: pr.tradeRef } });
+      await tx.counterpartyLedgerEntry.create({ data: {
+        counterpartyId: trade.counterpartyId, side: "BUY", entryType: "CREDIT", sourceType: "PAYMENT",
+        sourceRef: pr.requestRef, tradeRef: pr.tradeRef, amountPkr: pr.amount, purchaseAdvanceFlow: true,
+        note: `Builty ${pr.builtyNumber} · Invoice ${pr.invoiceNumber} · Voucher ${pr.advanceVoucherNo} · ${num(pr.remainingPercentage)}% remaining terms`,
+      } });
+    }
     if (pr.sourceType === "SPOT") {
       const trade = await tx.trade.findUnique({
         where: { tradeRef: pr.tradeRef },
@@ -244,10 +254,11 @@ export async function rejectPayment(
   const result = await prisma.$transaction(async (tx) => {
     const pr = await tx.paymentRequest.findUnique({ where: { requestRef: paymentId } });
     if (!pr) throw new Error("Payment request not found");
-    await tx.paymentRequest.update({
-      where: { requestRef: paymentId },
+    const rejected = await tx.paymentRequest.updateMany({
+      where: { requestRef: paymentId, status: "PENDING" },
       data: { status: "REJECTED", financeComment: reason },
     });
+    if (!rejected.count) throw new Error("Only pending payments can be rejected");
     if (pr.sourceType === "INBOUND") {
       await tx.inboundReceipt.updateMany({
         where: { id: pr.sourceId, status: "FINANCE_PENDING" },
@@ -330,6 +341,7 @@ export async function markInboundPaidAfterApproval(receiptId: string): Promise<I
   });
   if (!r?.paymentRequestId) throw new Error("No payment linked");
   if (r.paymentRequest?.status !== "APPROVED") throw new Error("Payment not approved");
+  if (num(r.paidAmountPkr) + .005 < num(r.amountDue)) throw new Error("This truck still has an unpaid balance");
   const updated = await prisma.inboundReceipt.update({
     where: { id: receiptId },
     data: { status: "PAID" },

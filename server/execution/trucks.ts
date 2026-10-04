@@ -1,3 +1,6 @@
+import { claimAdvance, applyTruckAdvance } from "@/server/finance/purchase-advances";
+import { assertGradeAvailable } from "./sesame-processing";
+import { sesameGrade } from "@/lib/sesame-processing";
 import { executionTradeValuePkr } from "@/lib/execution-settlement";
 import { isSesameCommodity } from "@/lib/sesame";
 import { lockSesameOwnership, pakistanAvailable } from "./sesame-stock";
@@ -233,6 +236,8 @@ export async function updatePendingTruck(
   const row = await prisma.pendingTruck.findUnique({ where: { id }, include: TRUCK_INCLUDE });
   await assertOwnershipWrite("execution.updateGateEntry", { id });
   if (!row) throw new Error("Gate entry not found");
+  const linkedAdvance = await prisma.voucher.findUnique({ where: { advanceTruckId: id } });
+  if (linkedAdvance && ((patch.builtyDetails != null && patch.builtyDetails.trim() !== linkedAdvance.builtyNumber) || (patch.counterpartyName != null && patch.counterpartyName.trim() !== row.counterpartyName) || (patch.commodityCode != null && patch.commodityCode !== row.commodityCode))) throw new Error("The supplier, commodity and builty are linked to an approved advance");
   if (row.executionEntity === "FZCO") throw new Error("FZCO loads are immutable; cancel an unapproved load from the FZCO desk and record its replacement");
   if (row.status === "ASSIGNED") {
     throw new Error("Cannot edit an assigned gate entry — unassign or request head review");
@@ -442,6 +447,8 @@ export async function previewNextGatepassNo(
 }
 
 export async function createPendingTruck(input: {
+  advanceVoucherId?: string;
+  advanceTradeRef?: string;
   counterpartyName: string;
   movementType: "INBOUND" | "OUTBOUND";
   warehouseName: string;
@@ -475,7 +482,8 @@ export async function createPendingTruck(input: {
       await lockSesameOwnership(tx, input.commodityCode);
       if (input.movementType === "OUTBOUND" && await pakistanAvailable(tx, input.commodityCode, input.warehouseName) + 0.000001 < input.weightKg/1000) throw new Error("Insufficient unreserved Pakistan-owned Sesame stock");
     }
-    return tx.pendingTruck.create({
+    if (!input.advanceVoucherId && input.movementType === "INBOUND" && isSesameCommodity(input.commodityCode) && await tx.voucher.findFirst({ where: { builtyNumber: input.builtyDetails.trim(), commodityCode: input.commodityCode, counterparty: { name: input.counterpartyName.trim() }, status: { in: ["PENDING_FINANCE", "APPROVED"] } } })) throw new Error("This builty has an advance voucher; select its approved trade and builty");
+    const created = await tx.pendingTruck.create({
       data: {
         gatepassNo,
         arrivalDate: input.arrivalDate ?? new Date(),
@@ -504,6 +512,8 @@ export async function createPendingTruck(input: {
         remainingKg: input.weightKg,
       },
     });
+    if (input.advanceVoucherId) await claimAdvance(tx, input.advanceVoucherId, created.id, input.advanceTradeRef ?? "");
+    return created;
   });
 
   // An operator-supplied gatepass is theirs to own; anything else is drawn from
@@ -642,6 +652,7 @@ export async function assignTruckToTrade(
   tradeRef: string,
   overrideWeightKg?: number,
   allowOutsideWindow = false,
+  totalDeductionsKg?: number,
 ): Promise<{
   truck: PendingTruck;
   receipt?: InboundReceipt;
@@ -661,6 +672,13 @@ export async function assignTruckToTrade(
     });
     if (!truckRow) throw new Error("Pending truck not found");
     if (truckRow.commodityCode && isSesameCommodity(truckRow.commodityCode)) await lockSesameOwnership(tx, truckRow.commodityCode);
+    if (totalDeductionsKg !== undefined) {
+      if (truckRow.movementType !== "INBOUND" || truckRow.status !== "PENDING") throw new Error("Deductions can only be set before the first inbound assignment");
+      const gross = Number(truckRow.warehouseWeightKg ?? 0);
+      if (!Number.isFinite(totalDeductionsKg) || totalDeductionsKg < 0 || totalDeductionsKg >= gross) throw new Error("Deduction must be zero or more and less than the received warehouse weight");
+      const updated = await tx.pendingTruck.update({ where: { id: truckId }, data: { totalDeductionsKg, remainingKg: gross-totalDeductionsKg, weightKg: gross-totalDeductionsKg } });
+      Object.assign(truckRow, updated);
+    }
     const truck = truckRowToRuntime(truckRow);
     if (truck.status === "ASSIGNED") throw new Error("Truck already fully assigned");
 
@@ -765,6 +783,10 @@ export async function assignTruckToTrade(
       throw new Error("Nothing to allocate — check truck remaining weight and order open quantity");
     }
 
+    if (truck.movementType === "OUTBOUND" && isSesameCommodity(contract.commodityCode)) {
+      const trade = await tx.trade.findUniqueOrThrow({where:{tradeRef},select:{tradeParams:true}});
+      await assertGradeAvailable(tx,contract.commodityCode,truck.warehouseName,sesameGrade(trade.tradeParams),allocateKg/1000);
+    }
     if (truck.movementType === "INBOUND") {
       // No invoice is auto-generated any more. Assignment computes the EXPECTED
       // amount (net warehouse weight × contract rate) as the validation benchmark;
@@ -817,11 +839,14 @@ export async function assignTruckToTrade(
       // would kill the operator's assignment on the unique index. Inside a
       // transaction there is no retrying a collision, so this is the whole
       // protection.
+      const advanceVoucher = await tx.voucher.findUnique({ where: { advanceTruckId: truckId } });
+      if (advanceVoucher && advanceVoucher.tradeRef !== tradeRef) throw new Error("Assign this builty to its advance voucher trade");
+      if (advanceVoucher && splitRemainingKg > 0.001) throw new Error("An advance builty must be assigned as one truck receipt");
       const kcsNo = await nextSerial(SERIALS.INBOUND, tx);
-      const netKg = allocateKg;
-      const invoiceWeightKg = truck.gateInvoiceWeightKg ?? netKg;
-      const allocatedQtyMt =
-        truck.gateInvoiceQtyMt ?? kgToQuantityUnit(invoiceWeightKg, contract.quantityUnit);
+      // Physical fulfilment always uses the locked net received weight, even when
+      // an invoice was entered before assignment and still awaits validation.
+      const invoiceWeightKg = invoiceNetKg;
+      const allocatedQtyMt = kgToQuantityUnit(invoiceNetKg, contract.quantityUnit);
       const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
       const receiptRow = await tx.inboundReceipt.create({
         data: {
@@ -850,7 +875,7 @@ export async function assignTruckToTrade(
           deductionPct: 0,
           allocatedQtyMt,
           fifoOverrideReason: null,
-          amountDue:
+          amountDue: advanceVoucher ? invoiceWeightKg * rateKg :
             truck.gateInvoiceAmount ?? truck.gateInvoiceExpectedPkr ?? invoiceWeightKg * rateKg,
           status: "ALLOCATED",
           documentRefs: filterUploadedGatepassDocuments(truck.documentRefs),
@@ -910,7 +935,7 @@ export async function assignTruckToTrade(
                 creditDays != null
                   ? new Date(truck.arrivalDate.getTime() + creditDays * 86_400_000)
                   : null,
-              note: `Inbound ${truck.gatepassNo} · ${truck.truckNo} — expected invoice`,
+              note: `Inbound ${truck.gatepassNo} · ${truck.truckNo} · Builty ${truck.builtyDetails} · Invoice ${truck.gateInvoiceNo ?? "pending"} — expected invoice`,
             },
             tx,
           );
@@ -1224,6 +1249,8 @@ export async function setManualGateInvoice(
 ): Promise<PendingTruck> {
   const row = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
   if (!row) throw new Error("Gate entry not found");
+  const applied = await prisma.purchaseAdvanceAllocation.count({ where: { receipt: { gatepassNo: row.gatepassNo } } });
+  if (applied) throw new Error("An advance has already been applied to this invoice; it cannot be edited");
   const invoiceNo = input.invoiceNo.trim();
   if (!invoiceNo) throw new Error("Invoice number is required");
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
@@ -1656,6 +1683,8 @@ export async function traderResolveGateInvoice(
       "This invoice is not linked to one of your trades",
     );
   }
+
+  if (decision !== "HOLD") await applyTruckAdvance(truckId, traderName);
 
   // What is still unpaid across this truck's receipts — the ceiling on any
   // release, and what stays held when the trader pays only part of it.

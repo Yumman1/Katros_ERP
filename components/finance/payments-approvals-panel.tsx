@@ -57,6 +57,7 @@ export function FinancePaymentsPanel() {
                   <div className="text-sm text-foreground">
                     {p.sourceType} · {p.tradeRef} · {p.counterpartyName}
                   </div>
+                  {p.advanceVoucherNo && <p className="text-xs text-muted-foreground">Builty {p.builtyNumber} · Invoice {p.invoiceNumber} · Advance {p.advanceVoucherNo} · {p.remainingPercentage}% remaining terms (actual balance below)</p>}
                   <div className="data-grid text-lg text-foreground">
                     {p.currency} {p.amount.toLocaleString()}
                   </div>

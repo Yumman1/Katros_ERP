@@ -119,7 +119,7 @@ export function WarehouseCostingFields({
           />
         </label>
         <label className="block text-xs text-subtle">
-          Hiring period (months)
+          Lease period (months)
           <input
             type="number"
             min={1}

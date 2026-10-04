@@ -1,5 +1,8 @@
 "use client";
 
+import { Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import InternalMovements from "../shifting/page";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
@@ -114,7 +117,14 @@ type Movement = {
 
 const REFETCH_MS = 60_000;
 
-export default function TruckMovementsPage() {
+export default function TruckMovementsPage() { return <Suspense fallback={<PageLoadingSkeleton />}><MovementTabs /></Suspense>; }
+function MovementTabs() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const internal = params.get("scope") === "internal";
+  return <div><div className="flex gap-2 p-4" role="group" aria-label="Truck movement scope">{["external","internal"].map(scope=><button key={scope} aria-pressed={internal === (scope==="internal")} className={internal === (scope==="internal") ? "kastros-btn-primary" : "kastros-btn-secondary"} onClick={()=>router.replace(`/execution/movements?scope=${scope}`)}>{scope==="internal"?"Internal trucks":"External trucks"}</button>)}</div>{internal?<InternalMovements />:<ExternalTruckMovements />}</div>;
+}
+function ExternalTruckMovements() {
   const { data: contracts, isLoading: loadingContracts } = trpc.execution.lockedContracts.useQuery({});
   const { data: inbound, isLoading: loadingInbound } = trpc.execution.inboundReceipts.useQuery({});
   const { data: outbound, isLoading: loadingOutbound } = trpc.execution.outboundDispatches.useQuery({});

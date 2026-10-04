@@ -1,3 +1,5 @@
+import { advanceTrade } from "./purchase-advances";
+import { advanceAmount } from "@/lib/purchase-advance";
 import { tradeEntity } from "@/lib/sesame-entity";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
@@ -11,6 +13,16 @@ import {
 } from "./ledger";
 
 export type VoucherView = {
+  builtyNumber: string | null;
+  transporterName: string | null;
+  advancePercentage: number | null;
+  advanceWeightKg: number | null;
+  calculatedAdvancePkr: number | null;
+  availableAdvancePkr: number;
+  advanceTruckId: string | null;
+  invoiceNo: string | null;
+  truckPaid: boolean;
+  adjustments: { amountPkr: number; tradeRef: string; builty: string; invoice: string | null }[];
   executionEntity: string;
   commodityCode: string | null;
   id: string;
@@ -40,6 +52,8 @@ export type VoucherView = {
 
 const VOUCHER_INCLUDE = {
   counterparty: { select: { name: true, code: true } },
+  advanceAllocations: { include: { receipt: { include: { gatepassTruck: true } } } },
+  advanceTruck: true,
 } as const;
 
 type VoucherRow = Awaited<ReturnType<typeof prisma.voucher.findMany<{ include: typeof VOUCHER_INCLUDE }>>>[number];
@@ -127,6 +141,16 @@ export async function findDuplicateVoucher(input: {
 
 function voucherRowToView(row: VoucherRow): VoucherView {
   return {
+    builtyNumber: row.builtyNumber,
+    transporterName: row.transporterName,
+    advancePercentage: row.advancePercentage == null ? null : num(row.advancePercentage),
+    advanceWeightKg: row.advanceWeightKg == null ? null : num(row.advanceWeightKg),
+    calculatedAdvancePkr: row.calculatedAdvancePkr == null ? null : num(row.calculatedAdvancePkr),
+    availableAdvancePkr: row.builtyNumber && row.status === "APPROVED" ? Math.max(0, num(row.amountPkr) - row.advanceAllocations.reduce((s, a) => s + num(a.amountPkr), 0)) : 0,
+    advanceTruckId: row.advanceTruckId,
+    invoiceNo: row.advanceTruck?.gateInvoiceNo ?? null,
+    truckPaid: false,
+    adjustments: row.advanceAllocations.map(a => ({ amountPkr: num(a.amountPkr), tradeRef: a.receipt.tradeRef, builty: a.receipt.biltyNo, invoice: a.receipt.gatepassTruck?.gateInvoiceNo ?? a.receipt.billNo })),
     executionEntity: row.executionEntity,
     id: row.id,
     commodityCode: row.commodityCode,
@@ -154,6 +178,9 @@ function voucherRowToView(row: VoucherRow): VoucherView {
 
 /** Execution enters a payment voucher — pending until finance approves it. */
 export async function createVoucher(input: {
+  builtyNumber?: string;
+  transporterName?: string;
+  advanceWeightKg?: number;
   executionEntity?: "PAK" | "FZCO";
   commodityCode?: string;
   counterpartyId: string;
@@ -208,6 +235,9 @@ export async function createVoucher(input: {
     }
     side = note.side;
     tradeRef = note.tradeRef;
+  } else if (tradeRef && input.builtyNumber) {
+    const { trade } = await advanceTrade(tradeRef);
+    if (side !== "BUY" || trade.counterpartyId !== input.counterpartyId) throw new Error("Advance must match the purchase supplier");
   } else if (tradeRef) {
     const trade = await prisma.trade.findUnique({
       where: { tradeRef },
@@ -256,6 +286,13 @@ export async function createVoucher(input: {
   if (input.commodityCode && linkedTrade && linkedTrade.commodity.code !== input.commodityCode) throw new Error("The voucher trade belongs to another execution commodity");
   if (!commodityCode) throw new Error("Select an execution commodity before entering a direct advance");
   if (!(await prisma.commodity.findUnique({ where: { code: commodityCode }, select: { id: true } }))) throw new Error("Unknown voucher commodity");
+  let advance: { builtyNumber: string; transporterName: string; advanceWeightKg: number; advancePercentage: number; calculatedAdvancePkr: number } | undefined;
+  if (input.builtyNumber) {
+    if (!tradeRef || noteRef || !/^\d+$/.test(input.builtyNumber.trim()) || !input.transporterName?.trim() || !Number.isFinite(input.advanceWeightKg) || input.advanceWeightKg! <= 0) throw new Error("Enter a numeric builty, transporter and positive advance weight");
+    if (await prisma.voucher.findFirst({ where: { tradeRef, builtyNumber: input.builtyNumber.trim(), status: { not: "REJECTED" } } })) throw new Error("This trade builty already has an active advance voucher");
+    const terms = await advanceTrade(tradeRef);
+    advance = { builtyNumber: input.builtyNumber.trim(), transporterName: input.transporterName.trim(), advanceWeightKg: input.advanceWeightKg!, advancePercentage: terms.percentage, calculatedAdvancePkr: advanceAmount(input.advanceWeightKg!, terms.rateKg, terms.percentage) };
+  }
   const voucherDate = input.voucherDate ?? new Date();
   const duplicate = await findDuplicateVoucher({
     bankName,
@@ -273,6 +310,7 @@ export async function createVoucher(input: {
     prisma.voucher.create({
       data: {
         voucherNo,
+        ...advance,
         commodityCode,
         executionEntity,
         counterpartyId: input.counterpartyId,
@@ -284,7 +322,7 @@ export async function createVoucher(input: {
         reference,
         bankName,
         voucherDate,
-        note: input.note?.trim() || null,
+        note: [advance ? `Builty ${advance.builtyNumber} · ${advance.transporterName} · ${advance.advancePercentage}% advance` : null, input.note?.trim()].filter(Boolean).join(" · ") || null,
         enteredByName: input.enteredByName,
       },
       include: VOUCHER_INCLUDE,
@@ -309,7 +347,14 @@ export async function listVouchers(filter?: {
     include: VOUCHER_INCLUDE,
     orderBy: { createdAt: "desc" },
   });
-  return rows.map(voucherRowToView);
+  const gatepasses = rows.flatMap(r => r.advanceTruck ? [r.advanceTruck.gatepassNo] : []);
+  const receipts = await prisma.inboundReceipt.findMany({ where: { gatepassNo: { in: gatepasses } }, select: { gatepassNo: true, status: true } });
+  return rows.map(row => {
+    const result = voucherRowToView(row);
+    const linked = receipts.filter(r => r.gatepassNo === row.advanceTruck?.gatepassNo);
+    result.truckPaid = linked.length > 0 && linked.every(r => r.status === "PAID") && !!result.invoiceNo;
+    return result;
+  });
 }
 
 /**
@@ -338,6 +383,7 @@ export async function approveVoucher(
       throw new Error("Voucher not found or already resolved");
     }
     const row = await tx.voucher.findUnique({ where: { id: voucherId } });
+    if (row?.builtyNumber && row.tradeRef) await advanceTrade(row.tradeRef, tx);
     await postCreditForVoucher(
       {
         voucherId: row!.id,
@@ -352,6 +398,7 @@ export async function approveVoucher(
       },
       tx,
     );
+    if (row?.builtyNumber) await tx.counterpartyLedgerEntry.updateMany({ where: { voucherId }, data: { purchaseAdvanceFlow: true } });
     // Close the note only once the internal sub-ledger is within tolerance.
     if (row!.noteRef) {
       const { remainingPkr } = await noteBalance(row!.noteRef, row!.counterpartyId, tx);

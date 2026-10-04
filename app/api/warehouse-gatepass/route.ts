@@ -1,3 +1,4 @@
+import { approvedAdvanceBuiltys } from "@/server/finance/purchase-advances";
 import { NextResponse } from "next/server";
 import { gatepassSchema } from "@/lib/gatepass-schema";
 import {
@@ -66,6 +67,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     warehouses: Array.from(warehouseSet).sort((a, b) => a.localeCompare(b)),
+    advances: await approvedAdvanceBuiltys(),
     inboundCounterparties,
     outboundCounterparties,
     nextGatepassNo: movement ? await previewNextGatepassNo(movement) : undefined,
@@ -109,6 +111,8 @@ export async function POST(request: Request) {
 
   try {
     const truck = await createPendingTruck({
+      advanceVoucherId: input.advanceVoucherId,
+      advanceTradeRef: input.advanceTradeRef,
       counterpartyName: input.counterpartyName,
       movementType: input.movementType,
       warehouseName: input.warehouseName,

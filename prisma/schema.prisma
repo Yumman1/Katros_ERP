@@ -824,6 +824,7 @@ enum SaleTruckStage {
 
 /// Gatepass entry logged at the warehouse gate (public REST form).
 model PendingTruck {
+  purchaseAdvance Voucher?
   sesameOwnershipEntries SesameOwnershipEntry[]
   executionEntity String @default("PAK")
   id         String   @id @default(cuid())
@@ -950,6 +951,7 @@ enum InboundReceiptStatus {
 
 /// Warehouse receiving record for PURCHASE_DELIVERED fulfillment.
 model InboundReceipt {
+  advanceAllocations PurchaseAdvanceAllocation[]
   id    String @id @default(cuid())
   kcsNo String @unique
   gatepassNo String?
@@ -1070,6 +1072,12 @@ enum StockTransferStatus {
 /// `fromWarehouseName` is null when stock arrives from a yard we do not manage
 /// (`externalOrigin` names it) — the "shifted in from Kisan Godam" case.
 model StockTransfer {
+  dispatchedBy String?
+  receivedBy String?
+  internalGateToken String @unique @default(uuid())
+  sesameType String @default("Machine Cleaned")
+  purpose String @default("SHIFT")
+  processingBatches SesameProcessing[]
   id          String @id @default(cuid())
   transferRef String @unique
 
@@ -1165,6 +1173,10 @@ enum PaymentSourceType {
 
 /// Finance approval queue entry raised from inbound / outbound / spot flows.
 model PaymentRequest {
+  builtyNumber String?
+  invoiceNumber String?
+  advanceVoucherNo String?
+  remainingPercentage Decimal? @db.Decimal(8, 4)
   id         String @id @default(cuid())
   requestRef String @unique
   sourceType PaymentSourceType
@@ -1497,6 +1509,7 @@ enum SettlementNoteStatus {
 /// (receivable incl. 236G); CREDIT rows are posted when finance approves a
 /// payment voucher.
 model CounterpartyLedgerEntry {
+  purchaseAdvanceFlow Boolean @default(false)
   id             String       @id @default(cuid())
   counterpartyId String
   counterparty   Counterparty @relation(fields: [counterpartyId], references: [id], onDelete: Cascade)
@@ -1571,7 +1584,27 @@ enum VoucherStatus {
 
 /// Money-ingestion voucher entered by execution against a SELL-side
 /// counterparty. Credits the ledger only once finance approves it.
+model PurchaseAdvanceAllocation {
+  id String @id @default(cuid())
+  voucherId String
+  voucher Voucher @relation(fields: [voucherId], references: [id], onDelete: Restrict)
+  receiptId String
+  receipt InboundReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  amountPkr Decimal @db.Decimal(20, 2)
+  appliedBy String
+  createdAt DateTime @default(now())
+  @@unique([voucherId, receiptId])
+}
+
 model Voucher {
+  builtyNumber String?
+  transporterName String?
+  advanceWeightKg Decimal? @db.Decimal(20, 4)
+  advancePercentage Decimal? @db.Decimal(8, 4)
+  calculatedAdvancePkr Decimal? @db.Decimal(20, 2)
+  advanceTruckId String? @unique
+  advanceTruck PendingTruck? @relation(fields: [advanceTruckId], references: [id], onDelete: Restrict)
+  advanceAllocations PurchaseAdvanceAllocation[]
   executionEntity String @default("PAK")
   /// Commodity account for direct advances; linked vouchers inherit their trade.
   commodityCode String?
@@ -1659,4 +1692,23 @@ model TradeDraft {
 model RefCounter {
   name  String @id
   value BigInt @default(0)
+}
+
+/// Immutable conversion after an internal truck is received at the processing warehouse.
+model SesameProcessing {
+  id String @id @default(cuid())
+  requestKey String @unique
+  transferId String
+  transfer StockTransfer @relation(fields: [transferId], references: [id])
+  commodityCode String
+  warehouseName String
+  fromType String
+  toType String
+  inputKg Decimal @db.Decimal(20, 3)
+  yieldRatio Decimal @db.Decimal(8, 6)
+  outputKg Decimal @db.Decimal(20, 3)
+  impuritiesKg Decimal @db.Decimal(20, 3)
+  recordedBy String
+  createdAt DateTime @default(now())
+  @@index([commodityCode, warehouseName])
 }

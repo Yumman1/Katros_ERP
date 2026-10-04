@@ -1,3 +1,4 @@
+import { sesameGrades } from "@/server/execution/sesame-processing";
 import { isBaleCommodity } from "@/lib/warehouse-utilization";
 import { filterDeskRows } from "@/server/execution/desk-scope";
 import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
@@ -733,6 +734,7 @@ export const traderRouter = router({
       }
     }
 
+    const gradeRows = commodity && isSesameCommodity(commodity.code) ? await sesameGrades(prisma,commodity.code) : [];
     const warehouses = computeWarehouseAvailability(
       locations,
       inbound,
@@ -751,6 +753,7 @@ export const traderRouter = router({
       const bookedQtyMt = commodity ? (bookedByWarehouse.get(key) ?? 0) : null;
       return {
         ...row,
+        sesameGrades: gradeRows.find(g=>normWarehouseName(g.name)===key)?.grades ?? null,
         stockOnHandMt,
         bookedQtyMt,
         freeToSellMt:
