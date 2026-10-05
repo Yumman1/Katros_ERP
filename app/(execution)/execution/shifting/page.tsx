@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { InternalGateLinks } from "@/components/execution/internal-gate-links";
 import { useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
 import { isSesameCommodity, SESAME_TYPES } from "@/lib/sesame";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -68,20 +69,6 @@ export default function ExecutionShiftingPage() {
     },
     onError,
   });
-  const dispatch = trpc.execution.dispatchStockTransfer.useMutation({
-    onSuccess: () => {
-      setError(null);
-      refresh();
-    },
-    onError,
-  });
-  const receive = trpc.execution.receiveStockTransfer.useMutation({
-    onSuccess: () => {
-      setError(null);
-      refresh();
-    },
-    onError,
-  });
   const cancel = trpc.execution.cancelStockTransfer.useMutation({
     onSuccess: () => {
       setError(null);
@@ -100,7 +87,7 @@ export default function ExecutionShiftingPage() {
     [rows],
   );
 
-  const listFilters = useRecordFilters("shifts", rows, { fields: [field("from", "Origin", "fromWarehouseName", "externalOrigin"), field("to", "Destination", "toWarehouseName"), field("commodity", "Commodity", "commodityCode"), field("season", "Season"), field("status", "Status")], date: { label: "Booking date", paths: ["createdAt"] } });
+  const listFilters = useRecordFilters("shifts", rows, { fields: [field("from", "Origin", "fromWarehouseName", "externalOrigin"), field("to", "Destination", "toWarehouseName"), field("commodity", "Commodity", "commodityCode"), ...(isSesameCommodity(active.code) ? [] : [field("season", "Season")]), field("status", "Status")], date: { label: "Booking date", paths: ["createdAt"] } });
 
   if (isLoading) return <PageLoadingSkeleton />;
 
@@ -125,7 +112,7 @@ export default function ExecutionShiftingPage() {
         </button>
       </header>
 
-      <div className="kastros-card p-4 flex flex-wrap gap-3 items-center"><span className="text-sm font-medium">Internal gate links</span><Link className="kastros-btn-secondary" href="/execution/internal-gate?direction=out">Internal gate out</Link><Link className="kastros-btn-secondary" href="/execution/internal-gate?direction=in">Internal gate in</Link></div>
+      <InternalGateLinks />
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard icon={<Truck className="h-4 w-4" />} label="On the road" value={mt(inTransitMt)} />
         <StatCard
@@ -183,9 +170,7 @@ export default function ExecutionShiftingPage() {
                   <ShiftRow
                     key={r.id}
                     row={r}
-                    busy={dispatch.isPending || receive.isPending || cancel.isPending}
-                    onDispatch={() => dispatch.mutate({ id: r.id })}
-                    onReceive={(qty) => receive.mutate({ id: r.id, receivedQtyMt: qty })}
+                    busy={cancel.isPending}
                     onCancel={(reason) => cancel.mutate({ id: r.id, reason })}
                   />
                 ))
@@ -233,17 +218,12 @@ type ShiftRowData = {
 function ShiftRow({
   row,
   busy,
-  onDispatch,
-  onReceive,
   onCancel,
 }: {
   row: ShiftRowData;
   busy: boolean;
-  onDispatch: () => void;
-  onReceive: (qtyMt: number) => void;
   onCancel: (reason: string) => void;
 }) {
-  const [receiveQty, setReceiveQty] = useState<string>("");
   const style = STATUS_STYLE[row.status as Status] ?? STATUS_STYLE.DRAFT;
   const source = row.fromWarehouseName ?? row.externalOrigin ?? "—";
   const loss = row.transitLossMt ?? 0;
@@ -287,14 +267,7 @@ function ShiftRow({
       <td className="px-4 py-3 text-right">
         {row.status === "DRAFT" ? (
           <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onDispatch}
-              className="rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
-            >
-              Gate out
-            </button>
+            <Link target="_blank" rel="noopener noreferrer" className="kastros-btn-secondary text-xs" href={`/warehouse/internal-gate?token=${row.internalGateToken}&direction=out`}>Truck out</Link>
             <button
               type="button"
               disabled={busy}
@@ -309,29 +282,7 @@ function ShiftRow({
             </button>
           </div>
         ) : row.status === "IN_TRANSIT" ? (
-          <div className="flex items-center justify-end gap-2">
-            <input
-              type="number"
-              step="0.001"
-              min="0"
-              value={receiveQty}
-              onChange={(e) => setReceiveQty(e.target.value)}
-              placeholder={String(row.dispatchedQtyMt)}
-              className="w-24 rounded-md border px-2 py-1.5 text-right text-xs tabular-nums"
-              aria-label="Weighed quantity at destination (MT)"
-            />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                const qty = Number(receiveQty || row.dispatchedQtyMt);
-                if (Number.isFinite(qty) && qty > 0) onReceive(qty);
-              }}
-              className="rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
-            >
-              Weigh in
-            </button>
-          </div>
+          <Link target="_blank" rel="noopener noreferrer" className="kastros-btn-secondary text-xs" href={`/warehouse/internal-gate?token=${row.internalGateToken}&direction=in`}>Truck in</Link>
         ) : (
           <span className="text-xs text-muted-foreground">—</span>
         )}
@@ -362,7 +313,7 @@ function NewShiftForm({
     biltyNo: string | null;
     bags: number | null;
     reason: string | null;
-    season: "WINTER" | "SUMMER";
+    season?: "WINTER" | "SUMMER";
   }) => void;
 }) {
   const [commodityCode, setCommodityCode] = useState(commodities[0]?.code ?? "");
@@ -398,13 +349,13 @@ function NewShiftForm({
           biltyNo: biltyNo.trim() || null,
           bags: bags ? Number(bags) : null,
           reason: reason.trim() || null,
-          season,
+          ...(commodityCode.toUpperCase() === "CORN" ? { season } : {}),
         });
       }}
     >
       <div className="grid gap-4 md:grid-cols-3">
         {/* Shifted stock still belongs to a crop season's position book. */}
-        <Field label="Season">
+        {commodityCode.toUpperCase() === "CORN" && <Field label="Season">
           <SearchableSelect
             value={season}
             onChange={(e) => setSeason(e.target.value as "WINTER" | "SUMMER")}
@@ -414,7 +365,7 @@ function NewShiftForm({
             <option value="SUMMER">Summer</option>
             <option value="WINTER">Winter</option>
           </SearchableSelect>
-        </Field>
+        </Field>}
 
         <Field label="Commodity">
           <SearchableSelect

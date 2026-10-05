@@ -1,4 +1,5 @@
 import { purchaseAdvancePercentage } from "@/lib/purchase-advance";
+import { createInternalGateAccess } from "@/server/execution/internal-gate-access";
 import { isSesameCommodity } from "@/lib/sesame";
 import { applyAdvance } from "@/server/finance/purchase-advances";
 import { tradeEntity } from "@/lib/sesame-entity";
@@ -198,6 +199,10 @@ const tradeFileFilterSchema = z.object({
 });
 
 export const executionRouter = router({
+  internalGateLink: roleProcedure([...execRoles]).query(({ ctx }) => {
+    if (!ctx.executionCommodityCode || ctx.executionEntity === "FZCO") throw new Error("Select a Pakistan commodity desk for physical internal movements");
+    return { href: `/warehouse/internal-gate?access=${encodeURIComponent(createInternalGateAccess(ctx.executionCommodityCode))}` };
+  }),
   commodityDesks: roleProcedure([...execRoles]).query(async () => {
     const desks = await prisma.commodity.findMany({ select: { id: true, code: true, name: true }, orderBy: { name: "asc" } });
     return desks.sort((a, b) => Number(["CORN", "CRN"].includes(b.code.toUpperCase())) - Number(["CORN", "CRN"].includes(a.code.toUpperCase())));
