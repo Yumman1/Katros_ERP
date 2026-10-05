@@ -1,6 +1,8 @@
 "use client";
 import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
+import { SesamePositionView } from "@/components/execution/sesame-entity-panels";
+import { isSesameCommodity } from "@/lib/sesame";
 import { NetPositionPanel } from "@/components/position/net-position-panel";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
@@ -8,6 +10,11 @@ import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
 import { useMemo } from "react";
 
 export default function TraderPositionsPage() {
+  const desk = useCommodityDesk();
+  if (desk.active && isSesameCommodity(desk.active.code)) return <DeskPage><DeskScroll className="space-y-5 pb-6"><SesamePositionView commodityCode={desk.active.code} /></DeskScroll></DeskPage>;
+  return <CommodityPositionsPage />;
+}
+function CommodityPositionsPage() {
   const desk = useCommodityDesk();
   const commodityFilter = desk.active?.code ?? "";
   const { data: exposure, isLoading: loadingExposure } = trpc.trader.myExposure.useQuery({ commodityId: desk.active?.id }, { enabled: Boolean(desk.active) });

@@ -1,3 +1,4 @@
+import { cornReportInput, getCornCounterpartyReport } from "@/server/reports/corn-counterparty";
 import { sesameGrades } from "@/server/execution/sesame-processing";
 import { isBaleCommodity } from "@/lib/warehouse-utilization";
 import { filterDeskRows } from "@/server/execution/desk-scope";
@@ -246,6 +247,7 @@ const bookTradeInputSchema = z
 const deskInput = z.object({ commodityId: z.string().optional() }).optional();
 
 export const traderRouter = router({
+  cornCounterpartyReport: roleProcedure(["TRADER"]).input(cornReportInput).query(({ctx,input}) => getCornCounterpartyReport(ctx.session.user.id,traderNameFromSession(ctx.session.user),input)),
   myCommodityDesks: protectedProcedure.query(({ ctx }) => traderCommodityDesks(ctx.session.user.id)),
   commoditySalesReport: roleProcedure(["TRADER"]).input(commercialReportInput).query(({ ctx, input }) => getCommercialReport(ctx.prisma, input, traderNameFromSession(ctx.session.user))),
   deskSummary: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {

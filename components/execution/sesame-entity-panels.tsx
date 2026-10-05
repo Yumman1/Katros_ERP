@@ -14,8 +14,12 @@ const input = "kastros-input w-full";
 function useBook() { return trpc.sesameExecution.book.useQuery(undefined, { refetchInterval: 30_000 }); }
 
 export function SesamePositions() {
-  const { data, error, isLoading } = useBook();
   const { active } = useExecutionCommodityDesk();
+  return <SesamePositionView commodityCode={active.code} />;
+}
+
+export function SesamePositionView({ commodityCode }: { commodityCode: string }) {
+  const { data, error, isLoading } = trpc.sesameExecution.book.useQuery({ commodityCode }, { refetchInterval: 30_000 });
   const { data: market } = trpc.trader.seasonNetPositions.useQuery();
   const [fx, setFx] = useState("");
   const [rate, setRate] = useState("");
@@ -30,8 +34,8 @@ export function SesamePositions() {
       {([['Entry rate (PKR / maund)','entryRatePkrPerMaund'],['Market rate (PKR / maund)','marketRatePkrPerMaund'],['In / out (PKR / maund)','inOutPkrPerMaund'],['In / out value (PKR)','inOutValuePkr'],['In / out value (USD)','inOutValueUsd']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{p[key] == null ? "—" : qty(p[key])}</td>)}</tr>)}
     </tbody></table></div>
     <p className="text-xs text-muted-foreground">Physical inventory is shown for each owning entity. FZCO inventory may remain in Pakistan until release. Net position = physical inventory + open purchases − open sales.</p>
-    <form className="flex flex-wrap gap-3 items-end" onSubmit={e => { e.preventDefault(); save.mutate({ commodityCode: active.code, season: "SUMMER", fxRate: Number(fx), ...(rate ? { marketRatePkrPerMaund: Number(rate) } : {}) }); }}>
-      <label className="text-sm">Shared USD / PKR rate<input aria-label="Shared USD / PKR rate" className={input} type="number" step="0.01" min="0.01" required value={fx} placeholder={String(market?.find(m => m.commodityCode === active.code)?.fxRate ?? "")} onChange={e => setFx(e.target.value)} /></label>
+    <form className="flex flex-wrap gap-3 items-end" onSubmit={e => { e.preventDefault(); save.mutate({ commodityCode, season: "SUMMER", fxRate: Number(fx), ...(rate ? { marketRatePkrPerMaund: Number(rate) } : {}) }); }}>
+      <label className="text-sm">Shared USD / PKR rate<input aria-label="Shared USD / PKR rate" className={input} type="number" step="0.01" min="0.01" required value={fx} placeholder={String(market?.find(m => m.commodityCode === commodityCode)?.fxRate ?? "")} onChange={e => setFx(e.target.value)} /></label>
       <label className="text-sm">Shared fallback market rate (PKR / maund)<input className={input} type="number" step="0.01" min="0.01" value={rate} onChange={e => setRate(e.target.value)} /></label>
       <button className="kastros-btn-primary" disabled={save.isPending}>Save rate</button>
       {save.error && <p role="alert">{save.error.message}</p>}{save.isSuccess && <p role="status">Rate saved. Locked contracts retain their saved rate.</p>}

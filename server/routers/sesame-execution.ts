@@ -1,3 +1,4 @@
+import { requireTraderCommodity } from "@/server/trader-commodity-access";
 import { prisma } from "@/server/db";
 import { sesameGrades, recordProcessing } from "@/server/execution/sesame-processing";
 import { z } from "zod";
@@ -29,7 +30,15 @@ export const sesameExecutionRouter = router({
     if (ctx.executionEntity !== "FZCO") throw new TRPCError({ code: "BAD_REQUEST", message: "Open the Dubai FZCO desk first" });
     return action(() => cancelFzcoLoad(input.truckId));
   }),
-  book: roleProcedure(["EXECUTION", "ADMIN", "FINANCE"]).query(({ctx}) => sesameBook(codeOf(ctx.executionCommodityCode))),
+  book: roleProcedure(["EXECUTION", "ADMIN", "FINANCE", "TRADER"]).input(z.object({commodityCode:z.string().optional()}).optional()).query(async ({ctx,input}) => {
+    const code = codeOf(ctx.session.user.role === "TRADER" ? input?.commodityCode : ctx.executionCommodityCode);
+    if (ctx.session.user.role === "TRADER") {
+      const commodity = await prisma.commodity.findUnique({where:{code}});
+      if (!commodity) throw new TRPCError({code:"NOT_FOUND",message:"Commodity not found"});
+      await requireTraderCommodity(ctx.session.user.id,commodity.id);
+    }
+    return sesameBook(code);
+  }),
   confirmOwnership: headProcedure("EXECUTION").input(z.object({ tradeRef: z.string(), quantityMt: z.number().finite().positive(), warehouseName: z.string().optional() })).mutation(({ctx,input}) => {
     codeOf(ctx.executionCommodityCode);
     return action(() => confirmOwnership({ ...input, entity: ctx.executionEntity ?? "PAK", actor: ctx.session.user.name ?? ctx.session.user.id }));
