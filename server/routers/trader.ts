@@ -1,3 +1,6 @@
+import { defaultKgPerUnit } from "@/lib/price-units";
+import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
+import { processingReservedKg } from "@/server/execution/processing-reservations";
 import { cornReportInput, getCornCounterpartyReport } from "@/server/reports/corn-counterparty";
 import { sesameGrades } from "@/server/execution/sesame-processing";
 import { isBaleCommodity } from "@/lib/warehouse-utilization";
@@ -58,6 +61,7 @@ import {
   getCommodityById,
   getCommodityPriceBasis,
   getCounterpartyById,
+  getMergedCommodities,
   getMergedCounterparties,
   getCompanyWarehouses,
   getTraderReferenceData,
@@ -247,6 +251,7 @@ const bookTradeInputSchema = z
 const deskInput = z.object({ commodityId: z.string().optional() }).optional();
 
 export const traderRouter = router({
+  positionCommodities: roleProcedure(["TRADER"]).query(async ({ctx}) => {await traderCommodityDesks(ctx.session.user.id);return (await getMergedCommodities()).map(c=>({id:c.id,code:c.code,name:c.name}));}),
   cornCounterpartyReport: roleProcedure(["TRADER"]).input(cornReportInput).query(({ctx,input}) => getCornCounterpartyReport(ctx.session.user.id,traderNameFromSession(ctx.session.user),input)),
   myCommodityDesks: protectedProcedure.query(({ ctx }) => traderCommodityDesks(ctx.session.user.id)),
   commoditySalesReport: roleProcedure(["TRADER"]).input(commercialReportInput).query(({ ctx, input }) => getCommercialReport(ctx.prisma, input, traderNameFromSession(ctx.session.user))),
@@ -736,9 +741,11 @@ export const traderRouter = router({
       }
     }
 
+    const processingByWarehouse = new Map<string,number>();
+    if(commodity && isSesameCommodity(commodity.code)) for(const loc of locations) processingByWarehouse.set(normWarehouseName(loc.name),await processingReservedKg(prisma,commodity.code,loc.name)/1000);
     const gradeRows = commodity && isSesameCommodity(commodity.code) ? await sesameGrades(prisma,commodity.code) : [];
     const warehouses = computeWarehouseAvailability(
-      locations,
+      locations.filter(w=>warehouseAllowedForCommodity(w.name,commodity?.code)),
       inbound,
       outbound,
       contracts,
@@ -758,9 +765,10 @@ export const traderRouter = router({
         sesameGrades: gradeRows.find(g=>normWarehouseName(g.name)===key)?.grades ?? null,
         stockOnHandMt,
         bookedQtyMt,
+        processingReservedMt: processingByWarehouse.get(key)??0,
         freeToSellMt:
           stockOnHandMt != null && bookedQtyMt != null
-            ? Math.max(0, stockOnHandMt - bookedQtyMt)
+            ? Math.max(0, stockOnHandMt - bookedQtyMt - (processingByWarehouse.get(key)??0))
             : null,
       };
     });
@@ -927,7 +935,7 @@ export const traderRouter = router({
         const configuredBasis = await getCommodityPriceBasis(c.id, input.tradeScope);
         const priceCurrency = input.priceCurrency ?? configuredBasis.currency;
         const priceWeightUnit = input.priceWeightUnit ?? configuredBasis.weightUnit;
-        const priceKgPerUnit = input.priceKgPerUnit ?? configuredBasis.kgPerUnit;
+        const priceKgPerUnit = sesame && ["MT","KG","MAUND","MAUND_40","MAUND_37"].includes(priceWeightUnit.toUpperCase()) ? defaultKgPerUnit(priceWeightUnit) : input.priceKgPerUnit ?? configuredBasis.kgPerUnit;
         const canonicalKgPerUnit = canonicalKgPerUnitOf(c);
         const qualityTolerances =
           (sesame ? qualitySummaryFromParams(tradeParams, paramDefs) : input.qualityTolerances?.trim()) ||
@@ -1151,7 +1159,7 @@ export const traderRouter = router({
   }),
 
   /** The daily "Net Position" mail, computed live — one column per commodity + season. */
-  seasonNetPositions: protectedProcedure.query(async ({ ctx }) => filterDeskRows(await getSeasonNetPositions(), ctx.executionCommodityCode, r => r.commodityCode)),
+  seasonNetPositions: protectedProcedure.query(async ({ ctx }) => {if(ctx.session.user.role === "TRADER") {await traderCommodityDesks(ctx.session.user.id);return getSeasonNetPositions();}return filterDeskRows(await getSeasonNetPositions(), ctx.executionCommodityCode, r => r.commodityCode);}),
 
   /** Buy and sell counterparty ledger accounts — same view as Execution → Ledgers. */
   counterpartyLedgers: protectedProcedure.query(() => getCounterpartyLedgers()),
@@ -1187,6 +1195,11 @@ export const traderRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      if(ctx.session.user.role === "TRADER") {
+        const commodity=await prisma.commodity.findUnique({where:{code:input.commodityCode}});
+        if(!commodity) throw new TRPCError({code:"NOT_FOUND"});
+        await requireTraderCommodity(ctx.session.user.id,commodity.id);
+      }
       await setPositionMarketInput({
         ...input,
         updatedBy: ctx.session.user.name ?? ctx.session.user.email ?? "desk",

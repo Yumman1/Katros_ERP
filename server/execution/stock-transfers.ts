@@ -1,3 +1,4 @@
+import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 /**
  * Internal stock shifting — moving grain we already own between warehouses.
  *
@@ -197,6 +198,7 @@ export async function createStockTransfer(input: {
   const to = input.toWarehouseName.trim();
   const origin = input.externalOrigin?.trim() || null;
   const qty = input.dispatchedQtyMt;
+  if([from,to].some(w=>w&&!warehouseAllowedForCommodity(w,input.commodityCode)))throw new Error("Faqir Warehouse is not available for Sesame");
   if (input.purpose === "PROCESSING" && !["Raw","Machine Cleaned"].includes(input.sesameType ?? "Machine Cleaned")) throw new Error("Only Raw or Machine Cleaned stock can be sent for processing");
   if (isSesameCommodity(input.commodityCode)) {
     const names = [from,to].filter((v): v is string=>Boolean(v));

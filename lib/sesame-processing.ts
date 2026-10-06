@@ -17,3 +17,18 @@ export function sesameGrade(params: unknown): keyof GradeBalances {
   const value = (params as { sesameType?: string } | null)?.sesameType;
   return value && Object.hasOwn(emptyGrades(), value) ? value as keyof GradeBalances : "Machine Cleaned";
 }
+
+export function pakistanDate(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Karachi",year:"numeric",month:"2-digit",day:"2-digit"}).format(date);
+}
+export function processingForecast(records: {productionDate:string;inputKg:number;outputKg:number;impuritiesKg:number}[], remainingKg:number, capacityKg:number, expectedYield:number, today=pakistanDate()) {
+  const cutoff = new Date(today+"T00:00:00Z"); cutoff.setUTCDate(cutoff.getUTCDate()-89);
+  const recent=records.filter(r=>r.productionDate>=cutoff.toISOString().slice(0,10)&&r.productionDate<=today);
+  const input=recent.reduce((s,r)=>s+r.inputKg,0), output=recent.reduce((s,r)=>s+r.outputKg,0);
+  const first=recent.map(r=>r.productionDate).sort()[0];
+  const elapsed=first?Math.max(1,Math.round((Date.parse(today)-Date.parse(first))/86400000)+1):0;
+  const dailyKg=elapsed?input/elapsed:capacityKg;
+  const yieldRatio=input>0?output/input:expectedYield;
+  const forecastInputKg=Math.min(remainingKg,dailyKg*90);
+  return {dailyKg,yieldRatio,basis:elapsed?"Recorded calendar-day average":"Planned capacity and yield",daysRemaining:dailyKg>0?Math.ceil(remainingKg/dailyKg):null,forecastInputKg,forecastOutputKg:forecastInputKg*yieldRatio,forecastImpuritiesKg:forecastInputKg*(1-yieldRatio)};
+}

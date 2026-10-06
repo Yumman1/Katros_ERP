@@ -1,3 +1,4 @@
+import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 import { claimAdvance, applyTruckAdvance } from "@/server/finance/purchase-advances";
 import { assertGradeAvailable } from "./sesame-processing";
 import { sesameGrade } from "@/lib/sesame-processing";
@@ -473,6 +474,7 @@ export async function createPendingTruck(input: {
   gatepassNo?: string | null;
   arrivalDate?: Date;
 }): Promise<PendingTruck> {
+  if(!warehouseAllowedForCommodity(input.warehouseName,input.commodityCode))throw new Error("Faqir Warehouse is not available for Sesame");
   if (input.movementType === "OUTBOUND") {
     const qtyMt = kgToQuantityUnit(input.weightKg, "MT");
     await assertSufficientOutboundStock(input.warehouseName, input.commodityCode, qtyMt);

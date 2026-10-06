@@ -18,13 +18,13 @@ export function SesamePositions() {
   return <SesamePositionView commodityCode={active.code} />;
 }
 
-export function SesamePositionView({ commodityCode }: { commodityCode: string }) {
-  const { data, error, isLoading } = trpc.sesameExecution.book.useQuery({ commodityCode }, { refetchInterval: 30_000 });
+export function SesamePositionView({ commodityCode, canEdit = true }: { commodityCode: string; canEdit?: boolean }) {
+  const { data, error, isLoading } = trpc.sesameExecution.positionSnapshot.useQuery({ commodityCode }, { refetchInterval: 30_000 });
   const { data: market } = trpc.trader.seasonNetPositions.useQuery();
   const [fx, setFx] = useState("");
   const [rate, setRate] = useState("");
   const utils = trpc.useUtils();
-  const save = trpc.trader.setPositionMarketInput.useMutation({ onSuccess: () => { void utils.trader.seasonNetPositions.invalidate(); void utils.sesameExecution.book.invalidate(); } });
+  const save = trpc.trader.setPositionMarketInput.useMutation({ onSuccess: () => { void utils.trader.seasonNetPositions.invalidate(); void utils.sesameExecution.book.invalidate(); void utils.sesameExecution.positionSnapshot.invalidate(); } });
   if (isLoading) return <p>Loading Sesame positions…</p>;
   if (error) return <p role="alert">{error.message}</p>;
   return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">Sesame positions — Pakistan and Dubai FZCO</h2>
@@ -34,12 +34,12 @@ export function SesamePositionView({ commodityCode }: { commodityCode: string })
       {([['Entry rate (PKR / maund)','entryRatePkrPerMaund'],['Market rate (PKR / maund)','marketRatePkrPerMaund'],['In / out (PKR / maund)','inOutPkrPerMaund'],['In / out value (PKR)','inOutValuePkr'],['In / out value (USD)','inOutValueUsd']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{p[key] == null ? "—" : qty(p[key])}</td>)}</tr>)}
     </tbody></table></div>
     <p className="text-xs text-muted-foreground">Physical inventory is shown for each owning entity. FZCO inventory may remain in Pakistan until release. Net position = physical inventory + open purchases − open sales.</p>
-    <form className="flex flex-wrap gap-3 items-end" onSubmit={e => { e.preventDefault(); save.mutate({ commodityCode, season: "SUMMER", fxRate: Number(fx), ...(rate ? { marketRatePkrPerMaund: Number(rate) } : {}) }); }}>
+    {canEdit && <form className="flex flex-wrap gap-3 items-end" onSubmit={e => { e.preventDefault(); save.mutate({ commodityCode, season: "SUMMER", fxRate: Number(fx), ...(rate ? { marketRatePkrPerMaund: Number(rate) } : {}) }); }}>
       <label className="text-sm">Shared USD / PKR rate<input aria-label="Shared USD / PKR rate" className={input} type="number" step="0.01" min="0.01" required value={fx} placeholder={String(market?.find(m => m.commodityCode === commodityCode)?.fxRate ?? "")} onChange={e => setFx(e.target.value)} /></label>
       <label className="text-sm">Shared fallback market rate (PKR / maund)<input className={input} type="number" step="0.01" min="0.01" value={rate} onChange={e => setRate(e.target.value)} /></label>
       <button className="kastros-btn-primary" disabled={save.isPending}>Save rate</button>
       {save.error && <p role="alert">{save.error.message}</p>}{save.isSuccess && <p role="status">Rate saved. Locked contracts retain their saved rate.</p>}
-    </form>
+    </form>}
     <p className="text-xs text-muted-foreground">Pakistan Daily Prices take precedence over the fallback market rate. FZCO entry cost is the weighted cost of confirmed purchases; Pakistan uses its receipt-based purchase cost.</p>
   </section>;
 }

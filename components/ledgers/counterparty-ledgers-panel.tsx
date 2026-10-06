@@ -1,4 +1,5 @@
 "use client";
+import { supplierEntryType, purchasePaidTotal } from "@/lib/purchase-ledger-display";
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field, tradeFields } from "@/lib/record-filters";
 
@@ -10,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { formatPkDate } from "@/lib/formatters/datetime";
 
 export type LedgerEntryRow = {
+  purchaseAdvanceFlow?: boolean;
   id: string;
   entryDate: Date;
   entryType: "DEBIT" | "CREDIT";
@@ -199,7 +201,7 @@ function SideSection({
   enableFilters?: boolean;
 }) {
   const totals = useMemo(() => {
-    const debit = accounts.reduce((s, r) => s + r.totalDebitPkr, 0);
+    const debit = accounts.reduce((s, r) => s + (r.side === "BUY" ? purchasePaidTotal(r.entries) : r.totalDebitPkr), 0);
     const credit = accounts.reduce((s, r) => s + r.totalCreditPkr, 0);
     const billed = accounts.reduce((s, r) => s + r.totalBilledPkr, 0);
     const outstanding = accounts.reduce((s, r) => s + r.outstandingDebitPkr, 0);
@@ -235,7 +237,7 @@ function SideSection({
             value={fmtPkr(totals.outstanding)}
             tone={totals.outstanding > 0 ? "text-warning" : "text-success"}
           />
-          <SummaryCell label="Total credit" value={fmtPkr(totals.credit)} tone="text-success" />
+          <SummaryCell label="Advance available for adjustment" value={fmtPkr(accounts.reduce((s,r)=>s+r.availableCreditPkr,0))} tone="text-success" />
         </div>
       )}
 
@@ -292,7 +294,8 @@ function AccountCard({
   settlingTruckId?: string | null;
   enableFilters?: boolean;
 }) {
-  const entryFilters = useRecordFilters(`ledger-${r.ledgerAccountId}`, r.entries, { fields: [field("source", "Source type", "sourceType"), field("entry", "Debit / Credit", "entryType"), field("aging", "Aging bucket", "agingBucket")], date: { label: "Entry date", paths: ["entryDate"] }, searchPaths: ["tradeRef", "sourceRef", "voucherNo", "note"] }, enableFilters && open);
+  const displayEntries = useMemo(()=>r.entries.map(e=>({...e,displayEntryType:supplierEntryType(r.side,e)})),[r.entries,r.side]);
+  const entryFilters = useRecordFilters(`ledger-${r.ledgerAccountId}`, displayEntries, { fields: [field("source", "Source type", "sourceType"), field("entry", "Debit / Credit", "displayEntryType"), field("aging", "Aging bucket", "agingBucket")], date: { label: "Entry date", paths: ["entryDate"] }, searchPaths: ["tradeRef", "sourceRef", "voucherNo", "note"] }, enableFilters && open);
   const isSell = r.side === "SELL";
   return (
     <section className="exec-panel">
@@ -328,13 +331,14 @@ function AccountCard({
           ) : (
             <>
               <Metric label="Billed" value={fmtPkr(r.totalBilledPkr)} tone="text-foreground" />
-              <Metric label="Debited (paid)" value={fmtPkr(r.totalDebitPkr)} tone="text-destructive" />
+              <Metric label="Debited (paid)" value={fmtPkr(purchasePaidTotal(r.entries))} tone="text-destructive" />
               <Metric
                 label="Outstanding"
                 value={fmtPkr(r.outstandingDebitPkr)}
                 tone={r.outstandingDebitPkr > 0 ? "text-warning" : "text-success"}
               />
-              {r.totalCreditPkr > 0 && (
+              {r.entries.some(e=>e.purchaseAdvanceFlow) && <Metric label="Advance available for adjustment" value={fmtPkr(r.availableCreditPkr)} tone="text-success" />}
+              {!r.entries.some(e=>e.purchaseAdvanceFlow) && r.totalCreditPkr > 0 && (
                 <Metric label="Credit" value={fmtPkr(r.totalCreditPkr)} tone="text-success" />
               )}
             </>
@@ -374,7 +378,7 @@ function AccountCard({
       {open && (
         <div className="kastros-table-wrap mt-3">
           {entryFilters.controls}
-          {entryFilters.active && <p className="px-3 py-2 text-xs text-subtle">Matching entries: debit {fmtPkr(entryFilters.rows.filter((e) => e.entryType === "DEBIT").reduce((sum, e) => sum + e.amountPkr, 0))}; credit {fmtPkr(entryFilters.rows.filter((e) => e.entryType === "CREDIT").reduce((sum, e) => sum + e.amountPkr, 0))}. Account balances above include all entries.</p>}
+          {entryFilters.active && <p className="px-3 py-2 text-xs text-subtle">Matching entries: debit {fmtPkr(entryFilters.rows.filter((e) => e.displayEntryType === "DEBIT").reduce((sum, e) => sum + e.amountPkr, 0))}; credit {fmtPkr(entryFilters.rows.filter((e) => e.displayEntryType === "CREDIT").reduce((sum, e) => sum + e.amountPkr, 0))}. Account balances above include all entries.</p>}
           {r.entries.length === 0 ? (
             <div className="px-4 py-6 text-center text-xs text-subtle">No ledger entries yet.</div>
           ) : (
@@ -406,14 +410,14 @@ function AccountCard({
                         <span
                           className={cn(
                             "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                            e.entryType === "CREDIT"
+                            e.displayEntryType === "CREDIT"
                               ? "bg-success/15 text-success"
                               : e.settled
                                 ? "bg-foreground/[0.06] text-subtle"
                                 : "bg-destructive/15 text-destructive",
                           )}
                         >
-                          {e.entryType}
+                          {e.displayEntryType}
                         </span>
                         {/* A note is a claim, not a delivery — it reads paid or
                             unpaid on its own status, and a paid one no longer
@@ -456,7 +460,7 @@ function AccountCard({
                           >
                             Settles {e.settlesNoteRef}
                           </span>
-                        ) : e.settled ? (
+                        ) : e.settled || (!isSell && e.purchaseAdvanceFlow && ["VOUCHER","PAYMENT"].includes(e.sourceType)) ? (
                           <span className="ml-1.5 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase text-success">
                             Paid
                           </span>

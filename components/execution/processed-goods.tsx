@@ -1,48 +1,57 @@
 "use client";
-import { useState } from "react";
-import Link from "next/link";
-import { trpc } from "@/lib/trpc/client";
-import { PROCESSING_ROUTES } from "@/lib/sesame-processing";
-import { isSesameCommodity } from "@/lib/sesame";
-import { useExecutionCommodityDesk } from "./commodity-desk-provider";
-import { SesameGradeStock } from "./sesame-grade-stock";
-
-export function ProcessedGoods() {
-  const {active,entity} = useExecutionCommodityDesk();
-  const utils = trpc.useUtils();
-  const enabled = isSesameCommodity(active.code) && entity !== "FZCO";
-  const transfers = trpc.execution.stockTransfers.useQuery({}, {enabled,refetchInterval:30000});
-  const batches = trpc.sesameExecution.processing.useQuery(undefined,{enabled,refetchInterval:30000});
-  const [transferId,setTransferId] = useState("");
-  const [toType,setToType] = useState<"Machine Cleaned"|"Sortex">("Machine Cleaned");
-  const [inputKg,setInputKg] = useState("");
-  const [yieldRatio,setYieldRatio] = useState("0.98");
-  const [requestKey,setRequestKey] = useState(()=>crypto.randomUUID());
-  const [saved,setSaved] = useState(false);
-  const record = trpc.sesameExecution.recordProcessing.useMutation({onSuccess:()=>{setInputKg("");setRequestKey(crypto.randomUUID());setSaved(true);void utils.invalidate();}});
-  const selected = transfers.data?.find(t=>t.id===transferId);
-  const eligible = (transfers.data??[]).filter(t=>t.purpose==="PROCESSING" && t.status==="RECEIVED" && (t.receivedQtyMt??0)*1000-(batches.data??[]).filter(b=>b.transferId===t.id).reduce((s,b)=>s+b.inputKg,0)>0.0001);
-  const used = (batches.data??[]).filter(b=>b.transferId===transferId).reduce((s,b)=>s+b.inputKg,0);
-  const routes = PROCESSING_ROUTES.filter(r=>r.from===selected?.sesameType);
-  const output = Number(inputKg)*Number(yieldRatio);
-  if (!enabled) return <div className="kastros-desk-page">Open the Pakistan Sesame desk to process goods.</div>;
-  return <div className="kastros-desk-page space-y-5"><header><h1 className="text-2xl font-semibold">Processed Goods</h1><p className="mt-2 text-sm text-subtle">Send stock using an internal processing truck, receive it at the processing warehouse, then record its yield. Output and impurities stay at that warehouse until shifted back.</p></header>
-    <Link href="/execution/movements?scope=internal" className="kastros-btn-secondary inline-block">Internal trucks and gate links</Link>
-    <SesameGradeStock />
-    <form className="kastros-card p-5 space-y-4" onSubmit={e=>{e.preventDefault();setSaved(false);record.mutate({transferId,toType,inputKg:Number(inputKg),yieldRatio:Number(yieldRatio),requestKey});}}>
-      <h2 className="font-semibold">Record processing yield</h2>
-      <div className="grid gap-4 md:grid-cols-2">
-        <label className="text-sm">Received processing truck<select className="kastros-select mt-1 w-full" required value={transferId} onChange={e=>{setTransferId(e.target.value);const t=eligible.find(t=>t.id===e.target.value);setToType(t?.sesameType==="Machine Cleaned"?"Sortex":"Machine Cleaned");setRequestKey(crypto.randomUUID());}}><option value="">Select truck</option>{eligible.map(t=><option key={t.id} value={t.id}>{t.transferRef} · {t.truckNo} · {t.toWarehouseName} · {t.sesameType}</option>)}</select></label>
-        <label className="text-sm">Conversion<select className="kastros-select mt-1 w-full" required value={toType} onChange={e=>setToType(e.target.value as typeof toType)}>{routes.map(r=><option key={r.to} value={r.to}>{r.from} → {r.to}</option>)}</select></label>
-        <label className="text-sm">Amount being processed (kg)<input className="kastros-input mt-1 w-full" required type="number" step="0.001" min="0.001" max={selected?(selected.receivedQtyMt??0)*1000-used:undefined} value={inputKg} onChange={e=>setInputKg(e.target.value)} />{selected && <span className="text-xs text-subtle">Remaining from this truck: {((selected.receivedQtyMt??0)*1000-used).toFixed(3)} kg</span>}</label>
-        <label className="text-sm">Yield ratio (0.98 = 98%)<input className="kastros-input mt-1 w-full" required type="number" min="0" max="1" step="0.000001" value={yieldRatio} onChange={e=>setYieldRatio(e.target.value)} /></label>
-      </div>
-      {inputKg && Number(yieldRatio)>=0 && Number(yieldRatio)<=1 && <p className="text-sm">Yield: {(Number(yieldRatio)*100).toFixed(2)}% · {toType}: {output.toFixed(3)} kg · Impurities: {(Number(inputKg)-output).toFixed(3)} kg</p>}
-      <button className="kastros-btn-primary" disabled={record.isPending || !selected || !routes.length}>{record.isPending?"Saving…":"Record and update stock"}</button>
-      {saved && <p role="status">Processing recorded. Stock has been updated.</p>}{record.error && <p role="alert" className="text-destructive">{record.error.message}</p>}
-      {!eligible.length && <p className="text-sm text-subtle">No received processing trucks have unprocessed stock. Book a processing movement in Internal Trucks first.</p>}
-    </form>
-    {(transfers.error || batches.error) && <p role="alert">{transfers.error?.message ?? batches.error?.message}</p>}
-    <section className="kastros-card overflow-auto p-4"><h2 className="font-semibold mb-3">Processing history</h2><table className="w-full text-sm"><thead><tr>{["Recorded","Truck / warehouse","Conversion","Input kg","Yield","Output kg","Impurities kg","Recorded by"].map(h=><th key={h} className="p-2 text-left">{h}</th>)}</tr></thead><tbody>{batches.data?.map(b=><tr key={b.id} className="border-t border-border"><td className="p-2">{new Date(b.createdAt).toLocaleString("en-PK")}</td><td className="p-2">{b.transfer.truckNo} · {b.warehouseName}</td><td className="p-2">{b.fromType} → {b.toType}</td><td className="p-2">{b.inputKg}</td><td className="p-2">{(b.yieldRatio*100).toFixed(2)}%</td><td className="p-2">{b.outputKg}</td><td className="p-2">{b.impuritiesKg}</td><td className="p-2">{b.recordedBy}</td></tr>)}</tbody></table></section>
-  </div>;
+import {useState} from 'react';
+import {trpc} from '@/lib/trpc/client';
+import {PROCESSING_ROUTES,pakistanDate} from '@/lib/sesame-processing';
+import {isSesameCommodity} from '@/lib/sesame';
+import {useExecutionCommodityDesk} from './commodity-desk-provider';
+import {SesameGradeStock} from './sesame-grade-stock';
+const fmt=(v:number)=>v.toLocaleString('en-PK',{maximumFractionDigits:3});
+const inputClass='kastros-input block w-full mt-1';
+const cell='p-3 text-left whitespace-nowrap';
+export function ProcessedGoods(){
+ const {active,entity}=useExecutionCommodityDesk();
+ if(!isSesameCommodity(active.code)||entity==='FZCO')return <p>Open the Pakistan Sesame desk to process goods.</p>;
+ return <WarehouseProcessing key={active.code}/>;
+}
+function WarehouseProcessing(){
+ const utils=trpc.useUtils();
+ const query=trpc.sesameExecution.warehouseProcessing.useQuery(undefined,{refetchInterval:30000});
+ const [warehouse,setWarehouse]=useState(''),[unit,setUnit]=useState('Processing unit'),[route,setRoute]=useState('0');
+ const [reserved,setReserved]=useState(''),[capacity,setCapacity]=useState(''),[yieldPct,setYield]=useState('98');
+ const [planId,setPlan]=useState(''),[date,setDate]=useState(()=>pakistanDate()),[output,setOutput]=useState(''),[impurities,setImpurities]=useState('');
+ const [editCapacity,setEditCapacity]=useState(''),[editYield,setEditYield]=useState('');
+ const [planKey,setPlanKey]=useState(()=>crypto.randomUUID()),[recordKey,setRecordKey]=useState(()=>crypto.randomUUID());
+ const [message,setMessage]=useState('');
+ const refresh=()=>{void utils.invalidate();};
+ const create=trpc.sesameExecution.createProcessingPlan.useMutation({onSuccess:result=>{setPlan(result.id);setReserved('');setPlanKey(crypto.randomUUID());setMessage('Batch reserved. Enter actual daily output below.');refresh();}});
+ const record=trpc.sesameExecution.recordProduction.useMutation({onSuccess:()=>{setOutput('');setImpurities('');setRecordKey(crypto.randomUUID());setMessage('Daily production saved and inventory updated.');refresh();}});
+ const update=trpc.sesameExecution.updateProcessingPlan.useMutation({onSuccess:()=>{setEditCapacity('');setEditYield('');setMessage('Processing batch updated.');refresh();}});
+ const conversion=PROCESSING_ROUTES[Number(route)]!;
+ const wh=query.data?.warehouses.find(w=>w.name===warehouse);
+ const availability=wh?.grades.find(g=>g.grade===conversion.from);
+ const selected=query.data?.plans.find(p=>p.id===planId&&p.status==='ACTIVE');
+ const input=Number(output)+Number(impurities);
+ const error=query.error??create.error??record.error??update.error;
+ const choose=(id:string)=>{setPlan(id);setOutput('');setImpurities('');setEditCapacity('');setEditYield('');setRecordKey(crypto.randomUUID());};
+ function useDailyPlan(){if(!selected)return;const amount=Math.min(selected.dailyCapacityKg,selected.remainingKg);const out=Math.round(amount*selected.expectedYieldRatio*1000)/1000;setOutput(String(out));setImpurities(String(Math.round((amount-out)*1000)/1000));}
+ return <div className="kastros-desk-page space-y-5"><h1 className="text-2xl font-semibold">Warehouse processing</h1><p className="text-sm text-subtle">Reserve unbooked physical stock for a warehouse processing unit. Record cleaned / Sortex output and impurities each day; their sum is the input consumed. Each saved entry updates inventory automatically.</p>
+  <SesameGradeStock/>{query.isLoading&&<p>Loading warehouse availability…</p>}{error&&<p role="alert" className="text-destructive">{error.message}</p>}{message&&<p role="status">{message}</p>}
+  <form className="kastros-card p-5 space-y-4" onSubmit={e=>{e.preventDefault();setMessage('');create.mutate({warehouseName:warehouse,unitName:unit,fromType:conversion.from,toType:conversion.to,reservedKg:Number(reserved),dailyCapacityKg:Number(capacity),expectedYieldRatio:Number(yieldPct)/100,requestKey:planKey});}}>
+   <h2 className="font-semibold">Reserve a processing batch</h2><div className="grid gap-4 md:grid-cols-3">
+    <label>Warehouse<select required className="kastros-select block w-full mt-1" value={warehouse} onChange={e=>setWarehouse(e.target.value)}><option value="">Select warehouse</option>{query.data?.warehouses.map(w=><option key={w.name}>{w.name}</option>)}</select></label>
+    <label>Processing unit name<input required className={inputClass} value={unit} onChange={e=>setUnit(e.target.value)}/></label>
+    <label>Conversion<select className="kastros-select block w-full mt-1" value={route} onChange={e=>setRoute(e.target.value)}>{PROCESSING_ROUTES.map((r,i)=><option key={i} value={i}>{r.from} → {r.to}</option>)}</select></label>
+    <label>Quantity to reserve (kg)<input required className={inputClass} type="number" min="0.001" step="0.001" max={availability?.availableKg} value={reserved} onChange={e=>setReserved(e.target.value)}/></label>
+    <label>Daily input capacity (kg)<input required className={inputClass} type="number" min="0.001" step="0.001" value={capacity} onChange={e=>setCapacity(e.target.value)}/></label>
+    <label>Initial expected yield (%)<input required className={inputClass} type="number" min="0" max="100" step="0.0001" value={yieldPct} onChange={e=>setYield(e.target.value)}/></label>
+   </div>{availability&&<p className="text-sm">{conversion.from}: physical {fmt(availability.physicalKg)} kg · booked sales {fmt(availability.bookedKg)} kg · locked in processing {fmt(availability.processingKg)} kg · available {fmt(availability.availableKg)} kg.</p>}<button className="kastros-btn-primary" disabled={create.isPending||!warehouse}>Reserve stock</button>
+  </form>
+  <section className="kastros-card p-5 space-y-4"><h2 className="font-semibold">Daily production</h2><label>Active batch<select className="kastros-select block mt-1 w-full" value={planId} onChange={e=>choose(e.target.value)}><option value="">Select batch</option>{query.data?.plans.filter(p=>p.status==='ACTIVE').map(p=><option key={p.id} value={p.id}>{p.warehouseName} · {p.unitName} · {p.fromType} → {p.toType} · {fmt(p.remainingKg)} kg remaining · {p.id.slice(-6)}</option>)}</select></label>
+   {selected&&<><form className="space-y-4" onSubmit={e=>{e.preventDefault();setMessage('');record.mutate({planId,productionDate:date,outputKg:Number(output),impuritiesKg:Number(impurities),requestKey:recordKey});}}><div className="grid gap-4 md:grid-cols-3"><label>Production date<input required type="date" className={inputClass} min={pakistanDate(new Date(selected.createdAt))} max={pakistanDate()} value={date} onChange={e=>setDate(e.target.value)}/></label><label>{selected.toType} produced (kg)<input required type="number" min="0" step="0.001" className={inputClass} value={output} onChange={e=>setOutput(e.target.value)}/></label><label>Impurities (kg)<input required type="number" min="0" step="0.001" className={inputClass} value={impurities} onChange={e=>setImpurities(e.target.value)}/></label></div><p>Total input: <strong>{fmt(input)} kg</strong> · Yield: <strong>{input>0?(Number(output)/input*100).toFixed(2):'—'}%</strong> · Remaining reserved: {fmt(selected.remainingKg)} kg</p><div className="flex gap-3"><button type="button" className="kastros-btn-secondary" onClick={useDailyPlan}>Use daily capacity defaults</button><button className="kastros-btn-primary" disabled={record.isPending||input<=0||input>selected.remainingKg}>Save daily production</button></div><p className="text-xs text-subtle">You can record multiple runs on the same date. Defaults are editable; inventory changes only when actual production is saved.</p></form>
+   <form className="border-t border-border pt-4 flex flex-wrap items-end gap-3" onSubmit={e=>{e.preventDefault();update.mutate({id:planId,dailyCapacityKg:Number(editCapacity||selected.dailyCapacityKg),expectedYieldRatio:Number(editYield||selected.expectedYieldRatio*100)/100});}}><label>Daily capacity (kg)<input className={inputClass} type="number" min="0.001" step="0.001" placeholder={String(selected.dailyCapacityKg)} value={editCapacity} onChange={e=>setEditCapacity(e.target.value)}/></label><label>Default yield (%)<input className={inputClass} type="number" min="0" max="100" step="0.0001" placeholder={String(selected.expectedYieldRatio*100)} value={editYield} onChange={e=>setEditYield(e.target.value)}/></label><button className="kastros-btn-secondary" disabled={update.isPending}>Update defaults</button><button type="button" className="kastros-btn-secondary" disabled={update.isPending} onClick={()=>{if(window.confirm('Release this batch’s remaining reservation? Completed production will stay in inventory.'))update.mutate({id:planId,cancel:true});}}>Release remaining reservation</button></form></>}
+  </section>
+  <section className="kastros-card p-5 overflow-auto"><h2 className="font-semibold mb-3">Batch progress and 3-month forecast (90 days)</h2><p className="text-xs text-subtle mb-3">Uses the last 90 days’ weighted yield and average input per calendar day since the first recorded production day, including idle days. Before production starts, uses planned capacity and yield. Forecast quantities are capped at the remaining batch stock.</p><table className="w-full text-sm"><thead><tr>{['Warehouse / unit','Conversion','Status','Reserved kg','Remaining kg','Average kg / day','Yield','Days to finish','90-day output kg','90-day impurities kg','Basis'].map(h=><th className={cell} key={h}>{h}</th>)}</tr></thead><tbody>{query.data?.plans.map(p=><tr className="border-t border-border" key={p.id}><td className={cell}>{p.warehouseName} · {p.unitName}<span className="block text-xs">{p.id.slice(-6)}</span></td><td className={cell}>{p.fromType} → {p.toType}</td><td className={cell}>{p.status}</td><td className={cell}>{fmt(p.reservedKg)}</td><td className={cell}>{p.status==='CANCELLED'?'Released':fmt(p.remainingKg)}</td><td className={cell}>{fmt(p.forecast.dailyKg)}</td><td className={cell}>{(p.forecast.yieldRatio*100).toFixed(2)}%</td><td className={cell}>{p.status==='ACTIVE'?p.forecast.daysRemaining??'—':'—'}</td><td className={cell}>{fmt(p.forecast.forecastOutputKg)}</td><td className={cell}>{fmt(p.forecast.forecastImpuritiesKg)}</td><td className={cell}>{p.forecast.basis}</td></tr>)}</tbody></table></section>
+  <section className="kastros-card p-5 overflow-auto"><h2 className="font-semibold mb-3">Daily totals by warehouse and conversion</h2><table className="w-full text-sm"><thead><tr>{['Date','Warehouse','Conversion','Input kg','Output kg','Impurities kg','Yield'].map(h=><th className={cell} key={h}>{h}</th>)}</tr></thead><tbody>{query.data?.daily.map(r=><tr className="border-t border-border" key={[r.date,r.warehouseName,r.fromType,r.toType].join(':')}><td className={cell}>{r.date}</td><td className={cell}>{r.warehouseName}</td><td className={cell}>{r.fromType} → {r.toType}</td><td className={cell}>{fmt(r.inputKg)}</td><td className={cell}>{fmt(r.outputKg)}</td><td className={cell}>{fmt(r.impuritiesKg)}</td><td className={cell}>{r.inputKg>0?(r.outputKg/r.inputKg*100).toFixed(2):'—'}%</td></tr>)}</tbody></table></section>
+  <section className="kastros-card p-5 overflow-auto"><h2 className="font-semibold mb-3">Daily production history</h2><table className="w-full text-sm"><thead><tr>{['Date','Warehouse','Conversion','Input kg','Output kg','Impurities kg','Yield','Recorded by'].map(h=><th className={cell} key={h}>{h}</th>)}</tr></thead><tbody>{query.data?.history.map(r=><tr className="border-t border-border" key={r.id}><td className={cell}>{r.productionDate??pakistanDate(new Date(r.createdAt))}</td><td className={cell}>{r.warehouseName}</td><td className={cell}>{r.fromType} → {r.toType}</td><td className={cell}>{fmt(r.inputKg)}</td><td className={cell}>{fmt(r.outputKg)}</td><td className={cell}>{fmt(r.impuritiesKg)}</td><td className={cell}>{(r.yieldRatio*100).toFixed(2)}%</td><td className={cell}>{r.recordedBy}</td></tr>)}</tbody></table></section>
+ </div>;
 }

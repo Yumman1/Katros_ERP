@@ -1,3 +1,4 @@
+import { processingReservedKg } from "./processing-reservations";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { inboundStockDelta, outboundStockDelta, stockTransferDelta } from "@/lib/inventory-stock";
@@ -9,12 +10,13 @@ const n = (v: unknown) => Number(v ?? 0);
 
 /** Grade ledger is derived from the same movements as physical inventory. Conversion conserves mass. */
 export async function sesameGrades(db: DB, code: string) {
-  const [ins, outs, shifts, batches, pending] = await Promise.all([
+  const [ins, outs, shifts, batches, pending, plans] = await Promise.all([
     db.inboundReceipt.findMany({ where: { trade: { commodity: { code } } }, include: { trade: { select: { tradeParams: true } } } }),
     db.outboundDispatch.findMany({ where: { trade: { commodity: { code } } }, include: { trade: { select: { tradeParams: true } } } }),
     db.stockTransfer.findMany({ where: { commodityCode: code } }),
     db.sesameProcessing.findMany({ where: { commodityCode: code }, orderBy: { createdAt: "desc" } }),
     db.pendingTruck.findMany({ where: { commodityCode: code, movementType: "INBOUND", status: { not: "ASSIGNED" } } }),
+    db.sesameProcessingPlan.findMany({where:{commodityCode:code,status:"ACTIVE"},select:{warehouseName:true,remainingKg:true}}),
   ]);
   const map = new Map<string, { name: string; grades: ReturnType<typeof emptyGrades>; unclassifiedMt: number }>();
   const row = (name: string) => { const key = name.trim().toLowerCase(); if (!map.has(key)) map.set(key, { name, grades: emptyGrades(), unclassifiedMt: 0 }); return map.get(key)!; };
@@ -24,7 +26,7 @@ export async function sesameGrades(db: DB, code: string) {
   for (const t of shifts) for (const wh of new Set([t.fromWarehouseName,t.toWarehouseName])) if (wh) add(wh,t.sesameType,stockTransferDelta(wh,{...t,dispatchedQtyMt:n(t.dispatchedQtyMt),receivedQtyMt:t.receivedQtyMt == null ? null : n(t.receivedQtyMt)}));
   for (const p of pending) row(p.warehouseName).unclassifiedMt += n(p.remainingKg)/1000;
   for (const b of batches) { add(b.warehouseName,b.fromType,-n(b.inputKg)/1000); add(b.warehouseName,b.toType,n(b.outputKg)/1000); add(b.warehouseName,"Impurities",n(b.impuritiesKg)/1000); }
-  return [...map.values()].map(r => ({ ...r, sesameStockMt: Object.values(r.grades).reduce((a,b)=>a+b,0)+r.unclassifiedMt }));
+  return [...map.values()].map(r => ({ ...r, processingReservedMt:plans.filter(p=>p.warehouseName.trim().toLowerCase()===r.name.trim().toLowerCase()).reduce((s,p)=>s+n(p.remainingKg)/1000,0), sesameStockMt: Object.values(r.grades).reduce((a,b)=>a+b,0)+r.unclassifiedMt }));
 }
 export async function assertGradeAvailable(db: DB, code: string, warehouse: string, grade: string, qtyMt: number) {
   const rows = await sesameGrades(db,code);
@@ -35,7 +37,7 @@ export async function assertGradeAvailable(db: DB, code: string, warehouse: stri
   ]);
   const custody = entries.filter(e=>sesameGrade(e.trade.tradeParams)===grade).reduce((sum,e)=>sum+(e.toEntity==="FZCO"?n(e.quantityMt):0)-(e.fromEntity==="FZCO"?n(e.quantityMt):0),0);
   const reservedMt = reserved.filter(r=>tradeEntity(r.trade.tradeParams)==="PAK" && sesameGrade(r.trade.tradeParams)===grade).reduce((sum,r)=>sum+n(r.allocatedQtyMt),0);
-  if (qtyMt > Math.max(0,available-custody-reservedMt)+0.000001) throw new Error(`Insufficient unreserved Pakistan-owned ${grade} at ${warehouse}`);
+  if (qtyMt > Math.max(0,available-custody-reservedMt-await processingReservedKg(db,code,warehouse,grade)/1000)+0.000001) throw new Error(`Insufficient unreserved Pakistan-owned ${grade} at ${warehouse}`);
 }
 export async function recordProcessing(input: { code: string; transferId: string; toType: string; inputKg: number; yieldRatio: number; requestKey: string; actor: string }) {
   const amounts = processingYield(input.inputKg,input.yieldRatio);

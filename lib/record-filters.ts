@@ -1,3 +1,4 @@
+import { paymentCategory } from "./trade-constants";
 /** Read-only list filtering. Never sorts or changes the source records. */
 export type FilterField = { key: string; label: string; paths: string[] };
 export type FilterDate = { label: string; paths: string[] };
@@ -42,6 +43,7 @@ export function field(key: string, label: string, ...paths: string[]): FilterFie
 }
 
 export function valueAt(row: unknown, paths: string[]): unknown {
+  if(paths[0] === "paymentCategory") {const t=valueAt(row,["paymentType","summary.paymentType"]);return t?paymentCategory(String(t)):undefined;}
   function walk(value: unknown, parts: string[]): unknown {
     if (!parts.length) return value;
     if (Array.isArray(value)) return value.flatMap((item) => walk(item, parts) ?? []);
@@ -74,6 +76,7 @@ function inRange(value: unknown, from: string, to: string): boolean {
 }
 
 export const tradeFields = [
+  field("payment", "Payment type", "paymentCategory"),
   field("side", "Side", "direction", "side", "summary.direction"),
   field("commodity", "Commodity", "commodityCode", "commodity.code", "summary.commodityLabel"),
   field("market", "Market", "tradeScope", "payload.form.tradeScope"),

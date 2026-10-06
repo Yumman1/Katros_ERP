@@ -630,6 +630,12 @@ export function syncBookedTradesFromDisk(_force = false): void {}
 export async function upsertBookedTrade(trade: MockTraderTrade): Promise<void> {
   const columns = mockTradeToColumns(trade);
   await prisma.$transaction(async (tx) => {
+    if(isSesameCommodity(trade.commodity.code)) {
+      const {lockSesameOwnership}=await import("./execution/sesame-stock");
+      const {guardProcessingSale}=await import("./execution/warehouse-processing");
+      await lockSesameOwnership(tx,trade.commodity.code);
+      await guardProcessingSale(tx,{code:trade.commodity.code,direction:trade.direction,params:trade.tradeParams,quantity:trade.quantity,unit:trade.quantityUnit,tradeRef:trade.tradeRef,status:trade.tradeStatus});
+    }
     const existing = await tx.trade.findUnique({
       where: { tradeRef: trade.tradeRef },
       select: { id: true },
@@ -912,7 +918,15 @@ export async function mockBookTrade(input: {
   const mkt = quantityMt * mktPrice;
   const mtmPnl = input.direction === TradeDirection.BUY ? mkt - book : book - mkt;
 
-  const row = await prisma.trade.create({
+  const bookingActor = input.actorId ?? await getSystemUserId();
+  const row = await prisma.$transaction(async tx => {
+    if(isSesameCommodity(input.commodityCode)) {
+      const {lockSesameOwnership}=await import("./execution/sesame-stock");
+      const {guardProcessingSale}=await import("./execution/warehouse-processing");
+      await lockSesameOwnership(tx,input.commodityCode);
+      await guardProcessingSale(tx,{code:input.commodityCode,direction:input.direction,params:input.tradeParams,quantity:quantityMt,unit:"MT"});
+    }
+    return tx.trade.create({
     include: TRADE_INCLUDE,
     data: {
       tradeRef,
@@ -981,8 +995,9 @@ export async function mockBookTrade(input: {
         input.submitToExecution === true &&
         !priceBasisRequiresQuote(input.priceBasis) &&
         !hasQuotedPrice,
-      createdById: input.actorId ?? (await getSystemUserId()),
+      createdById: bookingActor,
     },
+  });
   });
   return tradeRowToMock(row);
 }

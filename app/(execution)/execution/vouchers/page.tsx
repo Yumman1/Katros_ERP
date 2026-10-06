@@ -203,7 +203,7 @@ export default function ExecutionVouchersPage() {
             <span className="text-xs text-subtle">
               {side === "SELL"
                 ? "Credits the sell ledger — money received from a buyer."
-                : "Credits the buy ledger — settles a purchase or debit-note receivable."}
+                : "Purchase payments debit the supplier account; note receipts settle their own claims."}
             </span>
           </div>
 
@@ -297,7 +297,7 @@ export default function ExecutionVouchersPage() {
               <label className="text-xs text-muted-foreground">Advance weight (kg)<input className="kastros-input w-full" type="number" min="0" value={advanceWeightKg} onChange={e => setAdvanceWeightKg(e.target.value)} /></label>
               <label className="text-xs text-muted-foreground">Builty number<input className="kastros-input w-full" value={builtyNumber} onChange={e => setBuiltyNumber(e.target.value.replace(/\D/g, ""))} /></label>
               <label className="text-xs text-muted-foreground">Transporter<input className="kastros-input w-full" value={transporterName} onChange={e => setTransporterName(e.target.value)} /></label>
-              <div className="text-xs">Calculated: {fmtPkr(calculatedAdvance)}<button type="button" className="block underline" onClick={() => setManualAmount(false)}>Use calculated amount</button>{manualAmount && <span>Manual override</span>}</div>
+              <div className="text-xs">Calculated: {fmtPkr(calculatedAdvance)}<span className="block text-subtle">{Number(advanceWeightKg).toLocaleString()} kg × {selectedTrade?.ratePerKg} PKR/kg × {selectedTrade?.advancePercentage}%</span><button type="button" className="block underline" onClick={() => setManualAmount(false)}>Use calculated amount</button>{manualAmount && <span>Manual override</span>}</div>
             </>}
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Amount (PKR)

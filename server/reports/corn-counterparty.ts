@@ -1,3 +1,4 @@
+import { paymentCategory } from "@/lib/trade-constants";
 import { z } from "zod";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
@@ -12,7 +13,7 @@ import { cornInOut, cornNoteDirection, cornNoteStatus } from "@/lib/reports/corn
 
 export const cornReportInput = z.object({
   commodityId: z.string().min(1), season: z.enum(["SUMMER", "WINTER"]),
-  side: z.enum(["BUY", "SELL", "ALL"]).default("SELL"), counterpartyId: z.string().optional(),
+  paymentCategory:z.string().optional(), side: z.enum(["BUY", "SELL", "ALL"]).default("SELL"), counterpartyId: z.string().optional(),
   todayRatePkrPerMaund: z.number().finite().positive().optional(),
 });
 export async function getCornCounterpartyReport(userId: string, traderName: string, input: z.infer<typeof cornReportInput>) {
@@ -26,7 +27,7 @@ export async function getCornCounterpartyReport(userId: string, traderName: stri
   ]);
   const scoped = allTrades.filter(t => traderNamesMatch(t.traderName,traderName));
   const counterparties = [...new Map(scoped.map(t=>[t.counterpartyId,t.counterparty])).values()].sort((a,b)=>a.name.localeCompare(b.name));
-  const trades = scoped.filter(t => !input.counterpartyId || t.counterpartyId === input.counterpartyId);
+  const trades = scoped.filter(t => (!input.counterpartyId || t.counterpartyId === input.counterpartyId) && (!input.paymentCategory || paymentCategory(t.paymentType)===input.paymentCategory));
   const refs = new Set(trades.map(t=>t.tradeRef));
   const publishedRate = published ? deskLegsToPkrPerMaund(published.yesterday,published.cnf) : null;
   const todayRate = input.todayRatePkrPerMaund ?? publishedRate ?? (fallback?.marketRatePkrPerMaund == null ? null : num(fallback.marketRatePkrPerMaund));
@@ -39,7 +40,7 @@ export async function getCornCounterpartyReport(userId: string, traderName: stri
       const contract=t.contract!;
       const openMt=quantityUnitToKg(num(contract.openQtyMt),contract.quantityUnit)/1000;
       const lockedRate=contract.currency === "PKR" ? (contract.ratePerMaund == null ? contract.ratePerKg == null ? null : num(contract.ratePerKg)*40 : num(contract.ratePerMaund)) : null;
-      return {tradeRef:t.tradeRef,side:t.direction,openMt,lockedRate,todayRate,inOutPkr:cornInOut(openMt,lockedRate,todayRate),status:t.tradeStatus,rateIssue:lockedRate == null ? "Locked PKR rate unavailable" : null};
+      return {tradeRef:t.tradeRef,paymentCategory:paymentCategory(t.paymentType),paymentTerms:t.paymentTerms,side:t.direction,openMt,lockedRate,todayRate,inOutPkr:cornInOut(openMt,lockedRate,todayRate),status:t.tradeStatus,rateIssue:lockedRate == null ? "Locked PKR rate unavailable" : null};
     });
     const notes = noteEntries.filter(e=>e.counterpartyId===cp.id).map(e=>{
       const paid = num(payments.find(p=>p.counterpartyId===cp.id && p.noteRef===e.sourceRef)?._sum.amountPkr);

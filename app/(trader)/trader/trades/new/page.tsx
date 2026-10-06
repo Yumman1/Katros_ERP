@@ -87,6 +87,7 @@ import {
   commodityEntityRef,
   emptyCommodityFormState,
 } from "@/lib/commodity-registration";
+import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 import { formatPkTime, pkToday } from "@/lib/formatters/datetime";
 
 const bookingPaymentTypes = ["DP", "LC", "CAD", "ADVANCE_100", "CREDIT", "AFTER_DELIVERY_100"] as const;
@@ -555,7 +556,7 @@ function BookTradeForm() {
     const availByName = new Map(
       (warehouseAvailability?.warehouses ?? []).map((w) => [normWarehouseName(w.name), w]),
     );
-    return (refData.data?.companyWarehouses ?? []).map((w) => {
+    return (refData.data?.companyWarehouses ?? []).filter(w=>warehouseAllowedForCommodity(w.name,selectedCommodity?.code)).map((w) => {
       const avail = availByName.get(normWarehouseName(w.name));
       return {
         ...w,
@@ -575,7 +576,7 @@ function BookTradeForm() {
         capacityMt: avail?.capacityMt ?? null,
       };
     });
-  }, [refData.data?.companyWarehouses, warehouseAvailability, warehouseStorageDivision]);
+  }, [refData.data?.companyWarehouses, warehouseAvailability, warehouseStorageDivision, selectedCommodity?.code]);
 
   // Selling more than the picked warehouses can still cover. Earlier sell
   // contracts hold stock that is physically present but already promised, so
@@ -1171,7 +1172,7 @@ function BookTradeForm() {
               </SearchableSelect>
             </Field>
             <Field label="Price per unit" error={errors.priceWeightUnit?.message}>
-              {(() => {
+              {isSesame ? <select {...register("priceWeightUnit")} onChange={e=>{setValue("priceWeightUnit",e.target.value,{shouldValidate:true});setValue("priceKgPerUnit",defaultKgPerUnit(e.target.value),{shouldValidate:true});}} className="kastros-select w-full">{["MT","KG","MAUND_40","MAUND_37"].map(u=><option key={u} value={u}>{unitOptionLabel(u,unitRegistry)}</option>)}</select> : (() => {
                 const wu = register("priceWeightUnit");
                 return (
                   <input
@@ -1324,6 +1325,7 @@ function BookTradeForm() {
                 {fmtBase(pricePerCanonical)} / MT
               </span>
             </div>
+            {isSesame && <div>Net settlement rate after commission: <strong>{fmtBase(toPricePerCanonicalQty(Math.max(0,px-(commissionPerUnit??0)),priceMetric,1000)/1000)} / kg</strong> · <strong>{fmtBase(toPricePerCanonicalQty(Math.max(0,px-(commissionPerUnit??0)),priceMetric,40))} / 40 kg maund</strong>. Advances use this net rate and the truck weight in kg.</div>}
             {qty > 0 && (
             <div>
               Notional ({storedMt.toLocaleString(undefined, { maximumFractionDigits: 4 })} MT):{" "}
@@ -1490,44 +1492,11 @@ function BookTradeForm() {
           <div>
             <label className="text-xs font-medium text-muted-foreground">Payment type</label>
             <div className="mt-2 flex flex-wrap gap-2">
-              {visiblePaymentTypes.map((pt) =>
-                pt === "CREDIT" ? (
-                  <label
-                    key={pt}
-                    className="flex cursor-pointer items-center gap-2 rounded-md border border-kastros-border px-3 py-2 text-xs hover:bg-foreground/[0.02] has-[:checked]:border-success has-[:checked]:bg-success/5"
-                  >
-                    <input type="radio" value={pt} {...register("paymentType")} className="accent-brand" />
-                    <span className="flex items-center gap-1 text-muted-foreground">
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        {...register("creditDays", { valueAsNumber: true })}
-                        onFocus={() => setValue("paymentType", "CREDIT", { shouldValidate: true })}
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-11 rounded border border-kastros-border/80 bg-kastros-bg px-1 py-0.5 text-center text-xs text-foreground data-grid focus:border-success/50 focus:outline-none"
-                      />
-                      <span>Day Credit</span>
-                    </span>
-                  </label>
-                ) : (
-                  <label
-                    key={pt}
-                    className="flex cursor-pointer items-center gap-2 rounded-md border border-kastros-border px-3 py-2 text-xs hover:bg-foreground/[0.02] has-[:checked]:border-success has-[:checked]:bg-success/5"
-                  >
-                    <input type="radio" value={pt} {...register("paymentType")} className="accent-brand" />
-                    {isSesame && isPercentagePayment(pt) ? (
-                      <span className="flex items-center gap-1 text-muted-foreground">
-                        <input aria-label={pt === "ADVANCE_100" ? "Advance percentage" : "After delivery percentage"} type="number" min="0.01" max="100" step="0.01" value={String(tradeParams[pt === "ADVANCE_100" ? "advancePercentage" : "afterDeliveryPercentage"] ?? 100)}
-                          onFocus={() => setValue("paymentType", pt)}
-                          onChange={e => setTradeParams(p => ({ ...p, [pt === "ADVANCE_100" ? "advancePercentage" : "afterDeliveryPercentage"]: e.target.value }))}
-                          className="w-14 rounded border border-kastros-border bg-kastros-bg px-1 py-0.5 text-center text-foreground" />
-                        % {pt === "ADVANCE_100" ? "Advance" : "After Delivery"}
-                      </span>
-                    ) : <span className="text-muted-foreground">{paymentTypeLabel(pt)}</span>}
-                  </label>
-                ),
-              )}
+              {visiblePaymentTypes.map(pt=><label key={pt} className="flex cursor-pointer items-center gap-2 rounded-md border border-kastros-border px-3 py-2 text-xs"><input type="radio" value={pt} {...register("paymentType")} className="accent-brand"/><span>{pt === "ADVANCE_100" ? "Advance" : pt === "AFTER_DELIVERY_100" ? "After Delivery" : pt === "CREDIT" ? "Day Credit" : paymentTypeLabel(pt)}</span></label>)}
+            </div>
+            <div className="mt-4">
+              {paymentType === "CREDIT" && <label className="text-sm">Credit days<input type="number" min="1" step="1" {...register("creditDays",{valueAsNumber:true})} className="kastros-input block mt-1"/></label>}
+              {isSesame && isPercentagePayment(paymentType) && <label className="text-sm">{paymentType === "ADVANCE_100" ? "Advance percentage" : "After delivery percentage"}<input type="number" min="0.01" max="100" step="0.01" value={String(tradeParams[paymentType === "ADVANCE_100" ? "advancePercentage" : "afterDeliveryPercentage"]??100)} onChange={e=>setTradeParams(p=>({...p,[paymentType === "ADVANCE_100" ? "advancePercentage" : "afterDeliveryPercentage"]:e.target.value}))} className="kastros-input block mt-1"/></label>}
             </div>
             {errors.creditDays && paymentType === "CREDIT" && (
               <p className="mt-1 text-xs text-kastros-red">{errors.creditDays.message}</p>

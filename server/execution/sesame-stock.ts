@@ -1,3 +1,4 @@
+import { processingReservedKg } from "./processing-reservations";
 import type { Prisma } from "@prisma/client";
 import { tradeEntity } from "@/lib/sesame-entity";
 import { inboundStockDelta, outboundStockDelta, stockTransferDelta } from "@/lib/inventory-stock";
@@ -26,7 +27,7 @@ export async function pakistanAvailable(db: DB, code: string, warehouse: string,
   const same = (name: string) => name.trim().toLowerCase() === warehouse.trim().toLowerCase();
   let qty = [...physical].filter(([wh]) => same(wh)).reduce((s,[,v])=>s+v,0) - [...custody].filter(([wh]) => same(wh)).reduce((s,[,v])=>s+v,0);
   for (const t of pending) if (same(t.warehouseName) && t.movementType === "OUTBOUND") qty -= n(t.remainingKg)/1000;
-  return qty;
+  return qty - await processingReservedKg(db,code,warehouse)/1000;
 }
 export async function reservedFzco(db: DB, code: string) {
   const rows = await db.outboundDispatch.findMany({ where: { status: "AT_GATE", trade: { commodity: { code } } }, select: { warehouseName: true, allocatedQtyMt: true, trade: { select: { tradeParams: true } } } });

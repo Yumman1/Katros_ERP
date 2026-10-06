@@ -148,7 +148,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
     return b;
   };
 
-  for (const p of processing) bucketOf(p.commodityCode,p.transfer.commodityName,p.transfer.season).inventoryMt -= num(p.impuritiesKg)/1000;
+  for (const p of processing) bucketOf(p.commodityCode,p.transfer?.commodityName??"Sesame",p.transfer?.season??"SUMMER").inventoryMt -= num(p.impuritiesKg)/1000;
 
   for (const t of trades) {
     if (isSesameCommodity(t.commodity.code) && sesameGrade(t.tradeParams) === "Impurities") continue;

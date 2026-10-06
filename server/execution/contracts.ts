@@ -494,6 +494,10 @@ export async function allocateContractWarehouse(
   warehouseName: string | null,
 ): Promise<ExecutionContract> {
   return prisma.$transaction(async (tx) => {
+    const desk=await tx.executionContract.findUnique({where:{tradeRef},select:{commodityCode:true}});
+    if(desk && isSesameCommodity(desk.commodityCode)) {
+      const {lockSesameOwnership}=await import("./sesame-stock");await lockSesameOwnership(tx,desk.commodityCode);
+    }
     await tx.$queryRaw`SELECT "id" FROM "ExecutionContract" WHERE "tradeRef" = ${tradeRef} FOR UPDATE`;
     const row = await tx.executionContract.findUnique({
       where: { tradeRef },
@@ -502,6 +506,11 @@ export async function allocateContractWarehouse(
     if (!row) throw new Error("Locked contract not found: " + tradeRef);
     const normalized = normalizeContract(contractRowToRuntime(row));
     assertCanEditWarehouseAllocation(normalized);
+    if(isSesameCommodity(row.commodityCode)) {
+      const {guardProcessingSale}=await import("./warehouse-processing");
+      const t=await tx.trade.findUniqueOrThrow({where:{tradeRef},select:{tradeParams:true}});
+      await guardProcessingSale(tx,{code:row.commodityCode,direction:row.direction,params:t.tradeParams,quantity:Number(row.openQtyMt),unit:row.quantityUnit,tradeRef,allocations:warehouseName?[{warehouseName,openQtyMt:Number(row.openQtyMt)}]:[]});
+    }
     const fulfillment = await getFulfillmentByWarehouse(tx, tradeRef, normalized.direction);
 
     let totals: WarehouseAllocationLine[];
@@ -545,6 +554,10 @@ export async function allocateContractWarehousesSplit(
   openAllocations: { warehouseName: string; openQtyMt: number }[],
 ): Promise<ExecutionContract> {
   return prisma.$transaction(async (tx) => {
+    const desk=await tx.executionContract.findUnique({where:{tradeRef},select:{commodityCode:true}});
+    if(desk && isSesameCommodity(desk.commodityCode)) {
+      const {lockSesameOwnership}=await import("./sesame-stock");await lockSesameOwnership(tx,desk.commodityCode);
+    }
     await tx.$queryRaw`SELECT "id" FROM "ExecutionContract" WHERE "tradeRef" = ${tradeRef} FOR UPDATE`;
     const row = await tx.executionContract.findUnique({
       where: { tradeRef },
@@ -566,6 +579,13 @@ export async function allocateContractWarehousesSplit(
         throw new Error(`Duplicate warehouse "${line.warehouseName}" in allocation split`);
       }
       seen.add(key);
+    }
+    if(isSesameCommodity(row.commodityCode)) {
+      const {lockSesameOwnership}=await import("./sesame-stock");
+      const {guardProcessingSale}=await import("./warehouse-processing");
+      await lockSesameOwnership(tx,row.commodityCode);
+      const t=await tx.trade.findUniqueOrThrow({where:{tradeRef},select:{tradeParams:true}});
+      await guardProcessingSale(tx,{code:row.commodityCode,direction:row.direction,params:t.tradeParams,quantity:Number(row.openQtyMt),unit:row.quantityUnit,tradeRef,allocations:openAllocations});
     }
     const fulfillment = await getFulfillmentByWarehouse(tx, tradeRef, normalized.direction);
     const progress = computeWarehouseProgress(normalized, fulfillment);

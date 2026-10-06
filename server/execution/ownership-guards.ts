@@ -3,6 +3,11 @@ import { TRPCError } from "@trpc/server";
 import { isSesameCommodity } from "@/lib/sesame";
 import { fzcoCustody } from "./sesame-stock";
 
+async function assertProcessingSource(code:string,warehouse:string) {
+ if(!isSesameCommodity(code))return;
+ const where={commodityCode:code,warehouseName:{equals:warehouse,mode:"insensitive" as const}};
+ if(await prisma.sesameProcessingPlan.count({where:{...where,status:"ACTIVE"}})||await prisma.sesameProcessing.count({where}))throw new TRPCError({code:"BAD_REQUEST",message:"This warehouse has reserved or processed stock. Its source stock movements cannot be changed after processing; record a separate correction movement."});
+}
 /** Paper ownership is changed by journal entries and releases, never by editing movements. */
 export async function assertOwnershipWrite(path: string, raw: unknown): Promise<void> {
   if (path.startsWith("sesameExecution.") || !/(update|delete|cancel|close|settle|allocate|advanceSpot|submitSpot)/i.test(path) || !raw || typeof raw !== "object") return;
@@ -20,6 +25,7 @@ export async function assertOwnershipWrite(path: string, raw: unknown): Promise<
   if (truckId) {
     const t = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
     if (t?.executionEntity === "FZCO") fail();
+    if(t?.commodityCode && t.movementType === "INBOUND")await assertProcessingSource(t.commodityCode,t.warehouseName);
     if (t?.commodityCode && isSesameCommodity(t.commodityCode) && (await fzcoCustody(prisma, t.commodityCode)).get(t.warehouseName)) fail();
   }
   for (const inbound of [true, false]) {
@@ -29,6 +35,7 @@ export async function assertOwnershipWrite(path: string, raw: unknown): Promise<
     const select = { tradeRef: true, warehouseName: true, trade: { select: { commodity: { select: { code: true } }, contract: { select: { paperOwnership: true } } } } } as const;
     const m = inbound ? await prisma.inboundReceipt.findUnique({ where: { id: movementId }, select }) : await prisma.outboundDispatch.findUnique({ where: { id: movementId }, select });
     if (m?.trade.contract?.paperOwnership) fail();
+    if(m && inbound)await assertProcessingSource(m.trade.commodity.code,m.warehouseName);
     if (m && isSesameCommodity(m.trade.commodity.code) && (await fzcoCustody(prisma, m.trade.commodity.code)).get(m.warehouseName)) fail();
   }
 }

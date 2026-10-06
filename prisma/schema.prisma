@@ -1698,8 +1698,12 @@ model RefCounter {
 model SesameProcessing {
   id String @id @default(cuid())
   requestKey String @unique
-  transferId String
-  transfer StockTransfer @relation(fields: [transferId], references: [id])
+  transferId String?
+  transfer StockTransfer? @relation(fields: [transferId], references: [id])
+  planId String?
+  plan SesameProcessingPlan? @relation(fields: [planId], references: [id])
+  productionDate String?
+  @@index([planId, productionDate])
   commodityCode String
   warehouseName String
   fromType String
@@ -1711,4 +1715,24 @@ model SesameProcessing {
   recordedBy String
   createdAt DateTime @default(now())
   @@index([commodityCode, warehouseName])
+}
+
+model SesameProcessingPlan {
+  id String @id @default(cuid())
+  requestKey String @unique
+  commodityCode String
+  warehouseName String
+  unitName String
+  fromType String
+  toType String
+  reservedKg Decimal @db.Decimal(20, 3)
+  remainingKg Decimal @db.Decimal(20, 3)
+  dailyCapacityKg Decimal @db.Decimal(20, 3)
+  expectedYieldRatio Decimal @db.Decimal(8, 6)
+  status String @default("ACTIVE")
+  recordedBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  records SesameProcessing[]
+  @@index([commodityCode, warehouseName, status])
 }

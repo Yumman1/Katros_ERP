@@ -1,3 +1,4 @@
+import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 import { purchaseAdvancePercentage } from "@/lib/purchase-advance";
 import { createInternalGateAccess } from "@/server/execution/internal-gate-access";
 import { isSesameCommodity } from "@/lib/sesame";
@@ -519,10 +520,10 @@ export const executionRouter = router({
       }
     }),
 
-  warehouseLocations: roleProcedure([...execRoles]).query(() => getMergedLocations()),
+  warehouseLocations: roleProcedure([...execRoles]).query(async ({ctx}) => (await getMergedLocations()).filter(w=>warehouseAllowedForCommodity(w.name,ctx.executionCommodityCode))),
 
-  companyWarehouses: roleProcedure([...execRoles]).query(async () =>
-    (await getCompanyWarehouses()).map((w) => ({ id: w.id, name: w.name, code: w.code ?? null })),
+  companyWarehouses: roleProcedure([...execRoles]).query(async ({ctx}) =>
+    (await getCompanyWarehouses()).filter(w=>warehouseAllowedForCommodity(w.name,ctx.executionCommodityCode)).map((w) => ({ id: w.id, name: w.name, code: w.code ?? null })),
   ),
 
   // Execution head allocates each locked contract to a company warehouse (local + international).

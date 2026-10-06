@@ -321,3 +321,8 @@ export const DEFAULT_GRADES: Record<string, string[]> = {
   RCE: ["Basmati 1121", "IRRI-6", "Super Kernel"],
   default: ["Grade A", "FAQ", "Standard"],
 };
+
+/** Stable category for report filtering; percentages/days remain separate trade terms. */
+export function paymentCategory(type:string):string {
+  return type === "ADVANCE_100" ? "Advance" : type === "AFTER_DELIVERY_100" ? "After Delivery" : ["CREDIT","CREDIT_30"].includes(type) ? "Day Credit" : type;
+}
