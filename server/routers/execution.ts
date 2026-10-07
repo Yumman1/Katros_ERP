@@ -1,3 +1,4 @@
+import { recordTruckQuality } from "@/server/execution/quality-review";
 import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 import { purchaseAdvancePercentage } from "@/lib/purchase-advance";
 import { createInternalGateAccess } from "@/server/execution/internal-gate-access";
@@ -783,6 +784,19 @@ export const executionRouter = router({
       }
     }),
 
+  qualityTradeSpecs: roleProcedure([...execRoles]).input(z.object({tradeRef:z.string()})).query(async ({ctx,input})=>{
+    const trade = await prisma.trade.findUniqueOrThrow({where:{tradeRef:input.tradeRef},include:{commodity:true}});
+    if ((ctx.executionCommodityCode && trade.commodity.code !== ctx.executionCommodityCode) || tradeEntity(trade.tradeParams) !== (ctx.executionEntity ?? "PAK")) throw new Error("Trade belongs to another desk");
+    return {summary:trade.qualityTolerances};
+  }),
+  qualityReviewQueue: roleProcedure([...execRoles]).query(async ({ctx}) => {
+    const trucks = await prisma.pendingTruck.findMany({where:{movementType:"INBOUND",executionEntity:ctx.executionEntity, ...(ctx.executionCommodityCode ? {commodityCode:ctx.executionCommodityCode}: {})},orderBy:{arrivalDate:"desc"},take:300});
+    return trucks.map(t=>({id:t.id,truckNo:t.truckNo,builty:t.builtyDetails,gatepassNo:t.gatepassNo,counterpartyName:t.counterpartyName,commodityCode:t.commodityCode,warehouseName:t.warehouseName,status:t.status,qualityTradeRef:t.qualityTradeRef,reviewedAt:t.qualityReviewedAt,reviewedBy:t.qualityReviewedBy,readings:t.labReadings as Record<string,string>|null,deductionKg:Number(t.totalDeductionsKg ?? 0),sellerKg:Number(t.weightAsPerBuiltyKg ?? 0),warehouseKg:Number(t.warehouseWeightKg ?? 0)}));
+  }),
+  recordTruckQuality: roleProcedure([...execRoles])
+    .input(z.object({truckId:z.string(),tradeRef:z.string(),readings:z.record(z.string(),z.string().max(500)),deductionKg:z.number().finite().nonnegative()}))
+    .mutation(({ctx,input})=>recordTruckQuality(input,ctx.session.user.name ?? "Execution",ctx.executionCommodityCode,ctx.executionEntity)),
+
   assignTruckToTrade: roleProcedure([...execRoles])
     .input(
       z.object({
@@ -1136,7 +1150,7 @@ export const executionRouter = router({
         },
         take: 50,
       });
-      const contracts = await prisma.executionContract.findMany({ where: { tradeRef: { in: trades.map(t => t.tradeRef) } }, select: { tradeRef: true, ratePerKg: true } });
+      const contracts = await prisma.executionContract.findMany({ where: { tradeRef: { in: trades.map(t => t.tradeRef) } }, select: { tradeRef: true, ratePerKg: true, executionProfile: true } });
       return (await filterDeskTradeRows(trades, ctx.executionCommodityCode, t => t.tradeRef, ctx.executionEntity)).map((t) => ({
         tradeRef: t.tradeRef,
         paymentType: t.paymentType,
@@ -1144,6 +1158,7 @@ export const executionRouter = router({
         quantity: num(t.quantity),
         quantityUnit: t.quantityUnit,
         isSettlement: t.directSettled,
+        executionProfile: contracts.find(c => c.tradeRef === t.tradeRef)?.executionProfile,
         advancePercentage: purchaseAdvancePercentage(t.paymentType, t.tradeParams),
         ratePerKg: num(contracts.find(c => c.tradeRef === t.tradeRef)?.ratePerKg),
       }));
@@ -1218,12 +1233,14 @@ export const executionRouter = router({
           tradeRef: z.string().optional(),
           /** Cancellation / short-close note being settled — overrides tradeRef. */
           noteRef: z.string().optional(),
+          truckNo: z.string().trim().optional(),
+          advancePercentage: z.number().positive().max(100).optional(),
           builtyNumber: z.string().trim().optional(),
           transporterName: z.string().trim().optional(),
           advanceWeightKg: z.number().positive().optional(),
           amountPkr: z.number().positive(),
           method: z.string().optional(),
-          reference: z.string().trim().min(1, "Payment reference is required"),
+          reference: z.string().trim().optional(),
           bankName: z.string().optional(),
           voucherDate: z.coerce.date().optional(),
           note: z.string().optional(),

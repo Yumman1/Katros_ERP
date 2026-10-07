@@ -342,8 +342,9 @@ export default function ExecutionInventoryPage() {
                 const util = { utilizationPct: shared.utilizationPct / 100 };
                 return (
                   <div className="mt-3 rounded-xl border border-border bg-foreground/[0.02] p-3">
+                    <div className="mb-2 text-xs text-subtle">{shared.commodityUtilization.map(c => <p key={c.commodityCode}>{c.commodityName}: {c.stockMt.toFixed(3)} MT · {c.utilizationPct?.toFixed(1) ?? "—"}%</p>)}</div>
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-subtle">Sq ft utilization (shared)</span>
+                      <span className="text-subtle">Total utilization (all commodities)</span>
                       <span className="font-semibold text-muted-foreground">
                         {(util.utilizationPct * 100).toFixed(1)}%
                       </span>

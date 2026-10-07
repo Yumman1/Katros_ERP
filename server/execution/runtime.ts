@@ -56,6 +56,8 @@ export type PendingTruck = {
   /** Inbound warehouse weighment (kg). */
   warehouseWeightKg?: number | null;
   qualitySpecs?: QualityTolerances | null;
+  qualityReviewedAt?: Date | null;
+  qualityTradeRef?: string | null;
   quantityBagsBales?: number | null;
   totalDeductionsKg?: number | null;
   weightKg: number;
@@ -336,6 +338,8 @@ export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
     documentRefs: (row.documents ?? []).map((d) => d.storagePath),
     warehouseWeightKg: numOrNull(row.warehouseWeightKg),
     qualitySpecs: json<QualityTolerances>(row.qualitySpecs),
+    qualityReviewedAt: row.qualityReviewedAt,
+    qualityTradeRef: row.qualityTradeRef,
     quantityBagsBales: row.quantityBagsBales,
     totalDeductionsKg: numOrNull(row.totalDeductionsKg),
     weightKg: num(row.weightKg),

@@ -824,6 +824,10 @@ enum SaleTruckStage {
 
 /// Gatepass entry logged at the warehouse gate (public REST form).
 model PendingTruck {
+  qualityReviewedAt DateTime?
+  qualityReviewedBy String?
+  qualityTradeRef String?
+  labReadings Json?
   purchaseAdvance Voucher?
   sesameOwnershipEntries SesameOwnershipEntry[]
   executionEntity String @default("PAK")
@@ -1597,6 +1601,8 @@ model PurchaseAdvanceAllocation {
 }
 
 model Voucher {
+  truckNo String?
+  purchaseProfile String?
   builtyNumber String?
   transporterName String?
   advanceWeightKg Decimal? @db.Decimal(20, 4)

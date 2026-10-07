@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import { TradeDirection } from "@prisma/client";
 
 export type WarehouseOption = {
+  utilizationPct?: number | null;
+  commodityUtilization?: {commodityCode:string;commodityName:string;stockMt:number;utilizationPct:number|null}[];
   sesameGrades?: Record<"Raw" | "Machine Cleaned" | "Sortex" | "Impurities", number> | null;
   warehouseBasis?: "LEASE" | "USE";
   id: string;

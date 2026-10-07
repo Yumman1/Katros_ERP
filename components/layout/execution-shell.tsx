@@ -103,6 +103,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         ...(sesame ? [{ href: "/execution/ownership", label: "Ownership Transfers", icon: <BookOpen className="h-4 w-4" /> }] : []),
         { href: "/execution/movements", label: "Truck Movements", icon: <Truck className="h-4 w-4" /> },
         { href: "/execution/shifting", label: "Internal Shifting", icon: <MoveRight className="h-4 w-4" /> },
+        ...(!fzco ? [{href:"/execution/quality",label:"Quality Review",icon:<Warehouse className="h-4 w-4" />}]:[]),
         ...(sesame && !fzco ? [{ href: "/execution/processed-goods", label: "Processed Goods", icon: <Warehouse className="h-4 w-4" /> }] : []),
         { href: "/execution/vouchers", label: "Vouchers", icon: <Receipt className="h-4 w-4" /> },
         { href: "/execution/ledgers", label: "Ledgers", icon: <BookOpen className="h-4 w-4" /> },

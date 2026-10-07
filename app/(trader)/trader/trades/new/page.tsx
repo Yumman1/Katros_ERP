@@ -560,6 +560,9 @@ function BookTradeForm() {
       const avail = availByName.get(normWarehouseName(w.name));
       return {
         ...w,
+        commodityUtilization: avail?.commodityUtilization,
+        utilizationPct: avail?.utilizationPct,
+        sesameGrades: avail?.sesameGrades,
         availabilityPct: avail?.availabilityPct ?? null,
         grainDivisionSqFt: avail?.grainDivisionSqFt ?? null,
         balesDivisionSqFt: avail?.balesDivisionSqFt ?? null,

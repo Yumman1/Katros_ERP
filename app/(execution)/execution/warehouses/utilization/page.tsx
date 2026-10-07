@@ -58,7 +58,7 @@ export default function WarehouseUtilizationPage() {
         ? { stockMt: live.stockMt, stockBales: live.stockBales }
         : stockAsOf(loc.name, inbound ?? [], outbound ?? [], contractByRef, asOfDate);
       const view = buildWarehouseUtilizationView(loc, stock);
-      return { loc, stock, view };
+      return { loc, stock, view, commodityUtilization: !asOfDate ? live?.commodityUtilization ?? [] : [] };
     });
   }, [locations, inbound, outbound, contractByRef, asOfDate, liveAvailability]);
 
@@ -89,12 +89,13 @@ export default function WarehouseUtilizationPage() {
 
   function exportExcel() {
     if (listFilters.rows.length === 0) return;
-    const rows = listFilters.rows.map(({ loc, view, stock }) => {
+    const rows = listFilters.rows.map(({ loc, view, stock, commodityUtilization }) => {
       const costing = computeWarehouseCosting(costingInputFromLocation(loc));
       return {
         Warehouse: loc.name,
         Code: loc.code ?? "",
         City: loc.city ?? "",
+        CommodityUtilization: commodityUtilization.map(c=>`${c.commodityName}: ${c.stockMt.toFixed(3)} MT (${c.utilizationPct?.toFixed(1) ?? "No fixed capacity"}%)`).join("; "),
         StockMT: stock.stockMt.toFixed(2),
         StockBales: stock.stockBales.toFixed(0),
         GrainDivisionSqFt: view?.grainDivisionSqFt ?? "",
@@ -184,7 +185,7 @@ export default function WarehouseUtilizationPage() {
           <div className="py-8 text-sm text-subtle">Loading…</div>
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
-            {utilizationPagination.items.map(({ loc, view }) => (
+            {utilizationPagination.items.map(({ loc, view, commodityUtilization }) => (
               <div key={loc.id} className="exec-panel">
                 <div className="flex items-start gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-secondary-muted text-accent-secondary">
@@ -221,6 +222,11 @@ export default function WarehouseUtilizationPage() {
                     No capacity configured — add sq ft and divisions in Warehouses → Setup.
                   </p>
                 )}
+                <div className="mt-3 space-y-1 text-xs">
+                  <p className="font-semibold">Commodity utilization</p>
+                  {commodityUtilization.map(c => <p key={c.commodityCode}>{c.commodityName}: {c.stockMt.toLocaleString(undefined, {maximumFractionDigits: 3})} MT · {c.utilizationPct == null ? "No fixed capacity" : `${c.utilizationPct.toFixed(1)}%`}</p>)}
+                  <p className="font-semibold">Total utilization: {loc.warehouseBasis === "USE" ? "100% (use basis)" : view ? `${view.utilizationPct.toFixed(1)}%` : "Not configured"}</p>
+                </div>
                 {loc.warehouseBasis !== "USE" && <WarehouseCostingSummaryCard
                   loc={loc}
                   actualUtilPct={view ? view.utilizationPct / 100 : null}

@@ -76,6 +76,7 @@ export function WarehouseAvailabilityBadges({
   }
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {w.commodityUtilization && <div className="w-full text-xs text-subtle">{w.commodityUtilization.map(c=>`${c.commodityName}: ${fmtMt(c.stockMt)} MT${c.utilizationPct == null ? "" : ` (${c.utilizationPct.toFixed(1)}%)`}`).join(" · ")} · Total utilization: {w.utilizationPct == null ? "Not configured" : `${w.utilizationPct.toFixed(1)}%`}</div>}
       {w.sesameGrades && <div className="w-full text-xs text-subtle">{Object.entries(w.sesameGrades).map(([grade,qty])=>`${grade}: ${qty.toLocaleString("en-PK",{maximumFractionDigits:3})} MT`).join(" · ")}</div>}
       {isSell ? (
         <>

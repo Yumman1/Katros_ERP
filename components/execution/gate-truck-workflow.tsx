@@ -24,6 +24,8 @@ export type WorkflowTruck = {
   warehouseName: string;
   remainingKg: number;
   totalDeductionsKg?: number | null;
+  qualityReviewedAt?: Date | null;
+  qualityTradeRef?: string | null;
   warehouseWeightKg?: number | null;
   assignedTradeRef?: string | null;
   gateInvoiceNo?: string | null;
@@ -201,7 +203,6 @@ export function GateTruckWorkflow({
 function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: WorkflowContract[] }) {
   const utils = trpc.useUtils();
   const inbound = truck.movementType === "INBOUND";
-  const [deduction, setDeduction] = useState(String(truck.totalDeductionsKg ?? 0));
   const overStage = inbound ? truck.overDeliveryStage ?? null : null;
   // Pre-select the approved trade so execution can complete the assignment.
   const [tradeRef, setTradeRef] = useState(() =>
@@ -282,10 +283,7 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
           Over-delivery approved — assign now
         </span>
       )}
-      {inbound && truck.status === "PENDING" && <label className="block text-xs">Quality deduction (kg)
-        <input type="number" min="0" step="0.001" value={deduction} onChange={e => setDeduction(e.target.value)} className="kastros-input mt-1 w-full" />
-        <span className="text-subtle">Enter 0 if there is no deduction. Saved when the truck is assigned and locked.</span>
-      </label>}
+      {inbound && truck.status === "PENDING" && <a href="/execution/quality" className="text-xs underline">{truck.qualityReviewedAt ? `Lab reviewed for ${truck.qualityTradeRef}` : "Complete lab quality review before assigning"}</a>}
       {showAssignControl && (
         <div className="flex items-center gap-2">
           <SearchableSelect
@@ -311,8 +309,8 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
           </SearchableSelect>
           <button
             type="button"
-            disabled={!tradeRef || assign.isPending}
-            onClick={() => assign.mutate({ truckId: truck.id, tradeRef, ...(inbound && truck.status === "PENDING" ? { totalDeductionsKg: Number(deduction) } : {}) })}
+            disabled={!tradeRef || assign.isPending || (inbound && (!truck.qualityReviewedAt || truck.qualityTradeRef !== tradeRef))}
+            onClick={() => assign.mutate({ truckId: truck.id, tradeRef })}
             className="kastros-btn-primary shrink-0 px-3 py-1.5 text-[11px] disabled:opacity-50"
           >
             {assign.isPending ? "Assigning…" : "Assign"}

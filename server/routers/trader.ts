@@ -673,9 +673,9 @@ export const traderRouter = router({
     // Execution → Inventory.
     const contractByRef = new Map(lockedContracts.map((c) => [c.tradeRef, c]));
     const inventoryRows = buildLocationCommodityInventory({
-      inbound,
+      inbound: inbound.map(r => ({...r, allocatedQtyMt: contractByRef.get(r.tradeRef)?.executionProfile === "PURCHASE_SPOT" && r.weightWarehouseKg > 0 ? r.weightWarehouseKg / 1000 : r.allocatedQtyMt})),
       outbound,
-      pendingTrucks,
+      pendingTrucks: pendingTrucks.filter(t => t.movementType === "INBOUND").map(t => ({...t, remainingKg: t.status === "PENDING" && (t.warehouseWeightKg ?? 0) > 0 ? Math.max(0, t.warehouseWeightKg! - (t.totalDeductionsKg ?? 0)) : t.remainingKg})),
       transfers,
       commodityForTradeRef: (ref) => {
         const c = contractByRef.get(ref);
@@ -762,6 +762,13 @@ export const traderRouter = router({
       const bookedQtyMt = commodity ? (bookedByWarehouse.get(key) ?? 0) : null;
       return {
         ...row,
+        commodityUtilization: inventoryRows.filter(r => normWarehouseName(r.warehouseName) === key).map(r => {
+          const stockMt = Math.max(0, r.netQty);
+          const division = isBaleCommodity(r.commodityCode, r.quantityUnit) ? row.balesDivisionSqFt : row.grainDivisionSqFt;
+          const consumedSqFt = stockMt * (division ?? 0);
+          return { commodityCode: r.commodityCode, commodityName: r.commodityName, stockMt, consumedSqFt,
+            utilizationPct: row.capacitySqFt && division ? consumedSqFt / row.capacitySqFt * 100 : null };
+        }),
         sesameGrades: gradeRows.find(g=>normWarehouseName(g.name)===key)?.grades ?? null,
         stockOnHandMt,
         bookedQtyMt,

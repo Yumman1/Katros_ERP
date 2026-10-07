@@ -1,10 +1,7 @@
 "use client";
 
 import { ThemeToggle } from "@/components/theme/theme-toggle";
-import {
-  CornSpecificationFields,
-  defaultCornSpecifications,
-} from "@/components/trader/corn-specification-fields";
+
 import {
   GatepassCommoditySelect as CommoditySelect,
   GatepassCounterpartySelect as CounterpartySelect,
@@ -14,7 +11,6 @@ import {
   gatepassInputClass as inputClass,
   type GatepassCounterparty,
 } from "@/components/warehouse/gatepass-form-fields";
-import type { QualityTolerances } from "@/lib/trade-constants";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -32,7 +28,7 @@ import { formatPkDateTime } from "@/lib/formatters/datetime";
 const RECORDED_BY_KEY = "kastros-gatepass-recorded-by";
 
 type ReferenceData = {
-  advances?: { id: string; tradeRef: string; builtyNumber: string; counterpartyName: string; commodityCode: string; transporterName: string; advanceWeightKg: number }[];
+  advances?: { id: string; tradeRef: string; builtyNumber: string; truckNo: string | null; counterpartyName: string; commodityCode: string; transporterName: string; advanceWeightKg: number }[];
   warehouses: string[];
   inboundCounterparties: GatepassCounterparty[];
   outboundCounterparties: GatepassCounterparty[];
@@ -81,7 +77,6 @@ export default function WarehouseGatepassPage() {
     outboundCounterparties: [],
   });
   const [form, setForm] = useState(emptyForm);
-  const [qualitySpecs, setQualitySpecs] = useState<QualityTolerances>(() => defaultCornSpecifications());
   const [documents, setDocuments] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -221,15 +216,12 @@ export default function WarehouseGatepassPage() {
         form.movementType === "INBOUND" && form.warehouseWeightKg.trim()
           ? parseFloat(form.warehouseWeightKg)
           : undefined,
-      qualitySpecs: form.movementType === "INBOUND" ? qualitySpecs : undefined,
+
       quantityBagsBales:
         form.movementType === "INBOUND" && form.quantityBagsBales.trim()
           ? parseInt(form.quantityBagsBales, 10)
           : undefined,
-      totalDeductionsKg:
-        form.movementType === "INBOUND" && form.totalDeductionsKg.trim()
-          ? parseFloat(form.totalDeductionsKg)
-          : undefined,
+
       remarks: form.remarks.trim() || undefined,
     };
     try {
@@ -257,7 +249,6 @@ export default function WarehouseGatepassPage() {
       });
       setPreviewTick((t) => t + 1);
       setDocuments([]);
-      setQualitySpecs(defaultCornSpecifications());
       setForm((s) => ({
         ...emptyForm,
         movementType: s.movementType,
@@ -420,7 +411,7 @@ export default function WarehouseGatepassPage() {
 
             {form.movementType === "INBOUND" && <FormSection title="Paid advance builty" icon={<ClipboardList className="h-4 w-4" />} color={accentColor}>
               <Field label="Trade reference"><select className={inputClass} value={form.advanceTradeRef} onChange={e => setForm(f => ({ ...f, advanceTradeRef: e.target.value, advanceVoucherId: "" }))}><option value="">No advance voucher</option>{Array.from(new Set((reference.advances ?? []).filter(v => v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => v.tradeRef))).map(ref => <option key={ref}>{ref}</option>)}</select></Field>
-              {form.advanceTradeRef && <Field label="Approved advance builty"><select className={inputClass} value={form.advanceVoucherId} onChange={e => { const v = reference.advances?.find(a => a.id === e.target.value); setForm(f => ({ ...f, advanceVoucherId: v?.id ?? "", builtyDetails: v?.builtyNumber ?? "", transporterName: v?.transporterName ?? "", weightAsPerBuiltyKg: String(v?.advanceWeightKg ?? "") })); }}><option value="">Select paid builty</option>{reference.advances?.filter(v => v.tradeRef === form.advanceTradeRef && v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => <option key={v.id} value={v.id}>{v.builtyNumber}</option>)}</select></Field>}
+              {form.advanceTradeRef && <Field label="Approved advance builty"><select className={inputClass} value={form.advanceVoucherId} onChange={e => { const v = reference.advances?.find(a => a.id === e.target.value); setForm(f => ({ ...f, advanceVoucherId: v?.id ?? "", truckNo: v?.truckNo ?? f.truckNo, builtyDetails: v?.builtyNumber ?? "", transporterName: v?.transporterName ?? "", weightAsPerBuiltyKg: String(v?.advanceWeightKg ?? "") })); }}><option value="">Select paid builty</option>{reference.advances?.filter(v => v.tradeRef === form.advanceTradeRef && v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => <option key={v.id} value={v.id}>{v.builtyNumber} · Truck {v.truckNo ?? "legacy"}</option>)}</select></Field>}
             </FormSection>}
 
             <FormSection title="Vehicle" icon={<Truck className="h-4 w-4" />} color={accentColor}>
@@ -523,23 +514,9 @@ export default function WarehouseGatepassPage() {
                       className={inputClass}
                     />
                   </Field>
-                  <Field label="Total deductions (kg)" hint="flat deduction in kgs">
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      min="0"
-                      value={form.totalDeductionsKg}
-                      onChange={(e) => update("totalDeductionsKg", e.target.value)}
-                      placeholder="e.g. 150"
-                      className={inputClass}
-                    />
-                  </Field>
+
                 </div>
-                <div className="mt-4">
-                  <div className="mb-2 text-[11px] font-medium text-muted-foreground">Quality specs (%)</div>
-                  <CornSpecificationFields values={qualitySpecs} onChange={setQualitySpecs} />
-                </div>
+
               </FormSection>
             ) : (
               <FormSection title="Outbound details" icon={<ArrowUpFromLine className="h-4 w-4" />} color={accentColor}>

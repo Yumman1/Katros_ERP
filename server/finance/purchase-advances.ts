@@ -27,7 +27,7 @@ export async function claimAdvance(tx: Prisma.TransactionClient, voucherId: stri
   const t = await tx.pendingTruck.findUniqueOrThrow({ where: { id: truckId } });
   if (!v || !v.builtyNumber || v.status !== "APPROVED" || v.advanceTruckId || v.tradeRef !== tradeRef ||
       v.executionEntity !== "PAK" || v.side !== "BUY" || v.commodityCode !== t.commodityCode ||
-      v.counterparty.name !== t.counterpartyName || v.builtyNumber !== t.builtyDetails || t.movementType !== "INBOUND") {
+      v.counterparty.name !== t.counterpartyName || (v.truckNo && v.truckNo !== t.truckNo.trim().toUpperCase()) || v.builtyNumber !== t.builtyDetails || t.movementType !== "INBOUND") {
     throw new Error("Select an unused approved advance builty for this supplier and trade");
   }
   await tx.voucher.update({ where: { id: voucherId }, data: { advanceTruckId: truckId } });
@@ -91,5 +91,5 @@ export async function applyTruckAdvance(truckId: string, actor: string) {
 
 export async function approvedAdvanceBuiltys() {
   const rows = await prisma.voucher.findMany({ where: { status: "APPROVED", builtyNumber: { not: null }, advanceTruckId: null }, include: { counterparty: { select: { name: true } } } });
-  return rows.map(v => ({ id: v.id, tradeRef: v.tradeRef!, builtyNumber: v.builtyNumber!, counterpartyName: v.counterparty.name, commodityCode: v.commodityCode!, transporterName: v.transporterName ?? "", advanceWeightKg: num(v.advanceWeightKg) }));
+  return rows.map(v => ({ id: v.id, tradeRef: v.tradeRef!, builtyNumber: v.builtyNumber!, truckNo: v.truckNo, counterpartyName: v.counterparty.name, commodityCode: v.commodityCode!, transporterName: v.transporterName ?? "", advanceWeightKg: num(v.advanceWeightKg) }));
 }

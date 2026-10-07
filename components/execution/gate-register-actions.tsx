@@ -165,7 +165,6 @@ function formToPayload(entry: GateRegisterEntry, form: EditForm): Record<string,
       quantityAsPerBuilty: form.quantityAsPerBuilty.trim() || null,
       weighBridgeName: form.weighBridgeName.trim() || null,
       warehouseWeightKg: form.warehouseWeightKg.trim() === "" ? null : Number(form.warehouseWeightKg),
-      totalDeductionsKg: form.totalDeductionsKg.trim() === "" ? null : Number(form.totalDeductionsKg),
       remarks: form.remarks.trim() || null,
     };
   }
@@ -499,7 +498,6 @@ function EditFields({
       ? [
           { key: "quantityBagsBales" as const, label: "Quantity (bags / bales)", type: "number" },
           { key: "warehouseWeightKg" as const, label: "Warehouse weight (kg)", type: "number" },
-          { key: "totalDeductionsKg" as const, label: "Total deductions (kg)", type: "number" },
         ]
       : []),
     { key: "warehouseName", label: "Warehouse" },

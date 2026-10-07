@@ -128,9 +128,9 @@ export async function POST(request: Request) {
       weighBridgeName: input.weighBridgeName || null,
       documentRefs: input.documentRefs ?? [],
       warehouseWeightKg: input.warehouseWeightKg ?? null,
-      qualitySpecs: input.qualitySpecs ?? null,
+      qualitySpecs: null,
       quantityBagsBales: input.quantityBagsBales ?? null,
-      totalDeductionsKg: input.totalDeductionsKg ?? null,
+      totalDeductionsKg: null,
       weightKg,
       remarks: input.remarks || null,
     });

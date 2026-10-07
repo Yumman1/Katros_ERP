@@ -1,3 +1,4 @@
+import { recordTruckQuality } from "../server/execution/quality-review";
 /** Integration check: an EMPTY, disposable local database on port 55433 only. */
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
@@ -36,17 +37,20 @@ async function main() {
   await head.execution.approveOpenTradeWarehouseSplit({ tradeRef: purchase.tradeRef, allocations: [{ warehouseName: "Pakistan Store", openQtyMt: 100 }] });
   await pak.execution.lockOpenTrade({ tradeRef: purchase.tradeRef });
   const terms = await advanceTrade(purchase.tradeRef);
-  const voucher = async (builty: string, amount: number, weight = 40000) => createVoucher({ executionEntity: "PAK", commodityCode: "SES", counterpartyId: cp.id, side: "BUY", tradeRef: purchase.tradeRef, builtyNumber: builty, transporterName: "Test Transport", advanceWeightKg: weight, amountPkr: amount, reference: `BANK-${builty}`, method: "Cash", enteredByName: "Execution" });
+  const voucher = async (builty: string, amount: number, weight = 40000) => createVoucher({ executionEntity: "PAK", commodityCode: "SES", counterpartyId: cp.id, side: "BUY", tradeRef: purchase.tradeRef, builtyNumber: builty, truckNo: `TRUCK-${builty}`, transporterName: "Test Transport", advanceWeightKg: weight, amountPkr: amount,  method: "Cash", enteredByName: "Execution" });
   const gate = async (v: Awaited<ReturnType<typeof voucher>>, builty: string, received: number) => createPendingTruck({ counterpartyName: cp.name, movementType: "INBOUND", warehouseName: "Pakistan Store", truckNo: `TRUCK-${builty}`, builtyDetails: builty, commodityCode: "SES", commodityName: "Sesame", recordedByName: "Gate", weightKg: received, warehouseWeightKg: received, advanceVoucherId: v.id, advanceTradeRef: purchase.tradeRef });
   const first = await voucher("1001", advanceAmount(40000, terms.rateKg, 80));
   assert.equal(first.advancePercentage,80); assert.equal(first.calculatedAdvancePkr,first.amountPkr);
   await assert.rejects(gate(first,"1001",35000),/unused approved/);
-  await approveVoucher(first.id,"Finance");
+  await assert.rejects(approveVoucher(first.id,"Finance"),/payment reference/);
+  await approveVoucher(first.id,"Finance",undefined,"BANK-1001");
   await assert.rejects(approveVoucher(first.id,"Finance"),/already resolved/);
   await assert.rejects(voucher("1001",500),/active advance/);
   const truck=await gate(first,"1001",35000);
   await assert.rejects(gate(first,"1001",35000),/unused approved/);
-  await assignTruckToTrade(truck.id,purchase.tradeRef,undefined,false,1000);
+  await assert.rejects(assignTruckToTrade(truck.id,purchase.tradeRef),/Quality review/);
+  await recordTruckQuality({truckId:truck.id,tradeRef:purchase.tradeRef,readings:{purity:"99",ffa:"2",moisture:"7",oilContent:"49",admixture:"1"},deductionKg:1000},"Lab","SES","PAK");
+  await assignTruckToTrade(truck.id,purchase.tradeRef);
   const receipt=await prisma.inboundReceipt.findFirstOrThrow({where:{gatepassNo:truck.gatepassNo}});
   assert.equal(Number(receipt.allocatedQtyMt),34);
   assert.equal(Number(receipt.amountDue),34000*terms.rateKg);
@@ -68,9 +72,10 @@ async function main() {
   assert.equal(over.advancePercentage,90);
   assert.equal((await listVouchers()).find(v => v.id === first.id)!.advancePercentage,80);
   assert.notEqual(over.amountPkr,over.calculatedAdvancePkr);
-  await approveVoucher(over.id,"Finance");
+  await approveVoucher(over.id,"Finance",undefined,"BANK-1002");
   const short=await gate(over,"1002",35);
-  await assignTruckToTrade(short.id,purchase.tradeRef,undefined,false,5);
+  await recordTruckQuality({truckId:short.id,tradeRef:purchase.tradeRef,readings:{purity:"99",ffa:"2",moisture:"7",oilContent:"49",admixture:"1"},deductionKg:5},"Lab","SES","PAK");
+  await assignTruckToTrade(short.id,purchase.tradeRef);
   const shortReceipt=await prisma.inboundReceipt.findFirstOrThrow({where:{gatepassNo:short.gatepassNo}});
   await setManualGateInvoice(short.id,{invoiceNo:"INV-1002",amountPkr:Number(shortReceipt.amountDue)});
   await traderResolveGateInvoice(trader.name!,short.id,"APPROVE");
@@ -78,6 +83,7 @@ async function main() {
   assert.equal(excess.truckPaid,true);assert.ok(excess.availableAdvancePkr>0);
   assert.equal(await prisma.paymentRequest.count({where:{sourceId:shortReceipt.id}}),0);
   const next=await createPendingTruck({counterpartyName:cp.name,movementType:"INBOUND",warehouseName:"Pakistan Store",truckNo:"FUTURE",builtyDetails:"1003",commodityCode:"SES",commodityName:"Sesame",recordedByName:"Gate",weightKg:1000,warehouseWeightKg:1000});
+  await recordTruckQuality({truckId:next.id,tradeRef:purchase.tradeRef,readings:{purity:"99",ffa:"2",moisture:"7",oilContent:"49",admixture:"1"},deductionKg:0},"Lab","SES","PAK");
   await assignTruckToTrade(next.id,purchase.tradeRef);
   const nextReceipt=await prisma.inboundReceipt.findFirstOrThrow({where:{gatepassNo:next.gatepassNo}});
   await setManualGateInvoice(next.id,{invoiceNo:"INV-1003",amountPkr:Number(nextReceipt.amountDue)});
@@ -95,5 +101,26 @@ async function main() {
   const finalLedger=(await getCounterpartyLedgers("SES","PAK")).find(a=>a.counterpartyId===cp.id&&a.side==="BUY")!;
   assert.equal(finalLedger.balancePkr,0);assert.equal(finalLedger.outstandingDebitPkr,0);
   console.log("PASS: manual override, excess credit, future truck allocation, overspend protection, no duplicate credit");
+  const repeated = await createVoucher({executionEntity:"PAK",commodityCode:"SES",counterpartyId:cp.id,side:"BUY",tradeRef:purchase.tradeRef,builtyNumber:"1001",truckNo:"OTHER-TRUCK",transporterName:"Carrier",advanceWeightKg:1000,advancePercentage:70,amountPkr:1000,enteredByName:"Execution"});
+  assert.equal(repeated.advancePercentage,70); assert.equal(repeated.reference,null);
+  await assert.rejects(createPendingTruck({counterpartyName:cp.name,movementType:"INBOUND",warehouseName:"Pakistan Store",truckNo:"OTHER-TRUCK",builtyDetails:"1001",commodityCode:"SES",commodityName:"Sesame",recordedByName:"Gate",weightKg:1000,warehouseWeightKg:1000}),/advance voucher/);
+  await approveVoucher(repeated.id,"Finance",undefined,"REPEATED-1001");
+  await assert.rejects(gate(repeated,"1001",1000),/unused approved/);
+  await prisma.executionContract.update({where:{tradeRef:purchase.tradeRef},data:{executionProfile:"PURCHASE_SPOT"}});
+  const spot=await createPendingTruck({counterpartyName:cp.name,movementType:"INBOUND",warehouseName:"Pakistan Store",truckNo:"SPOT",builtyDetails:"2000",commodityCode:"SES",commodityName:"Sesame",recordedByName:"Gate",weightKg:1000,weightAsPerBuiltyKg:1000,warehouseWeightKg:950});
+  const lab={truckId:spot.id,tradeRef:purchase.tradeRef,readings:{purity:"99",ffa:"2",moisture:"7",oilContent:"49",admixture:"1"},deductionKg:1};
+  await assert.rejects(recordTruckQuality(lab,"Lab","SES","PAK"),/cannot have weight deductions/);
+  await recordTruckQuality({...lab,deductionKg:0},"Lab","SES","PAK");
+  await assignTruckToTrade(spot.id,purchase.tradeRef);
+  const spotReceipt=await prisma.inboundReceipt.findFirstOrThrow({where:{gatepassNo:spot.gatepassNo}});
+  assert.equal(Number(spotReceipt.allocatedQtyMt),1);assert.equal(Number(spotReceipt.amountDue),1000*terms.rateKg);
+  assert.equal(Number(spotReceipt.weightWarehouseKg),950);
+  const wh=await prisma.location.create({data:{name:"Shared WH",country:"Pakistan",type:"WAREHOUSE",warehouseBasis:"LEASE",capacitySqFt:1000,grainDivisionSqFt:10,balesDivisionSqFt:5,createdById:admin.id}});
+  for(const [code,qty] of [["SES",20],["CORN",30]] as const)await prisma.stockTransfer.create({data:{transferRef:`OPEN-${code}`,commodityCode:code,commodityName:code,externalOrigin:"Opening",toWarehouseName:wh.name,dispatchedQtyMt:qty,receivedQtyMt:qty,truckNo:"OPEN",status:"RECEIVED"}});
+  const capacity=(await pak.trader.warehouseAvailability({commodityId:sesame.id})).warehouses.find(w=>w.id===wh.id)!;
+  assert.equal(capacity.utilizationPct,50);assert.equal(capacity.stockMt,50);
+  assert.deepEqual(capacity.commodityUtilization.map(c=>c.utilizationPct).sort(),[20,30]);
+  console.log("PASS: repeat builty/different truck, truck mismatch blocked, finance references, spot seller weight, no spot deduction, shared corn/sesame capacity");
+
 }
 main().finally(()=>prisma.$disconnect());

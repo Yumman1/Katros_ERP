@@ -61,6 +61,8 @@ export default function ExecutionVouchersPage() {
   const [voucherDate, setVoucherDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
+  const [truckNo, setTruckNo] = useState("");
+  const [advancePct, setAdvancePct] = useState<string>("");
   const [builtyNumber, setBuiltyNumber] = useState("");
   const [transporterName, setTransporterName] = useState("");
   const [advanceWeightKg, setAdvanceWeightKg] = useState("");
@@ -78,7 +80,8 @@ export default function ExecutionVouchersPage() {
   );
   const selectedTrade = sellTrades?.find(t => t.tradeRef === tradeRef);
   const isAdvance = side === "BUY" && !!selectedTrade && !selectedTrade.isSettlement;
-  const calculatedAdvance = Math.round(Number(advanceWeightKg) * (selectedTrade?.ratePerKg ?? 0) * (selectedTrade?.advancePercentage ?? 0)) / 100;
+  const effectivePercentage = advancePct === "" ? selectedTrade?.advancePercentage ?? 0 : Number(advancePct);
+  const calculatedAdvance = Math.round(Number(advanceWeightKg) * (selectedTrade?.ratePerKg ?? 0) * effectivePercentage) / 100;
   useEffect(() => { if (isAdvance && !manualAmount) setAmount(String(calculatedAdvance)); }, [isAdvance, manualAmount, calculatedAdvance]);
   // Cancellation / short-close notes still owed on this account — the same
   // select lists them, and picking one fills in the amount that is due.
@@ -90,7 +93,7 @@ export default function ExecutionVouchersPage() {
   const clearAgainst = () => {
     setTradeRef("");
     setNoteRef("");
-    setBuiltyNumber(""); setTransporterName(""); setAdvanceWeightKg(""); setManualAmount(false);
+    setTruckNo(""); setAdvancePct(""); setBuiltyNumber(""); setTransporterName(""); setAdvanceWeightKg(""); setManualAmount(false);
   };
 
   const create = trpc.execution.createVoucher.useMutation({
@@ -141,10 +144,10 @@ export default function ExecutionVouchersPage() {
   const canSubmit =
     counterpartyId !== "" &&
     Number(amount) > 0 &&
-    (!isAdvance || (!!builtyNumber && !!transporterName.trim() && Number(advanceWeightKg) > 0 && (selectedTrade?.advancePercentage ?? 0) > 0)) &&
+    (!isAdvance || (!!builtyNumber && !!truckNo.trim() && !!transporterName.trim() && Number(advanceWeightKg) > 0 && effectivePercentage > 0 && effectivePercentage <= 100)) &&
     (side === "SELL" || tradeRef !== "" || noteRef !== "") &&
     !(method === "Bank transfer" && !bankName.trim()) &&
-    reference.trim() !== "" &&
+    (isAdvance || reference.trim() !== "") &&
     !duplicateVoucher &&
     !create.isPending;
 
@@ -241,7 +244,7 @@ export default function ExecutionVouchersPage() {
                   } else {
                     setNoteRef("");
                     setTradeRef(v.startsWith("trade:") ? v.slice(6) : "");
-                    setManualAmount(false); setAdvanceWeightKg(""); setBuiltyNumber(""); setTransporterName("");
+                    setManualAmount(false); setAdvanceWeightKg(""); setTruckNo(""); setAdvancePct(""); setBuiltyNumber(""); setTransporterName("");
                   }
                 }}
                 disabled={counterpartyId === ""}
@@ -292,12 +295,14 @@ export default function ExecutionVouchersPage() {
                 </span>
               )}
             </label>
+            {side === "BUY" && <label className="text-xs text-muted-foreground">Truck number<input className="kastros-input w-full" value={truckNo} onChange={e => setTruckNo(e.target.value.toUpperCase())} /></label>}
             {isAdvance && <>
-              <label className="text-xs text-muted-foreground">Advance percentage<input className="kastros-input w-full opacity-60" readOnly value={`${selectedTrade?.advancePercentage ?? 0}%`} /></label>
+              <label className="text-xs text-muted-foreground">Advance percentage<input className="kastros-input w-full opacity-60" type="number" min="0" max="100" value={advancePct || selectedTrade?.advancePercentage || ""} onChange={e => setAdvancePct(e.target.value)} /></label>
               <label className="text-xs text-muted-foreground">Advance weight (kg)<input className="kastros-input w-full" type="number" min="0" value={advanceWeightKg} onChange={e => setAdvanceWeightKg(e.target.value)} /></label>
               <label className="text-xs text-muted-foreground">Builty number<input className="kastros-input w-full" value={builtyNumber} onChange={e => setBuiltyNumber(e.target.value.replace(/\D/g, ""))} /></label>
+              <p className="text-xs">Purchase basis: {selectedTrade?.executionProfile === "PURCHASE_SPOT" ? "Spot — seller loading weight; no deductions" : "Delivered — warehouse weight less lab deduction"}</p>
               <label className="text-xs text-muted-foreground">Transporter<input className="kastros-input w-full" value={transporterName} onChange={e => setTransporterName(e.target.value)} /></label>
-              <div className="text-xs">Calculated: {fmtPkr(calculatedAdvance)}<span className="block text-subtle">{Number(advanceWeightKg).toLocaleString()} kg × {selectedTrade?.ratePerKg} PKR/kg × {selectedTrade?.advancePercentage}%</span><button type="button" className="block underline" onClick={() => setManualAmount(false)}>Use calculated amount</button>{manualAmount && <span>Manual override</span>}</div>
+              <div className="text-xs">Calculated: {fmtPkr(calculatedAdvance)}<span className="block text-subtle">{Number(advanceWeightKg).toLocaleString()} kg × {selectedTrade?.ratePerKg} PKR/kg × {effectivePercentage}%</span><button type="button" className="block underline" onClick={() => setManualAmount(false)}>Use calculated amount</button>{manualAmount && <span>Manual override</span>}</div>
             </>}
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Amount (PKR)
@@ -359,7 +364,7 @@ export default function ExecutionVouchersPage() {
                 </SearchableSelect>
               </label>
             )}
-            <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+            {!isAdvance && <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Reference
               <input
                 value={reference}
@@ -368,7 +373,7 @@ export default function ExecutionVouchersPage() {
                 required
                 className="kastros-input kastros-input-sm w-full"
               />
-            </label>
+            </label>}
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Note (optional)
               <input
@@ -389,6 +394,8 @@ export default function ExecutionVouchersPage() {
                   side,
                   tradeRef: tradeRef || undefined,
                   noteRef: noteRef || undefined,
+                  truckNo: side === "BUY" ? truckNo : undefined,
+                  advancePercentage: isAdvance ? effectivePercentage : undefined,
                   builtyNumber: isAdvance ? builtyNumber : undefined,
                   transporterName: isAdvance ? transporterName : undefined,
                   advanceWeightKg: isAdvance ? Number(advanceWeightKg) : undefined,
@@ -396,13 +403,13 @@ export default function ExecutionVouchersPage() {
                   method,
                   bankName: method === "Bank transfer" ? bankName : undefined,
                   voucherDate: new Date(voucherDate),
-                  reference: reference.trim(),
+                  reference: isAdvance ? undefined : reference.trim(),
                   note: note.trim() || undefined,
                 })
               }
               className="kastros-btn-primary px-4 py-2 text-xs disabled:opacity-50"
             >
-              {create.isPending ? "Submitting…" : "Submit for finance approval"}
+              {create.isPending ? "Submitting…" : isAdvance ? "Generate slip" : "Submit for finance approval"}
             </button>
             {create.error && (
               <span className="text-xs text-destructive">{create.error.message}</span>
@@ -508,7 +515,7 @@ export default function ExecutionVouchersPage() {
                   </td>
                   <td className="px-5 py-3">
                     <StatusChip status={v.status} />
-                    {v.builtyNumber && <div className="mt-2 space-y-1"><p>Builty {v.builtyNumber} · {v.advancePercentage}% advance / {100 - (v.advancePercentage ?? 0)}% remaining terms</p><p>Invoice {v.invoiceNo ?? "pending"}</p>{v.adjustments.map((a, i) => <p key={i}>Applied {fmtPkr(a.amountPkr)} · {a.tradeRef} · Builty {a.builty} · Invoice {a.invoice ?? "pending"}</p>)}<p className={v.truckPaid ? "text-success" : "text-warning"}>{v.truckPaid ? "Paid" : "Truck settlement pending"}</p>{v.truckPaid && v.availableAdvancePkr > 0 && <button className="underline" onClick={() => { setAdjustVoucher(v.id); setAdjustAmount(String(v.availableAdvancePkr)); }}>Adjust excess {fmtPkr(v.availableAdvancePkr)} with future truck</button>}</div>}
+                    {v.builtyNumber && <div className="mt-2 space-y-1"><p>Truck {v.truckNo ?? "—"} · Builty {v.builtyNumber} · {v.advancePercentage}% advance / {100 - (v.advancePercentage ?? 0)}% remaining terms</p><p>Invoice {v.invoiceNo ?? "pending"}</p>{v.adjustments.map((a, i) => <p key={i}>Applied {fmtPkr(a.amountPkr)} · {a.tradeRef} · Builty {a.builty} · Invoice {a.invoice ?? "pending"}</p>)}<p className={v.truckPaid ? "text-success" : "text-warning"}>{v.truckPaid ? "Paid" : "Truck settlement pending"}</p>{v.truckPaid && v.availableAdvancePkr > 0 && <button className="underline" onClick={() => { setAdjustVoucher(v.id); setAdjustAmount(String(v.availableAdvancePkr)); }}>Adjust excess {fmtPkr(v.availableAdvancePkr)} with future truck</button>}</div>}
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">{v.enteredByName ?? "—"}</td>
                   <td className="px-5 py-3 whitespace-nowrap text-muted-foreground">

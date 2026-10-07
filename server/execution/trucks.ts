@@ -238,13 +238,14 @@ export async function updatePendingTruck(
   await assertOwnershipWrite("execution.updateGateEntry", { id });
   if (!row) throw new Error("Gate entry not found");
   const linkedAdvance = await prisma.voucher.findUnique({ where: { advanceTruckId: id } });
-  if (linkedAdvance && ((patch.builtyDetails != null && patch.builtyDetails.trim() !== linkedAdvance.builtyNumber) || (patch.counterpartyName != null && patch.counterpartyName.trim() !== row.counterpartyName) || (patch.commodityCode != null && patch.commodityCode !== row.commodityCode))) throw new Error("The supplier, commodity and builty are linked to an approved advance");
+  if (linkedAdvance && ((patch.truckNo != null && linkedAdvance.truckNo != null && patch.truckNo.trim().toUpperCase() !== linkedAdvance.truckNo) || (patch.builtyDetails != null && patch.builtyDetails.trim() !== linkedAdvance.builtyNumber) || (patch.counterpartyName != null && patch.counterpartyName.trim() !== row.counterpartyName) || (patch.commodityCode != null && patch.commodityCode !== row.commodityCode))) throw new Error("The supplier, commodity and builty are linked to an approved advance");
   if (row.executionEntity === "FZCO") throw new Error("FZCO loads are immutable; cancel an unapproved load from the FZCO desk and record its replacement");
   if (row.status === "ASSIGNED") {
     throw new Error("Cannot edit an assigned gate entry — unassign or request head review");
   }
 
-  const data: Prisma.PendingTruckUpdateInput = {};
+  if (patch.totalDeductionsKg !== undefined || patch.qualitySpecs !== undefined) throw new Error("Use Quality review to enter lab results and deductions");
+  const data: Prisma.PendingTruckUpdateInput = {qualityReviewedAt:null,qualityReviewedBy:null,qualityTradeRef:null,labReadings:Prisma.JsonNull,totalDeductionsKg:null};
   if (patch.truckNo != null) data.truckNo = patch.truckNo.trim().toUpperCase();
   if (patch.counterpartyName != null) data.counterpartyName = patch.counterpartyName.trim();
   if (patch.warehouseName != null) data.warehouseName = patch.warehouseName.trim();
@@ -474,6 +475,7 @@ export async function createPendingTruck(input: {
   gatepassNo?: string | null;
   arrivalDate?: Date;
 }): Promise<PendingTruck> {
+  if ((input.totalDeductionsKg ?? 0) !== 0) throw new Error("Deductions must be recorded after lab testing on Quality review");
   if(!warehouseAllowedForCommodity(input.warehouseName,input.commodityCode))throw new Error("Faqir Warehouse is not available for Sesame");
   if (input.movementType === "OUTBOUND") {
     const qtyMt = kgToQuantityUnit(input.weightKg, "MT");
@@ -484,7 +486,7 @@ export async function createPendingTruck(input: {
       await lockSesameOwnership(tx, input.commodityCode);
       if (input.movementType === "OUTBOUND" && await pakistanAvailable(tx, input.commodityCode, input.warehouseName) + 0.000001 < input.weightKg/1000) throw new Error("Insufficient unreserved Pakistan-owned Sesame stock");
     }
-    if (!input.advanceVoucherId && input.movementType === "INBOUND" && isSesameCommodity(input.commodityCode) && await tx.voucher.findFirst({ where: { builtyNumber: input.builtyDetails.trim(), commodityCode: input.commodityCode, counterparty: { name: input.counterpartyName.trim() }, status: { in: ["PENDING_FINANCE", "APPROVED"] } } })) throw new Error("This builty has an advance voucher; select its approved trade and builty");
+    if (!input.advanceVoucherId && input.movementType === "INBOUND" && isSesameCommodity(input.commodityCode) && await tx.voucher.findFirst({ where: { builtyNumber: input.builtyDetails.trim(), OR: [{truckNo: input.truckNo.trim().toUpperCase()}, {truckNo: null}], commodityCode: input.commodityCode, counterparty: { name: input.counterpartyName.trim() }, status: { in: ["PENDING_FINANCE", "APPROVED"] } } })) throw new Error("This builty has an advance voucher; select its approved trade and builty");
     const created = await tx.pendingTruck.create({
       data: {
         gatepassNo,
@@ -674,13 +676,8 @@ export async function assignTruckToTrade(
     });
     if (!truckRow) throw new Error("Pending truck not found");
     if (truckRow.commodityCode && isSesameCommodity(truckRow.commodityCode)) await lockSesameOwnership(tx, truckRow.commodityCode);
-    if (totalDeductionsKg !== undefined) {
-      if (truckRow.movementType !== "INBOUND" || truckRow.status !== "PENDING") throw new Error("Deductions can only be set before the first inbound assignment");
-      const gross = Number(truckRow.warehouseWeightKg ?? 0);
-      if (!Number.isFinite(totalDeductionsKg) || totalDeductionsKg < 0 || totalDeductionsKg >= gross) throw new Error("Deduction must be zero or more and less than the received warehouse weight");
-      const updated = await tx.pendingTruck.update({ where: { id: truckId }, data: { totalDeductionsKg, remainingKg: gross-totalDeductionsKg, weightKg: gross-totalDeductionsKg } });
-      Object.assign(truckRow, updated);
-    }
+    if (totalDeductionsKg !== undefined) throw new Error("Enter deductions on the Quality review page");
+    if (truckRow.movementType === "INBOUND" && (!truckRow.qualityReviewedAt || truckRow.qualityTradeRef !== tradeRef)) throw new Error("Complete Quality review for this truck and trade before assignment");
     const truck = truckRowToRuntime(truckRow);
     if (truck.status === "ASSIGNED") throw new Error("Truck already fully assigned");
 
@@ -794,10 +791,10 @@ export async function assignTruckToTrade(
       // amount (net warehouse weight × contract rate) as the validation benchmark;
       // the operator enters the physical invoice no/amount afterwards and it is
       // matched against this expectation.
-      const invoiceNetKg = inboundNetInvoiceWeightKg(
-        truck.warehouseWeightKg,
-        truck.totalDeductionsKg,
-      );
+      const invoiceNetKg = contract.executionProfile === "PURCHASE_SPOT"
+        ? truck.weightAsPerBuiltyKg ?? null
+        : inboundNetInvoiceWeightKg(truck.warehouseWeightKg, truck.totalDeductionsKg);
+      if (contract.executionProfile === "PURCHASE_SPOT" && (truck.totalDeductionsKg ?? 0) !== 0) throw new Error("Spot purchases cannot have deductions");
       if (invoiceNetKg == null) {
         throw new Error(
           "Enter warehouse weight on the gatepass before assignment — invoice uses warehouse weight minus deductions",
@@ -1251,6 +1248,7 @@ export async function setManualGateInvoice(
 ): Promise<PendingTruck> {
   const row = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
   if (!row) throw new Error("Gate entry not found");
+  if (!row.assignedTradeRef) throw new Error("Complete quality review and assign the truck before entering its invoice");
   const applied = await prisma.purchaseAdvanceAllocation.count({ where: { receipt: { gatepassNo: row.gatepassNo } } });
   if (applied) throw new Error("An advance has already been applied to this invoice; it cannot be edited");
   const invoiceNo = input.invoiceNo.trim();
@@ -1777,7 +1775,7 @@ async function loadOverDeliveryContext(truckId: string, tradeRef: string) {
     throw new Error("Over-delivery approval applies to inbound purchase trucks only");
   }
   if (truck.status === "ASSIGNED") throw new Error("Truck already assigned");
-  const netKg = inboundNetInvoiceWeightKg(truck.warehouseWeightKg, truck.totalDeductionsKg);
+  let netKg = inboundNetInvoiceWeightKg(truck.warehouseWeightKg, truck.totalDeductionsKg);
   if (netKg == null) {
     throw new Error("Enter warehouse weight before requesting over-delivery approval");
   }
@@ -1800,6 +1798,7 @@ async function loadOverDeliveryContext(truckId: string, tradeRef: string) {
     throw new Error("Commodity mismatch between truck and trade");
   }
   const whOpenQty = await inboundWarehouseOpenMt(prisma, contract, truck.warehouseName);
+  if (contract.executionProfile === "PURCHASE_SPOT") netKg = truck.weightAsPerBuiltyKg ?? netKg;
   const truckQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
   const toleranceMt = contract.quantityToleranceMt ?? 0;
   return { truck, contract, netKg, whOpenQty, truckQtyMt, toleranceMt };

@@ -95,7 +95,7 @@ export function utilizationPercent(
 ): number {
   const { capacitySqFt } = capacity;
   if (capacitySqFt <= 0) return 0;
-  return Math.min(stockConsumptionSqFt(stock, capacity) / capacitySqFt, 1.5);
+  return stockConsumptionSqFt(stock, capacity) / capacitySqFt;
 }
 
 /**
@@ -213,7 +213,7 @@ export function buildWarehouseUtilizationView(
     grainDivisionSqFt: loc.grainDivisionSqFt ?? 7,
   };
   const util = warehouseUtilizationSummary(stock, capacity);
-  const usedPct = Math.min(util.utilizationPct, 1) * 100;
+  const usedPct = util.utilizationPct * 100;
 
   return {
     grainDivisionSqFt: capacity.grainDivisionSqFt,
