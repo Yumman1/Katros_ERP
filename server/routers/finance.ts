@@ -102,7 +102,7 @@ export const financeRouter = router({
   }),
 
   approveVoucher: roleProcedure(["FINANCE", "ADMIN"])
-    .input(z.object({ voucherId: z.string(), note: z.string().optional(), paymentReference: z.string().trim().optional() }))
+    .input(z.object({ voucherId: z.string(), note: z.string().optional(), paymentReference: z.string().trim().optional(), paymentMethod: z.enum(["Bank transfer","Cheque","Cash","Other"]).optional(), bankName: z.string().trim().optional() }))
     .mutation(async ({ ctx, input }) => {
       try {
         return await approveVoucher(
@@ -110,6 +110,7 @@ export const financeRouter = router({
           ctx.session.user.name ?? ctx.session.user.email ?? "finance",
           input.note,
           input.paymentReference,
+          {method: input.paymentMethod, bankName: input.bankName},
         );
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });

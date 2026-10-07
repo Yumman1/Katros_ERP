@@ -130,6 +130,7 @@ export default function ExecutionVouchersPage() {
   );
 
   const duplicateCheckReady =
+    side === "SELL" &&
     duplicateCheckInput.reference !== "" &&
     Number.isFinite(duplicateCheckInput.amountPkr) &&
     duplicateCheckInput.amountPkr > 0 &&
@@ -146,9 +147,7 @@ export default function ExecutionVouchersPage() {
     Number(amount) > 0 &&
     (!isAdvance || (!!builtyNumber && !!truckNo.trim() && !!transporterName.trim() && Number(advanceWeightKg) > 0 && effectivePercentage > 0 && effectivePercentage <= 100)) &&
     (side === "SELL" || tradeRef !== "" || noteRef !== "") &&
-    !(method === "Bank transfer" && !bankName.trim()) &&
-    (isAdvance || reference.trim() !== "") &&
-    !duplicateVoucher &&
+    (side === "BUY" || (!(method === "Bank transfer" && !bankName.trim()) && reference.trim() !== "" && !duplicateVoucher)) &&
     !create.isPending;
 
   if (isLoading && !vouchers) {
@@ -179,11 +178,12 @@ export default function ExecutionVouchersPage() {
       <div className="exec-panel p-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <ReceiptText className="h-4 w-4 text-accent-secondary" />
-            New payment voucher
+            {side === "BUY" ? "New purchase voucher request" : "New payment voucher"}
           </h2>
 
           {/* Which ledger the money lands on. A purchase credits the buy
               account, a sale the sell account — the two never mix. */}
+          {side === "BUY" && <p className="mt-3 text-xs text-subtle">Generate this purchase request for Finance. Finance can download and print the voucher, then enter the payment method, bank and receipt/reference after making payment.</p>}
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <div className="exec-segment h-8">
               {(["SELL", "BUY"] as const).map((s) => (
@@ -206,7 +206,7 @@ export default function ExecutionVouchersPage() {
             <span className="text-xs text-subtle">
               {side === "SELL"
                 ? "Credits the sell ledger — money received from a buyer."
-                : "Purchase payments debit the supplier account; note receipts settle their own claims."}
+                : "Generate a purchase voucher for Finance to print, reconcile and pay."}
             </span>
           </div>
 
@@ -329,7 +329,7 @@ export default function ExecutionVouchersPage() {
                 className="kastros-input kastros-input-sm w-full"
               />
             </label>
-            <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+            {side === "SELL" && <><label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Method
               <SearchableSelect
                 value={method}
@@ -364,7 +364,7 @@ export default function ExecutionVouchersPage() {
                 </SearchableSelect>
               </label>
             )}
-            {!isAdvance && <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+            <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Reference
               <input
                 value={reference}
@@ -373,7 +373,7 @@ export default function ExecutionVouchersPage() {
                 required
                 className="kastros-input kastros-input-sm w-full"
               />
-            </label>}
+            </label></>}
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Note (optional)
               <input
@@ -400,21 +400,21 @@ export default function ExecutionVouchersPage() {
                   transporterName: isAdvance ? transporterName : undefined,
                   advanceWeightKg: isAdvance ? Number(advanceWeightKg) : undefined,
                   amountPkr: Number(amount),
-                  method,
-                  bankName: method === "Bank transfer" ? bankName : undefined,
+                  method: side === "SELL" ? method : undefined,
+                  bankName: side === "SELL" && method === "Bank transfer" ? bankName : undefined,
                   voucherDate: new Date(voucherDate),
-                  reference: isAdvance ? undefined : reference.trim(),
+                  reference: side === "BUY" ? undefined : reference.trim(),
                   note: note.trim() || undefined,
                 })
               }
               className="kastros-btn-primary px-4 py-2 text-xs disabled:opacity-50"
             >
-              {create.isPending ? "Submitting…" : isAdvance ? "Generate slip" : "Submit for finance approval"}
+              {create.isPending ? "Submitting…" : side === "BUY" ? "Generate voucher" : "Submit for finance approval"}
             </button>
             {create.error && (
               <span className="text-xs text-destructive">{create.error.message}</span>
             )}
-            {duplicateVoucher && (
+            {side === "SELL" && duplicateVoucher && (
               <span className="text-xs text-destructive">
                 Duplicate payment — {duplicateVoucher.voucherNo} already exists with the same bank,
                 reference, date, and amount (

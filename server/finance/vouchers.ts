@@ -198,7 +198,7 @@ export async function createVoucher(input: {
   noteRef?: string | null;
   amountPkr: number;
   method?: string | null;
-  /** Bank slip, cheque, or transfer reference — required on every voucher. */
+  /** Bank slip, cheque or transfer reference. Finance supplies this for purchase requests. */
   reference?: string | null;
   bankName?: string | null;
   voucherDate?: Date | null;
@@ -208,12 +208,13 @@ export async function createVoucher(input: {
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Voucher amount must be positive");
   }
-  const reference = input.reference?.trim() || null;
-  if (!reference && !input.builtyNumber) {
+  const purchaseRequest = input.side === "BUY";
+  const reference = purchaseRequest ? null : input.reference?.trim() || null;
+  if (!reference && !purchaseRequest) {
     throw new Error("Payment reference is required (slip, cheque, or transfer reference number)");
   }
-  const method = input.method?.trim() || null;
-  const bankName = input.bankName?.trim() || null;
+  const method = purchaseRequest ? null : input.method?.trim() || null;
+  const bankName = purchaseRequest ? null : input.bankName?.trim() || null;
   if (method?.toLowerCase() === "bank transfer" && !bankName) {
     throw new Error("Select a bank when payment method is Bank transfer");
   }
@@ -377,6 +378,7 @@ export async function approveVoucher(
   approvedByName: string,
   note?: string,
   paymentReference?: string,
+  paymentDetails?: {method?: string; bankName?: string},
 ): Promise<VoucherView> {
   // Status flip + ledger credit are ONE transaction — an approved voucher can
   // never exist without its credit (and vice versa).
@@ -386,13 +388,19 @@ export async function approveVoucher(
     if (current.status !== "PENDING_FINANCE") throw new Error("Voucher not found or already resolved");
     const reference = paymentReference?.trim() || current.reference?.trim();
     if (!reference) throw new Error("Enter the payment reference after payment before approving this voucher");
+    const method = current.side === "BUY" ? paymentDetails?.method?.trim() || current.method : current.method;
+    const bankName = current.side === "BUY" ? (method === "Bank transfer" ? paymentDetails?.bankName?.trim() || current.bankName : null) : current.bankName;
+    if (current.side === "BUY" && !["Bank transfer", "Cheque", "Cash", "Other"].includes(method ?? "")) throw new Error("Select the payment method used by Finance");
+    if (method === "Bank transfer" && !bankName) throw new Error("Select the bank used for payment");
     const candidates = await tx.voucher.findMany({where:{id:{not:voucherId},status:"APPROVED"}});
-    if (candidates.some(v => vouchersSharePaymentKey({...current,reference},v))) throw new Error("This payment reference, bank, date and amount are already approved");
+    if (candidates.some(v => vouchersSharePaymentKey({...current,reference,bankName},v))) throw new Error("This payment reference, bank, date and amount are already approved");
     const updated = await tx.voucher.updateMany({
       where: { id: voucherId, status: "PENDING_FINANCE" },
       data: {
         status: "APPROVED",
         reference,
+        method,
+        bankName,
         resolvedByName: approvedByName,
         resolvedAt: new Date(),
         resolutionNote: note?.trim() || null,

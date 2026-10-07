@@ -22,12 +22,14 @@ export async function downloadPurchaseVoucher(v: VoucherView) {
   pdf.text(v.voucherNo, 18, 62); pdf.text(new Date(v.voucherDate).toLocaleDateString("en-GB"), 192, 62, {align:"right"});
   const rows = [
     ["Supplier", v.counterpartyName], ["Trade reference", v.tradeRef ?? "-"],
-    ["Purchase basis", v.purchaseProfile === "PURCHASE_SPOT" ? "Spot (seller loading weight; no deductions)" : "Delivered (warehouse weight less lab deduction)"],
+    ["Purchase basis", v.purchaseProfile === "PURCHASE_SPOT" ? "Spot (seller loading weight; no deductions)" : v.purchaseProfile === "PURCHASE_DELIVERED" ? "Delivered (warehouse weight less lab deduction)" : "Purchase settlement"],
     ["Truck number", v.truckNo ?? "-"], ["Builty number", v.builtyNumber ?? "-"],
     ["Transporter", v.transporterName ?? "-"], ["Advance weight", `${v.advanceWeightKg?.toLocaleString() ?? "-"} kg`],
-    ["Advance percentage", `${v.advancePercentage ?? 0}%`],
-    ["Calculated amount", `${(v.calculatedAdvancePkr ?? 0).toLocaleString("en-PK")} PKR`],
+    ["Advance percentage", v.advancePercentage == null ? "Not applicable" : `${v.advancePercentage}%`],
+    ["Calculated amount", `${(v.calculatedAdvancePkr ?? v.amountPkr).toLocaleString("en-PK")} PKR`],
     ["Requested payment", `${v.amountPkr.toLocaleString("en-PK")} PKR`],
+    ["Payment method", v.method ?? "To be entered by Finance"],
+    ["Bank", v.bankName ?? "-"],
     ["Payment reference", v.reference ?? "Pending finance payment"],
     ["Status", v.status === "APPROVED" ? "Complete - payment approved" : v.status === "REJECTED" ? "Rejected" : "Pending finance reconciliation"],
   ];

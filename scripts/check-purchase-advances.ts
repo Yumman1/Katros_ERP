@@ -6,7 +6,7 @@ import { prisma } from "../server/db";
 import { appRouter } from "../server/routers/_app";
 import { assignCommodityTrader } from "../server/commodity-assignments";
 import { SESAME_DEFAULTS } from "../lib/sesame";
-import { createVoucher, listVouchers, approveVoucher } from "../server/finance/vouchers";
+import { createVoucher, listVouchers, approveVoucher as approveVoucherImpl } from "../server/finance/vouchers";
 import { canFundTruck } from "../server/finance/ledger";
 import { pakistanAvailable } from "../server/execution/sesame-stock";
 
@@ -15,6 +15,7 @@ import { approvePayment } from "../server/execution/payments";
 import { applyAdvance, advanceTrade } from "../server/finance/purchase-advances";
 import { getCounterpartyLedgers } from "../server/finance/ledger";
 import { advanceAmount } from "../lib/purchase-advance";
+const approveVoucher = (id:string, actor:string, note?:string, reference?:string) => approveVoucherImpl(id, actor, note, reference, {method:"Cash"});
 async function main() {
   const url = new URL(process.env.POSTGRES_PRISMA_URL ?? "http://invalid");
   assert.ok(["localhost", "127.0.0.1"].includes(url.hostname) && url.port === "55433");
@@ -40,6 +41,9 @@ async function main() {
   const voucher = async (builty: string, amount: number, weight = 40000) => createVoucher({ executionEntity: "PAK", commodityCode: "SES", counterpartyId: cp.id, side: "BUY", tradeRef: purchase.tradeRef, builtyNumber: builty, truckNo: `TRUCK-${builty}`, transporterName: "Test Transport", advanceWeightKg: weight, amountPkr: amount,  method: "Cash", enteredByName: "Execution" });
   const gate = async (v: Awaited<ReturnType<typeof voucher>>, builty: string, received: number) => createPendingTruck({ counterpartyName: cp.name, movementType: "INBOUND", warehouseName: "Pakistan Store", truckNo: `TRUCK-${builty}`, builtyDetails: builty, commodityCode: "SES", commodityName: "Sesame", recordedByName: "Gate", weightKg: received, warehouseWeightKg: received, advanceVoucherId: v.id, advanceTradeRef: purchase.tradeRef });
   const first = await voucher("1001", advanceAmount(40000, terms.rateKg, 80));
+  assert.equal(first.reference,null); assert.equal(first.method,null); assert.equal(first.bankName,null);
+  await assert.rejects(approveVoucherImpl(first.id,"Finance",undefined,"REF"),/payment method/);
+  await assert.rejects(approveVoucherImpl(first.id,"Finance",undefined,"REF",{method:"Bank transfer"}),/bank/);
   assert.equal(first.advancePercentage,80); assert.equal(first.calculatedAdvancePkr,first.amountPkr);
   await assert.rejects(gate(first,"1001",35000),/unused approved/);
   await assert.rejects(approveVoucher(first.id,"Finance"),/payment reference/);

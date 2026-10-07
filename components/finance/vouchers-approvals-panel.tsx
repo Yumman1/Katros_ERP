@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { downloadPurchaseVoucher } from "@/lib/purchase-voucher-pdf";
+import { PAKISTAN_BANKS } from "@/lib/pakistan-banks";
 import { Check, X } from "lucide-react";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { PageHeader } from "@/components/ui/page-header";
@@ -50,6 +51,8 @@ export function FinanceVouchersPanel() {
   );
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const download = (v: NonNullable<typeof vouchers>[number]) => { setDownloadError(null); void downloadPurchaseVoucher(v).catch(e => setDownloadError(e instanceof Error ? e.message : "PDF download failed")); };
+  const [methods, setMethods] = useState<Record<string,"Bank transfer" | "Cheque" | "Cash" | "Other">>({});
+  const [banks, setBanks] = useState<Record<string,string>>({});
   const [references, setReferences] = useState<Record<string,string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
@@ -96,7 +99,7 @@ export function FinanceVouchersPanel() {
     <div className="kastros-desk-page space-y-6 pb-6">
       <PageHeader
         title="Voucher approvals"
-        subtitle="Payments entered by execution become part of the buyer's ledger only after your approval."
+        subtitle="Print purchase requests, reconcile payment, then enter the payment reference and approve to update the ledger."
       />
 
       {downloadError && <p className="text-destructive">{downloadError}</p>}
@@ -155,9 +158,12 @@ export function FinanceVouchersPanel() {
                       </div>
                     </div>
 
-                    {v.builtyNumber && <div className="mt-3 space-y-2 text-xs">
-                      <p>Purchase basis: {v.purchaseProfile === "PURCHASE_SPOT" ? "Spot" : "Delivered"} · Transporter: {v.transporterName}</p>
-                      <button className="kastros-btn-secondary" onClick={() => download(v)}>Download voucher PDF</button>
+                    {v.side === "BUY" && <div className="mt-3 space-y-2 text-xs">
+                      {v.builtyNumber && <p>Purchase basis: {v.purchaseProfile === "PURCHASE_SPOT" ? "Spot" : "Delivered"} · Transporter: {v.transporterName}</p>}
+                      <button className="kastros-btn-secondary" onClick={() => download(v)}>Download printable PDF</button>
+                      <p>Print the voucher for reconciliation. Complete these fields after making payment.</p>
+                      <label className="block">Payment method<select className="kastros-select ml-2" value={methods[v.id] ?? v.method ?? ""} onChange={e=>setMethods(m=>({...m,[v.id]:e.target.value as "Bank transfer" | "Cheque" | "Cash" | "Other"}))}><option value="">Select method</option>{["Bank transfer","Cheque","Cash","Other"].map(m=><option key={m}>{m}</option>)}</select></label>
+                      {(methods[v.id] ?? v.method) === "Bank transfer" && <label className="block">Bank<select className="kastros-select ml-2" value={banks[v.id] ?? v.bankName ?? ""} onChange={e=>setBanks(b=>({...b,[v.id]:e.target.value}))}><option value="">Select bank</option>{PAKISTAN_BANKS.map(b=><option key={b}>{b}</option>)}</select></label>}
                       <label className="block">Payment reference (after payment)<input className="kastros-input ml-2" value={references[v.id] ?? v.reference ?? ""} onChange={e => setReferences(r => ({...r,[v.id]:e.target.value}))} /></label>
                     </div>}
                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -169,8 +175,8 @@ export function FinanceVouchersPanel() {
                       />
                       <button
                         type="button"
-                        disabled={busy || (!!v.builtyNumber && !(references[v.id] ?? v.reference ?? "").trim())}
-                        onClick={() => approve.mutate({ voucherId: v.id, paymentReference: references[v.id] || undefined, note: notes[v.id] || undefined })}
+                        disabled={busy || (v.side === "BUY" && (!(references[v.id] ?? v.reference ?? "").trim() || !(methods[v.id] ?? v.method) || ((methods[v.id] ?? v.method) === "Bank transfer" && !(banks[v.id] ?? v.bankName ?? "").trim())))}
+                        onClick={() => approve.mutate({ voucherId: v.id, paymentReference: references[v.id] || undefined, paymentMethod: methods[v.id], bankName: banks[v.id], note: notes[v.id] || undefined })}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-xs font-bold text-white hover:bg-success/90 disabled:opacity-50"
                       >
                         <Check className="h-3.5 w-3.5" />
@@ -236,7 +242,7 @@ export function FinanceVouchersPanel() {
                       const chip = STATUS_CHIP[v.status] ?? STATUS_CHIP.PENDING_FINANCE;
                       return (
                         <tr key={v.id}>
-                          <td className="whitespace-nowrap font-mono text-xs">{v.voucherNo}{v.builtyNumber && <button className="block underline" onClick={() => download(v)}>PDF</button>}</td>
+                          <td className="whitespace-nowrap font-mono text-xs">{v.voucherNo}{v.side === "BUY" && <button className="block underline" onClick={() => download(v)}>PDF</button>}</td>
                           <td className="whitespace-nowrap">
                             {v.counterpartyName}{" "}
                             <span className="font-mono text-xs text-muted-foreground">({v.counterpartyCode})</span>
@@ -247,7 +253,7 @@ export function FinanceVouchersPanel() {
                           <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(v.amountPkr)}</td>
                           <td className="whitespace-nowrap">
                             <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", chip.className)}>
-                              {v.builtyNumber && v.status === "APPROVED" ? "Complete" : chip.label}
+                              {v.side === "BUY" && v.status === "APPROVED" ? "Complete" : chip.label}
                             </span>
                           </td>
                           <td className="whitespace-nowrap">{v.resolvedByName ?? "—"}</td>
