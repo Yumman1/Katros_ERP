@@ -1,3 +1,5 @@
+import { traderNamesMatch } from "@/lib/trader-identity";
+import { quantityUnitToKg } from "@/lib/unit-conversion";
 import { advanceTrade } from "./purchase-advances";
 import { advanceAmount } from "@/lib/purchase-advance";
 import { tradeEntity } from "@/lib/sesame-entity";
@@ -13,6 +15,11 @@ import {
 } from "./ledger";
 
 export type VoucherView = {
+  agreedAdvancePercentage: number | null;
+  agreedTradeAmountPkr: number | null;
+  traderApprovalRequired: boolean;
+  traderApprovedAt: Date | null;
+  traderApprovedBy: string | null;
   truckNo: string | null;
   purchaseProfile: string | null;
   builtyNumber: string | null;
@@ -143,6 +150,11 @@ export async function findDuplicateVoucher(input: {
 
 function voucherRowToView(row: VoucherRow): VoucherView {
   return {
+    agreedAdvancePercentage: row.agreedAdvancePercentage == null ? null : num(row.agreedAdvancePercentage),
+    agreedTradeAmountPkr: row.agreedTradeAmountPkr == null ? null : num(row.agreedTradeAmountPkr),
+    traderApprovalRequired: row.traderApprovalRequired,
+    traderApprovedAt: row.traderApprovedAt,
+    traderApprovedBy: row.traderApprovedBy,
     truckNo: row.truckNo,
     purchaseProfile: row.purchaseProfile,
     builtyNumber: row.builtyNumber,
@@ -293,12 +305,18 @@ export async function createVoucher(input: {
   if (input.commodityCode && linkedTrade && linkedTrade.commodity.code !== input.commodityCode) throw new Error("The voucher trade belongs to another execution commodity");
   if (!commodityCode) throw new Error("Select an execution commodity before entering a direct advance");
   if (!(await prisma.commodity.findUnique({ where: { code: commodityCode }, select: { id: true } }))) throw new Error("Unknown voucher commodity");
+  let agreedAdvancePercentage: number | null = null;
+  let agreedTradeAmountPkr: number | null = null;
+  let traderApprovalRequired = false;
   let advance: { truckNo: string; purchaseProfile: string; builtyNumber: string; transporterName: string; advanceWeightKg: number; advancePercentage: number; calculatedAdvancePkr: number } | undefined;
   if (input.builtyNumber) {
     if (!tradeRef || noteRef || !/^\d+$/.test(input.builtyNumber.trim()) || !input.truckNo?.trim() || !input.transporterName?.trim() || !Number.isFinite(input.advanceWeightKg) || input.advanceWeightKg! <= 0) throw new Error("Enter a numeric builty, truck number, transporter and positive advance weight");
     if (await prisma.voucher.findFirst({ where: { tradeRef, builtyNumber: input.builtyNumber.trim(), truckNo: input.truckNo!.trim().toUpperCase(), status: { not: "REJECTED" } } })) throw new Error("This trade, builty and truck already have an active advance voucher");
     const terms = await advanceTrade(tradeRef);
     const percentage = input.advancePercentage ?? terms.percentage;
+    agreedAdvancePercentage = terms.percentage;
+    agreedTradeAmountPkr = quantityUnitToKg(num(terms.trade.quantity),terms.trade.quantityUnit) * terms.rateKg;
+    traderApprovalRequired = percentage > terms.percentage;
     if (!Number.isFinite(percentage) || percentage <= 0 || percentage > 100) throw new Error("Advance percentage must be above 0 and at most 100");
     const contract = await prisma.executionContract.findUniqueOrThrow({where:{tradeRef}});
     advance = { truckNo: input.truckNo!.trim().toUpperCase(), purchaseProfile: contract.executionProfile, builtyNumber: input.builtyNumber.trim(), transporterName: input.transporterName.trim(), advanceWeightKg: input.advanceWeightKg!, advancePercentage: percentage, calculatedAdvancePkr: advanceAmount(input.advanceWeightKg!, terms.rateKg, percentage) };
@@ -322,6 +340,9 @@ export async function createVoucher(input: {
         voucherNo,
         truckNo: input.truckNo?.trim().toUpperCase() || null,
         ...advance,
+        agreedAdvancePercentage,
+        agreedTradeAmountPkr,
+        traderApprovalRequired,
         commodityCode,
         executionEntity,
         counterpartyId: input.counterpartyId,
@@ -343,6 +364,7 @@ export async function createVoucher(input: {
 }
 
 export async function listVouchers(filter?: {
+  financeOnly?: boolean;
   executionEntity?: "PAK" | "FZCO";
   commodityCode?: string;
   status?: "PENDING_FINANCE" | "APPROVED" | "REJECTED";
@@ -350,6 +372,7 @@ export async function listVouchers(filter?: {
 }): Promise<VoucherView[]> {
   const rows = await prisma.voucher.findMany({
     where: {
+      ...(filter?.financeOnly ? {OR:[{traderApprovalRequired:false},{traderApprovedAt:{not:null}}]} : {}),
       ...(filter?.executionEntity ? { executionEntity: filter.executionEntity } : {}),
       ...(filter?.commodityCode ? { commodityCode: filter.commodityCode } : {}),
       ...(filter?.status ? { status: filter.status } : {}),
@@ -386,6 +409,7 @@ export async function approveVoucher(
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('voucher-payment-approval'))::text`;
     const current = await tx.voucher.findUniqueOrThrow({where:{id:voucherId}});
     if (current.status !== "PENDING_FINANCE") throw new Error("Voucher not found or already resolved");
+    if (current.traderApprovalRequired && !current.traderApprovedAt) throw new Error("The trade’s trader must approve this excess advance before Finance can pay it");
     const reference = paymentReference?.trim() || current.reference?.trim();
     if (!reference) throw new Error("Enter the payment reference after payment before approving this voucher");
     const method = current.side === "BUY" ? paymentDetails?.method?.trim() || current.method : current.method;
@@ -490,4 +514,20 @@ export async function rejectVoucher(
     reason,
   });
   return voucherRowToView(row!);
+}
+
+export async function excessAdvanceQueue(traderName:string) {
+  const vouchers = await listVouchers({status:"PENDING_FINANCE"});
+  const trades = await prisma.trade.findMany({where:{tradeRef:{in:vouchers.flatMap(v=>v.tradeRef?[v.tradeRef]:[])}},select:{tradeRef:true,traderName:true}});
+  return vouchers.filter(v=>v.traderApprovalRequired && !v.traderApprovedAt && trades.some(t=>t.tradeRef===v.tradeRef && traderNamesMatch(t.traderName,traderName)));
+}
+export async function resolveExcessAdvance(id:string,traderName:string,approve:boolean) {
+  return prisma.$transaction(async tx=>{
+    await tx.$queryRaw`SELECT id FROM "Voucher" WHERE id=${id} FOR UPDATE`;
+    const v=await tx.voucher.findUniqueOrThrow({where:{id}});
+    const trade=await tx.trade.findUniqueOrThrow({where:{tradeRef:v.tradeRef!}});
+    if (!traderNamesMatch(trade.traderName,traderName)) throw new Error("Only the trade’s trader can approve its excess advance");
+    if (v.status!=="PENDING_FINANCE" || !v.traderApprovalRequired || v.traderApprovedAt) throw new Error("This advance is not awaiting trader approval");
+    await tx.voucher.update({where:{id},data:approve ? {traderApprovedAt:new Date(),traderApprovedBy:traderName} : {status:"REJECTED",resolvedAt:new Date(),resolvedByName:traderName,resolutionNote:"Excess advance rejected by trader"}});
+  });
 }

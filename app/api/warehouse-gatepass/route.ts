@@ -81,7 +81,13 @@ export async function POST(request: Request) {
   }
 
   const input = parsed.data;
-  const weightKg = input.weightAsPerBuiltyKg;
+  const options = input.movementType === "INBOUND" ? await getLiveCounterpartiesForGatepass("INBOUND",input.warehouseName) : [];
+  const selected = options.find(c=>c.name===input.counterpartyName)?.trades.find(t=>t.tradeRef===input.purchaseTradeRef && t.commodityCode===input.commodityCode);
+  if (input.movementType === "INBOUND" && !selected) return NextResponse.json({error:"Select the purchase trade"},{status:400});
+  if (input.advanceVoucherId && input.advanceTradeRef !== input.purchaseTradeRef) return NextResponse.json({error:"The advance voucher must match the selected trade"},{status:400});
+  const requiredWeight = selected?.profile === "PURCHASE_DELIVERED" ? input.warehouseWeightKg : input.weightAsPerBuiltyKg;
+  if (!(requiredWeight && requiredWeight>0)) return NextResponse.json({error:selected?.profile === "PURCHASE_DELIVERED" ? "Warehouse weight after offloading is required for Delivered" : "Weight as per seller is required for Ex-Works"},{status:400});
+  const weightKg = input.movementType === "INBOUND" && input.warehouseWeightKg && input.warehouseWeightKg>0 ? input.warehouseWeightKg : requiredWeight;
 
   if (!(await isAllowedGatepassCounterparty(input.movementType, input.counterpartyName, input.warehouseName))) {
     return NextResponse.json(
@@ -113,6 +119,7 @@ export async function POST(request: Request) {
     const truck = await createPendingTruck({
       advanceVoucherId: input.advanceVoucherId,
       advanceTradeRef: input.advanceTradeRef,
+      purchaseTradeRef:input.purchaseTradeRef,
       counterpartyName: input.counterpartyName,
       movementType: input.movementType,
       warehouseName: input.warehouseName,

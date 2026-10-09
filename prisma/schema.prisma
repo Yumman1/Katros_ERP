@@ -824,6 +824,7 @@ enum SaleTruckStage {
 
 /// Gatepass entry logged at the warehouse gate (public REST form).
 model PendingTruck {
+  purchaseTradeRef String?
   qualityReviewedAt DateTime?
   qualityReviewedBy String?
   qualityTradeRef String?
@@ -1177,6 +1178,7 @@ enum PaymentSourceType {
 
 /// Finance approval queue entry raised from inbound / outbound / spot flows.
 model PaymentRequest {
+  paymentReference String?
   builtyNumber String?
   invoiceNumber String?
   advanceVoucherNo String?
@@ -1601,6 +1603,11 @@ model PurchaseAdvanceAllocation {
 }
 
 model Voucher {
+  agreedAdvancePercentage Decimal? @db.Decimal(8, 4)
+  agreedTradeAmountPkr Decimal? @db.Decimal(20, 2)
+  traderApprovalRequired Boolean @default(false)
+  traderApprovedAt DateTime?
+  traderApprovedBy String?
   truckNo String?
   purchaseProfile String?
   builtyNumber String?

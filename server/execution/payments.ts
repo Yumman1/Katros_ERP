@@ -153,10 +153,12 @@ export async function approvePayment(
   paymentId: string,
   approvedBy: string,
   comment?: string,
+  paymentReference?: string,
 ): Promise<PaymentRequest> {
   return prisma.$transaction(async (tx) => {
     const pr = await tx.paymentRequest.findUnique({ where: { requestRef: paymentId } });
     if (!pr) throw new Error("Payment request not found");
+    if (pr.sourceType === "INBOUND" && !paymentReference?.trim()) throw new Error("Enter the payment slip reference before approving this invoice");
     // Guarded transition — only PENDING requests can be approved.
     const updated = await tx.paymentRequest.updateMany({
       where: { requestRef: paymentId, status: "PENDING" },
@@ -165,6 +167,7 @@ export async function approvePayment(
         approvedBy,
         approvedAt: new Date(),
         financeComment: comment ?? null,
+        paymentReference:paymentReference?.trim() || null,
       },
     });
     if (updated.count === 0) throw new Error(`Cannot approve status ${pr.status}`);
@@ -216,7 +219,7 @@ export async function approvePayment(
       await tx.counterpartyLedgerEntry.create({ data: {
         counterpartyId: trade.counterpartyId, side: "BUY", entryType: "CREDIT", sourceType: "PAYMENT",
         sourceRef: pr.requestRef, tradeRef: pr.tradeRef, amountPkr: pr.amount, purchaseAdvanceFlow: true,
-        note: `Builty ${pr.builtyNumber} · Invoice ${pr.invoiceNumber} · Voucher ${pr.advanceVoucherNo} · ${num(pr.remainingPercentage)}% remaining terms`,
+        note: `Builty ${pr.builtyNumber} · Invoice ${pr.invoiceNumber} · Voucher ${pr.advanceVoucherNo} · ${num(pr.remainingPercentage)}% remaining terms · Payment reference ${paymentReference}`,
       } });
     }
     if (pr.sourceType === "SPOT") {

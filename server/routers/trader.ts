@@ -1,3 +1,4 @@
+import { excessAdvanceQueue, resolveExcessAdvance } from "@/server/finance/vouchers";
 import { defaultKgPerUnit } from "@/lib/price-units";
 import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 import { processingReservedKg } from "@/server/execution/processing-reservations";
@@ -1251,6 +1252,8 @@ export const traderRouter = router({
   // ─── Gate-invoice approvals (trader-owned trades) ─────────────────────────
 
   /** Gate invoices pending this trader's approval or held on old dues. */
+  excessAdvances: protectedProcedure.query(({ctx})=>excessAdvanceQueue(traderNameFromSession(ctx.session.user))),
+  resolveExcessAdvance: protectedProcedure.input(z.object({id:z.string(),approve:z.boolean()})).mutation(({ctx,input})=>resolveExcessAdvance(input.id,traderNameFromSession(ctx.session.user),input.approve)),
   invoiceApprovals: protectedProcedure.query(({ ctx }) => {
     const name = traderNameFromSession(ctx.session.user);
     return getTraderInvoiceApprovals(name);
@@ -1260,7 +1263,7 @@ export const traderRouter = router({
   invoiceApprovalsCount: protectedProcedure.query(async ({ ctx }) => {
     const name = traderNameFromSession(ctx.session.user);
     const rows = await getTraderInvoiceApprovals(name);
-    return rows.filter((r) => r.stage === "PENDING_TRADE_APPROVAL").length;
+    return rows.filter((r) => r.stage === "PENDING_TRADE_APPROVAL").length + (await excessAdvanceQueue(name)).length;
   }),
 
   /**

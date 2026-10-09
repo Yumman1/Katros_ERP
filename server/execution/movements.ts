@@ -113,7 +113,7 @@ export async function createInboundReceipt(
   const weightDiffKg = input.weightWarehouseKg - input.weightSpotKg;
   const deductionPct = computeQualityDeduction(contract.qualityTolerances, input.qualityReadings);
   const netKg = input.weightWarehouseKg * (1 - deductionPct / 100);
-  const allocatedQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
+  const allocatedQtyMt = kgToQuantityUnit(input.weightWarehouseKg, contract.quantityUnit);
   const rateKg = contract.ratePerKg ?? contract.ratePerMaund! / KG_PER_MAUND;
   const amountDue = netKg * rateKg;
 
@@ -443,6 +443,8 @@ export async function updateInboundReceipt(
   await assertOwnershipWrite("execution.updateInboundReceipt", { id });
   if (!receipt) throw new Error("Inbound receipt not found");
   if (await prisma.purchaseAdvanceAllocation.count({ where: { receiptId: id } })) throw new Error("Receipt has an applied advance and cannot be edited");
+  const linkedTruck = receipt.gatepassNo ? await prisma.pendingTruck.findUnique({where:{gatepassNo:receipt.gatepassNo}}) : null;
+  if (linkedTruck && (patch.weightSpotKg != null || patch.weightWarehouseKg != null)) throw new Error("Gate-linked weights are locked after allocation; request a receipt correction before changing them");
   const prevGatepass = receipt.gatepassNo;
   const prevTruckNo = receipt.truckNo;
   const contract = await getContractByRef(receipt.tradeRef);
@@ -472,7 +474,7 @@ export async function updateInboundReceipt(
     const netKg = weightWarehouseKg * (1 - deductionPct / 100);
     const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
     data.weightDiffKg = weightWarehouseKg - weightSpotKg;
-    data.allocatedQtyMt = kgToQuantityUnit(netKg, contract.quantityUnit);
+    data.allocatedQtyMt = kgToQuantityUnit(weightWarehouseKg, contract.quantityUnit);
     data.amountDue = netKg * rateKg;
   }
 

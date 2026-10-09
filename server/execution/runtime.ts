@@ -280,6 +280,7 @@ export type SpotPurchaseEvent = {
 };
 
 export type PaymentRequest = {
+  paymentReference?: string | null;
   builtyNumber?: string | null;
   invoiceNumber?: string | null;
   advanceVoucherNo?: string | null;
@@ -559,6 +560,7 @@ export function spotRowToRuntime(row: SpotPurchaseEventRowWithPayment): SpotPurc
 
 export function paymentRowToRuntime(row: PaymentRequestRow): PaymentRequest {
   return {
+    paymentReference:row.paymentReference,
     builtyNumber: row.builtyNumber, invoiceNumber: row.invoiceNumber,
     advanceVoucherNo: row.advanceVoucherNo,
     remainingPercentage: numOrNull(row.remainingPercentage),

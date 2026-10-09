@@ -10,6 +10,7 @@ const qualitySchema = z.object({
 
 export const gatepassSchema = z.object({
   advanceVoucherId: z.string().optional(),
+  purchaseTradeRef: z.string().optional(),
   advanceTradeRef: z.string().optional(),
   movementType: z.enum(["INBOUND", "OUTBOUND"]),
   counterpartyName: z.string().trim().min(1, "Counterparty is required"),
@@ -22,7 +23,7 @@ export const gatepassSchema = z.object({
   commodityName: z.string().trim().min(1, "Commodity is required"),
   recordedByName: z.string().trim().min(1, "Your name is required"),
   quantityAsPerBuilty: z.string().trim().optional(),
-  weightAsPerBuiltyKg: z.coerce.number().positive("Weight as per seller must be greater than 0"),
+  weightAsPerBuiltyKg: z.coerce.number().nonnegative().optional(),
   weighBridgeName: z.string().trim().optional(),
   documentRefs: z.array(z.string().trim().min(1)).optional(),
   warehouseWeightKg: z.coerce.number().min(0).optional(),

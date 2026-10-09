@@ -125,10 +125,10 @@ export type Incoterm = (typeof INCOTERMS)[number];
 
 /** Full form of every incoterm — shown wherever an incoterm is displayed or selected. */
 export const INCOTERM_FULL_NAMES: Record<string, string> = {
-  Spot: "Spot",
+  Spot: "Ex-Works",
   Delivered: "Delivered",
   "Ex-Warehouse": "Ex-Warehouse",
-  EXW: "EXW — Ex Works",
+  EXW: "Ex-Works",
   FCA: "FCA — Free Carrier",
   FOB: "FOB — Free on Board",
   CFR: "CFR — Cost and Freight",
@@ -157,7 +157,7 @@ export function incotermsForBooking(
     if (isCornCommodity(commodityCode)) {
       return ["EXW", "Delivered"];
     }
-    return ["Spot", "Delivered"];
+    return ["EXW", "Delivered"];
   }
   const terms = incotermsForDirection(direction);
   return isSesameCommodity(commodityCode, commodityName) ? [...terms, "CNF"] : terms;
@@ -188,7 +188,7 @@ export function buyingCategoryFromIncoterms(
   direction: "BUY" | "SELL",
 ): BuyingCategory | null {
   if (direction === "SELL") return null;
-  return incoterms === "Spot" ? "Spot" : "Delivered";
+  return ["Spot", "EXW", "Ex-Works"].includes(incoterms) ? "Spot" : "Delivered";
 }
 
 export function isDestinationRequired(incoterms: string): boolean {

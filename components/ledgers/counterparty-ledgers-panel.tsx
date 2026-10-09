@@ -417,9 +417,52 @@ function AccountCard({
                                 : "bg-destructive/15 text-destructive",
                           )}
                         >
-                          {e.displayEntryType}
+                          {!isSell && e.sourceType === "GATEPASS" ? "Total amount" : e.displayEntryType}
                         </span>
-                        {/* A note is a claim, not a delivery — it reads paid or
+
+                      </td>
+                      <td className="whitespace-nowrap text-right tabular-nums">
+                        {fmtPkr(e.amountPkr)}
+                        {/* A part-released purchase debits only the money that
+                            moved — the bill behind it stays on the row. */}
+                        {e.billedPkr !== e.amountPkr && (
+                          <div className="text-[10px] font-normal text-subtle">
+                            of {fmtPkr(e.billedPkr)} billed
+                          </div>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap">
+                        <span className="text-[10px] uppercase tracking-wider text-subtle">
+                          {SOURCE_LABELS[e.sourceType]}
+                        </span>
+                        <span className="ml-1.5 font-mono text-xs">{e.sourceRef ?? e.voucherNo ?? "—"}</span>
+                      </td>
+                      <td className="whitespace-nowrap font-mono text-xs">
+                        {e.entryType === "CREDIT" ? (
+                          e.tradeRef ? (
+                            <span className="rounded-full border border-accent-secondary/30 bg-accent-secondary/10 px-2 py-0.5 text-[10px] font-bold text-accent-secondary">
+                              Against {e.tradeRef}
+                            </span>
+                          ) : (
+                            <span className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 text-[10px] font-semibold text-subtle">
+                              No trade ref
+                            </span>
+                          )
+                        ) : (
+                          e.tradeRef ?? "—"
+                        )}
+                      </td>
+                      {isSell && (
+                        <td className="whitespace-nowrap">{e.dueDate ? fmtDate(e.dueDate) : "—"}</td>
+                      )}
+                      {isSell && (
+                        <td className="whitespace-nowrap">
+                          {e.agingBucket && e.agingBucket in AGING_BUCKET_LABELS
+                            ? AGING_BUCKET_LABELS[e.agingBucket as AgingBucket]
+                            : "—"}
+                        </td>
+                      )}
+                      <td className="whitespace-nowrap">                        {/* A note is a claim, not a delivery — it reads paid or
                             unpaid on its own status, and a paid one no longer
                             counts toward the account's balance. */}
                         {e.noteStatus ? (
@@ -483,49 +526,7 @@ function AccountCard({
                             Unpaid
                           </span>
                         ) : null}
-                      </td>
-                      <td className="whitespace-nowrap text-right tabular-nums">
-                        {fmtPkr(e.amountPkr)}
-                        {/* A part-released purchase debits only the money that
-                            moved — the bill behind it stays on the row. */}
-                        {e.billedPkr !== e.amountPkr && (
-                          <div className="text-[10px] font-normal text-subtle">
-                            of {fmtPkr(e.billedPkr)} billed
-                          </div>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap">
-                        <span className="text-[10px] uppercase tracking-wider text-subtle">
-                          {SOURCE_LABELS[e.sourceType]}
-                        </span>
-                        <span className="ml-1.5 font-mono text-xs">{e.sourceRef ?? e.voucherNo ?? "—"}</span>
-                      </td>
-                      <td className="whitespace-nowrap font-mono text-xs">
-                        {e.entryType === "CREDIT" ? (
-                          e.tradeRef ? (
-                            <span className="rounded-full border border-accent-secondary/30 bg-accent-secondary/10 px-2 py-0.5 text-[10px] font-bold text-accent-secondary">
-                              Against {e.tradeRef}
-                            </span>
-                          ) : (
-                            <span className="rounded-full border border-border bg-foreground/[0.05] px-2 py-0.5 text-[10px] font-semibold text-subtle">
-                              No trade ref
-                            </span>
-                          )
-                        ) : (
-                          e.tradeRef ?? "—"
-                        )}
-                      </td>
-                      {isSell && (
-                        <td className="whitespace-nowrap">{e.dueDate ? fmtDate(e.dueDate) : "—"}</td>
-                      )}
-                      {isSell && (
-                        <td className="whitespace-nowrap">
-                          {e.agingBucket && e.agingBucket in AGING_BUCKET_LABELS
-                            ? AGING_BUCKET_LABELS[e.agingBucket as AgingBucket]
-                            : "—"}
-                        </td>
-                      )}
-                      <td className="whitespace-nowrap">{humanizeStage(e.saleStage)}</td>
+{isSell && humanizeStage(e.saleStage)}</td>
                       <td className="max-w-[220px] truncate text-muted-foreground" title={e.note ?? undefined}>
                         {e.note ?? "—"}
                       </td>

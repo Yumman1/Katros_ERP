@@ -1,4 +1,5 @@
 "use client";
+import { downloadPurchaseVoucher } from "@/lib/purchase-voucher-pdf";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -514,7 +515,9 @@ export default function ExecutionVouchersPage() {
                     {v.reference && <div className="font-mono text-subtle">{v.reference}</div>}
                   </td>
                   <td className="px-5 py-3">
-                    <StatusChip status={v.status} />
+                    {v.traderApprovalRequired && !v.traderApprovedAt && v.status === "PENDING_FINANCE" ? <span className="text-warning">Pending trader approval</span> : <StatusChip status={v.status} />}
+                    {v.side === "BUY" && <button className="block text-xs underline mt-2" onClick={()=>void downloadPurchaseVoucher(v).catch(e=>alert(e.message))}>Download {v.status === "APPROVED" ? "completed" : "pending"} voucher PDF</button>}
+                    {v.side === "BUY" && <p className="text-xs">{v.commodityCode} · Agreed trade amount {v.agreedTradeAmountPkr?.toLocaleString() ?? "—"} PKR · Agreed advance {v.agreedAdvancePercentage ?? "—"}%</p>}
                     {v.builtyNumber && <div className="mt-2 space-y-1"><p>Truck {v.truckNo ?? "—"} · Builty {v.builtyNumber} · {v.advancePercentage}% advance / {100 - (v.advancePercentage ?? 0)}% remaining terms</p><p>Invoice {v.invoiceNo ?? "pending"}</p>{v.adjustments.map((a, i) => <p key={i}>Applied {fmtPkr(a.amountPkr)} · {a.tradeRef} · Builty {a.builty} · Invoice {a.invoice ?? "pending"}</p>)}<p className={v.truckPaid ? "text-success" : "text-warning"}>{v.truckPaid ? "Paid" : "Truck settlement pending"}</p>{v.truckPaid && v.availableAdvancePkr > 0 && <button className="underline" onClick={() => { setAdjustVoucher(v.id); setAdjustAmount(String(v.availableAdvancePkr)); }}>Adjust excess {fmtPkr(v.availableAdvancePkr)} with future truck</button>}</div>}
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">{v.enteredByName ?? "—"}</td>

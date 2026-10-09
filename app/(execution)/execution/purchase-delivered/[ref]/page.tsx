@@ -1,17 +1,14 @@
 "use client";
 
-import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import { ContractPreviewLink } from "@/components/execution/contract-preview-link";
 import { invalidateTradeFlowCaches } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQtyWithUnit } from "@/lib/formatters/numbers";
-import { GATE_INVOICE_STAGES, GATE_INVOICE_STAGE_LABELS, type GateInvoiceStage } from "@/lib/gate-invoice";
-import { useTeam } from "@/lib/use-team";
+import { GATE_INVOICE_STAGE_LABELS, type GateInvoiceStage } from "@/lib/gate-invoice";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
-import { ClipboardList, Pencil } from "lucide-react";
+import { ClipboardList } from "lucide-react";
 
 export default function PurchaseDeliveredDetailPage() {
   const params = useParams();
@@ -249,162 +246,8 @@ type GateInvoiceRowData = {
   truckNo: string;
 };
 
-function GateInvoiceRow({ inv, tradeRef }: { inv: GateInvoiceRowData; tradeRef: string }) {
-  const utils = trpc.useUtils();
-  const { role } = useTeam();
-  const [editing, setEditing] = useState(false);
-  const [invoiceNo, setInvoiceNo] = useState(inv.invoiceNo);
-  const [amount, setAmount] = useState(String(inv.amount));
-
-  // Payment approval belongs to the trade's trader (Invoice approvals page);
-  // only CEO/ADMIN can set it from this dropdown. Keep the option visible when
-  // it is already the current stage so the select renders correctly.
-  const canApprovePayment = role === "CEO" || role === "ADMIN";
-  const stageOptions = GATE_INVOICE_STAGES.filter(
-    (s) => s !== "PAYMENT_APPROVED" || canApprovePayment || inv.stage === "PAYMENT_APPROVED",
-  );
-
-  const invalidate = () => {
-    void utils.execution.gateInvoiceSummary.invalidate({ tradeRef });
-    void utils.execution.pendingTrucks.invalidate();
-  };
-  const setStage = trpc.execution.setGateInvoiceStage.useMutation({ onSuccess: invalidate });
-  const update = trpc.execution.setManualGateInvoice.useMutation({
-    onSuccess: () => {
-      setEditing(false);
-      invalidate();
-    },
-  });
-
-  const mismatch = inv.stage === "WRONG_INVOICING";
-  const traderLocked = inv.stage === "PAYMENT_APPROVED" || inv.stage === "HOLD_OLD_DUES";
-
-  return (
-    <div
-      className="px-5 py-3"
-      style={mismatch ? { background: "rgba(248,113,113,0.06)" } : undefined}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-4 text-xs">
-          <span className="font-mono font-semibold text-emerald-400">{inv.invoiceNo}</span>
-          <span className="font-mono text-muted-foreground">{inv.gatepassNo}</span>
-          <span className="text-muted-foreground">🚛 {inv.truckNo}</span>
-          <span>
-            <span className="text-subtle">Entered </span>
-            <span style={{ color: mismatch ? "#f87171" : "#f59e0b" }}>
-              {formatCurrency(inv.amount, inv.currency)}
-            </span>
-          </span>
-          <span>
-            <span className="text-subtle">Expected </span>
-            <span className="text-muted-foreground">
-              {inv.expectedPkr != null ? formatCurrency(inv.expectedPkr, "PKR") : "—"}
-            </span>
-          </span>
-          <StageBadge stage={inv.stage} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Trader-owned states are read-only from execution: an approved or
-              held invoice can no longer be edited here. */}
-          {!traderLocked && (
-            <button
-              type="button"
-              onClick={() => {
-                setInvoiceNo(inv.invoiceNo);
-                setAmount(String(inv.amount));
-                update.reset();
-                setEditing((v) => !v);
-              }}
-              className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
-              style={{ borderColor: "rgba(255,255,255,0.1)" }}
-            >
-              <Pencil className="h-3 w-3" />
-              {editing ? "Close" : "Edit invoice"}
-            </button>
-          )}
-          {canApprovePayment ? (
-            <SearchableSelect
-              value={inv.stage}
-              disabled={setStage.isPending || mismatch}
-              title={
-                mismatch
-                  ? "Wrong invoicing is locked — edit the invoice so the amount matches the expected value first"
-                  : "Executive override — stages normally move via validation and trader approval"
-              }
-              onChange={(e) =>
-                setStage.mutate({ truckId: inv.truckId, stage: e.target.value as GateInvoiceStage })
-              }
-              className="kastros-input kastros-input-sm text-xs disabled:opacity-50"
-            >
-              {stageOptions.map((s) => (
-                <option key={s} value={s}>
-                  {GATE_INVOICE_STAGE_LABELS[s]}
-                </option>
-              ))}
-            </SearchableSelect>
-          ) : (
-            <span
-              className="text-[10px] text-subtle"
-              title="Stages move automatically (validation) or by the trade's trader (approve / hold)"
-            >
-              {inv.stage === "PAYMENT_APPROVED"
-                ? "Approved by trader — locked"
-                : inv.stage === "HOLD_OLD_DUES"
-                  ? "On hold by trader — only they can release it"
-                  : mismatch
-                    ? "Fix the amount to re-submit for trader approval"
-                    : "Awaiting trader approval"}
-            </span>
-          )}
-        </div>
-      </div>
-      {editing && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <input
-            value={invoiceNo}
-            onChange={(e) => setInvoiceNo(e.target.value)}
-            placeholder="Invoice no."
-            className="kastros-input kastros-input-sm w-40 text-xs"
-            aria-label="Invoice number"
-          />
-          <input
-            type="number"
-            min={0}
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="Amount PKR"
-            className="kastros-input kastros-input-sm w-36 text-xs"
-            aria-label="Invoice amount (PKR)"
-          />
-          <button
-            type="button"
-            disabled={update.isPending || invoiceNo.trim() === "" || !(Number(amount) > 0)}
-            onClick={() =>
-              update.mutate({
-                truckId: inv.truckId,
-                invoiceNo: invoiceNo.trim(),
-                amountPkr: Number(amount),
-                tradeRef,
-              })
-            }
-            className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-black disabled:opacity-50"
-            style={{ background: "linear-gradient(135deg,#34d399,#10b981)" }}
-          >
-            {update.isPending ? "Saving…" : "Save & re-validate"}
-          </button>
-          <span className="text-[10px] text-subtle">
-            Amount must match the expected value exactly — any mismatch marks the invoice
-            as wrong invoicing.
-          </span>
-        </div>
-      )}
-      {(update.error || setStage.error) && (
-        <div className="mt-2 text-xs text-red-400">
-          {update.error?.message ?? setStage.error?.message}
-        </div>
-      )}
-    </div>
-  );
+function GateInvoiceRow({inv}: {inv:GateInvoiceRowData;tradeRef:string}) {
+ return <div className="px-5 py-3 flex flex-wrap items-center gap-4 text-xs"><span className="font-mono">{inv.invoiceNo} · {inv.gatepassNo}</span><span>Truck {inv.truckNo}</span><span>{formatCurrency(inv.amount,inv.currency)}</span><StageBadge stage={inv.stage}/><a className="underline" href="/execution/quality">Quality and Invoice</a></div>;
 }
 
 function StageBadge({ stage }: { stage: GateInvoiceStage }) {

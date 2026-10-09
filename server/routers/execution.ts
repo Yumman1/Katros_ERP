@@ -790,8 +790,8 @@ export const executionRouter = router({
     return {summary:trade.qualityTolerances};
   }),
   qualityReviewQueue: roleProcedure([...execRoles]).query(async ({ctx}) => {
-    const trucks = await prisma.pendingTruck.findMany({where:{movementType:"INBOUND",executionEntity:ctx.executionEntity, ...(ctx.executionCommodityCode ? {commodityCode:ctx.executionCommodityCode}: {})},orderBy:{arrivalDate:"desc"},take:300});
-    return trucks.map(t=>({id:t.id,truckNo:t.truckNo,builty:t.builtyDetails,gatepassNo:t.gatepassNo,counterpartyName:t.counterpartyName,commodityCode:t.commodityCode,warehouseName:t.warehouseName,status:t.status,qualityTradeRef:t.qualityTradeRef,reviewedAt:t.qualityReviewedAt,reviewedBy:t.qualityReviewedBy,readings:t.labReadings as Record<string,string>|null,deductionKg:Number(t.totalDeductionsKg ?? 0),sellerKg:Number(t.weightAsPerBuiltyKg ?? 0),warehouseKg:Number(t.warehouseWeightKg ?? 0)}));
+    const trucks = await prisma.pendingTruck.findMany({where:{movementType:"INBOUND",executionEntity:ctx.executionEntity, ...(ctx.executionCommodityCode ? {commodityCode:ctx.executionCommodityCode}: {})},orderBy:{arrivalDate:"desc"},include:{inboundReceipts:{select:{paidAmountPkr:true}}}});
+    return trucks.map(t=>({id:t.id,truckNo:t.truckNo,builty:t.builtyDetails,gatepassNo:t.gatepassNo,counterpartyName:t.counterpartyName,commodityCode:t.commodityCode,warehouseName:t.warehouseName,status:t.status,canInvoice:t.status==="ASSIGNED" && !t.gateInvoiceNo && t.inboundReceipts.every(r=>Number(r.paidAmountPkr)===0),assignedTradeRef:t.assignedTradeRef,invoiceNo:t.gateInvoiceNo,invoiceStage:t.gateInvoiceStage,qualityTradeRef:t.qualityTradeRef,reviewedAt:t.qualityReviewedAt,reviewedBy:t.qualityReviewedBy,readings:t.labReadings as Record<string,string>|null,deductionKg:Number(t.totalDeductionsKg ?? 0),sellerKg:Number(t.weightAsPerBuiltyKg ?? 0),warehouseKg:Number(t.warehouseWeightKg ?? 0)}));
   }),
   recordTruckQuality: roleProcedure([...execRoles])
     .input(z.object({truckId:z.string(),tradeRef:z.string(),readings:z.record(z.string(),z.string().max(500)),deductionKg:z.number().finite().nonnegative()}))

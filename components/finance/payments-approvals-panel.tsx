@@ -1,4 +1,5 @@
 "use client";
+import { downloadPurchaseInvoice } from "@/lib/purchase-invoice-pdf";
 
 import { useState } from "react";
 import { OverdueAlertsCard } from "@/components/ledgers/overdue-alerts-card";
@@ -8,13 +9,17 @@ import { EntryActions } from "@/components/team/entry-actions";
 
 export function FinancePaymentsPanel() {
   const utils = trpc.useUtils();
+  const completed=trpc.finance.completedPurchasePayments.useQuery();
+  const download=async(id:string)=>{try{await downloadPurchaseInvoice(await utils.finance.purchaseInvoiceDocument.fetch({requestRef:id}));}catch(e){alert(e instanceof Error?e.message:"PDF download failed");}};
   const { data: pending, error: pendingError, isLoading } = trpc.finance.pendingPayments.useQuery(undefined, {
     retry: false,
     refetchInterval: 60_000,
   });
+  const [references,setReferences]=useState<Record<string,string>>({});
   const [rejectComments, setRejectComments] = useState<Record<string, string>>({});
   const approve = trpc.finance.approvePayment.useMutation({
     onSuccess: () => {
+      void utils.finance.completedPurchasePayments.invalidate();
       invalidateTradeFlowCaches(utils);
       invalidateFinanceApprovalBadges(utils);
       void utils.finance.counterpartyLedgers.invalidate();
@@ -23,6 +28,7 @@ export function FinancePaymentsPanel() {
   });
   const reject = trpc.finance.rejectPayment.useMutation({
     onSuccess: () => {
+      void utils.finance.completedPurchasePayments.invalidate();
       invalidateTradeFlowCaches(utils);
       invalidateFinanceApprovalBadges(utils);
       void utils.finance.counterpartyLedgers.invalidate();
@@ -32,6 +38,7 @@ export function FinancePaymentsPanel() {
   });
   const del = trpc.finance.deletePayment.useMutation({
     onSuccess: () => {
+      void utils.finance.completedPurchasePayments.invalidate();
       invalidateTradeFlowCaches(utils);
       invalidateFinanceApprovalBadges(utils);
     },
@@ -63,10 +70,11 @@ export function FinancePaymentsPanel() {
                   </div>
                 </div>
                 <div className="flex gap-2">
+                  {p.sourceType === "INBOUND" && <button className="text-xs underline" onClick={()=>void download(p.id)}>Download printable invoice</button>}
                   <button
                     type="button"
-                    disabled={approve.isPending}
-                    onClick={() => approve.mutate({ paymentId: p.id })}
+                    disabled={approve.isPending || (p.sourceType === "INBOUND" && !references[p.id]?.trim())}
+                    onClick={() => approve.mutate({ paymentId: p.id,paymentReference:references[p.id] })}
                     className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-kastros-bg"
                   >
                     Approve
@@ -81,6 +89,7 @@ export function FinancePaymentsPanel() {
                   />
                 </div>
               </div>
+              {p.sourceType === "INBOUND" && <label className="block mt-3 text-xs">Payment slip reference *<input className="kastros-input ml-2" value={references[p.id]??""} onChange={e=>setReferences(r=>({...r,[p.id]:e.target.value}))} /></label>}
               <div className="mt-3">
                 <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-subtle">
                   Rejection reason *
@@ -106,6 +115,7 @@ export function FinancePaymentsPanel() {
             </div>
           );
         })}
+        <section className="space-y-2"><h2 className="font-semibold">Completed purchase payments</h2>{completed.data?.map(p=><div className="text-sm" key={p.id}>{p.tradeRef} · Builty {p.builtyNumber} · Invoice {p.invoiceNumber} · Reference {p.paymentReference ?? "Historical payment"} <button className="underline" onClick={()=>void download(p.id)}>Download completed invoice</button></div>)}</section>
         {pendingError ? (
           <p className="text-sm text-subtle">You don&apos;t have access to this page.</p>
         ) : (

@@ -97,6 +97,7 @@ export type GatepassCounterpartyOption = {
   name: string;
   code: string;
   openTradeCount: number;
+  trades: {tradeRef:string;commodityCode:string;profile:string}[];
   commodities: GatepassCommodityOption[];
 };
 
@@ -142,6 +143,7 @@ export async function getLiveCounterpartiesForGatepass(
     const existing = map.get(c.counterpartyName);
     if (existing) {
       existing.openTradeCount += 1;
+      existing.trades.push({tradeRef:c.tradeRef,commodityCode:c.commodityCode,profile:c.executionProfile});
       existing.commodities = pushGatepassCommodity(
         existing.commodities,
         c.commodityCode,
@@ -152,6 +154,7 @@ export async function getLiveCounterpartiesForGatepass(
         name: c.counterpartyName,
         code: c.counterpartyCode,
         openTradeCount: 1,
+        trades:[{tradeRef:c.tradeRef,commodityCode:c.commodityCode,profile:c.executionProfile}],
         commodities: [{ code: c.commodityCode, name: c.commodityName }],
       });
     }
@@ -449,6 +452,7 @@ export async function previewNextGatepassNo(
 }
 
 export async function createPendingTruck(input: {
+  purchaseTradeRef?: string;
   advanceVoucherId?: string;
   advanceTradeRef?: string;
   counterpartyName: string;
@@ -490,6 +494,7 @@ export async function createPendingTruck(input: {
     const created = await tx.pendingTruck.create({
       data: {
         gatepassNo,
+        purchaseTradeRef:input.purchaseTradeRef || null,
         arrivalDate: input.arrivalDate ?? new Date(),
         counterpartyName: input.counterpartyName.trim(),
         movementType: input.movementType,
@@ -677,7 +682,7 @@ export async function assignTruckToTrade(
     if (!truckRow) throw new Error("Pending truck not found");
     if (truckRow.commodityCode && isSesameCommodity(truckRow.commodityCode)) await lockSesameOwnership(tx, truckRow.commodityCode);
     if (totalDeductionsKg !== undefined) throw new Error("Enter deductions on the Quality review page");
-    if (truckRow.movementType === "INBOUND" && (!truckRow.qualityReviewedAt || truckRow.qualityTradeRef !== tradeRef)) throw new Error("Complete Quality review for this truck and trade before assignment");
+    if (truckRow.purchaseTradeRef && truckRow.purchaseTradeRef !== tradeRef) throw new Error("Assign the trade selected on this gatepass");
     const truck = truckRowToRuntime(truckRow);
     if (truck.status === "ASSIGNED") throw new Error("Truck already fully assigned");
 
@@ -787,17 +792,15 @@ export async function assignTruckToTrade(
       await assertGradeAvailable(tx,contract.commodityCode,truck.warehouseName,sesameGrade(trade.tradeParams),allocateKg/1000);
     }
     if (truck.movementType === "INBOUND") {
-      // No invoice is auto-generated any more. Assignment computes the EXPECTED
-      // amount (net warehouse weight × contract rate) as the validation benchmark;
-      // the operator enters the physical invoice no/amount afterwards and it is
-      // matched against this expectation.
+      // Allocation records the full physical receipt. Quality and Invoice later
+      // sets the payable weight, invoice and ledger amount.
       const invoiceNetKg = contract.executionProfile === "PURCHASE_SPOT"
         ? truck.weightAsPerBuiltyKg ?? null
-        : inboundNetInvoiceWeightKg(truck.warehouseWeightKg, truck.totalDeductionsKg);
+        : truck.warehouseWeightKg ?? null;
       if (contract.executionProfile === "PURCHASE_SPOT" && (truck.totalDeductionsKg ?? 0) !== 0) throw new Error("Spot purchases cannot have deductions");
-      if (invoiceNetKg == null) {
+      if (invoiceNetKg == null || invoiceNetKg <= 0) {
         throw new Error(
-          "Enter warehouse weight on the gatepass before assignment — invoice uses warehouse weight minus deductions",
+          "Enter the required received weight on the gatepass before assignment",
         );
       }
 
@@ -842,11 +845,10 @@ export async function assignTruckToTrade(
       if (advanceVoucher && advanceVoucher.tradeRef !== tradeRef) throw new Error("Assign this builty to its advance voucher trade");
       if (advanceVoucher && splitRemainingKg > 0.001) throw new Error("An advance builty must be assigned as one truck receipt");
       const kcsNo = await nextSerial(SERIALS.INBOUND, tx);
-      // Physical fulfilment always uses the locked net received weight, even when
-      // an invoice was entered before assignment and still awaits validation.
-      const invoiceWeightKg = invoiceNetKg;
-      const allocatedQtyMt = kgToQuantityUnit(invoiceNetKg, contract.quantityUnit);
-      const rateKg = contract.ratePerKg ?? (contract.ratePerMaund ?? 0) / KG_PER_MAUND;
+      // Warehouse weight determines physical stock; seller weight is the fallback
+      // for Ex-Works when no warehouse weighment is available.
+      const physicalKg = truck.warehouseWeightKg && truck.warehouseWeightKg > 0 ? truck.warehouseWeightKg : invoiceNetKg;
+      const allocatedQtyMt = kgToQuantityUnit(physicalKg, contract.quantityUnit);
       const receiptRow = await tx.inboundReceipt.create({
         data: {
           kcsNo,
@@ -874,8 +876,7 @@ export async function assignTruckToTrade(
           deductionPct: 0,
           allocatedQtyMt,
           fifoOverrideReason: null,
-          amountDue: advanceVoucher ? invoiceWeightKg * rateKg :
-            truck.gateInvoiceAmount ?? truck.gateInvoiceExpectedPkr ?? invoiceWeightKg * rateKg,
+          amountDue: 0,
           status: "ALLOCATED",
           documentRefs: filterUploadedGatepassDocuments(truck.documentRefs),
           remarks:
@@ -894,6 +895,7 @@ export async function assignTruckToTrade(
       const updatedTruck = await tx.pendingTruck.update({
         where: { id: truckId },
         data: {
+          weightKg: physicalKg,
           remainingKg: splitRemainingKg,
           status: truckStatus,
           assignedTradeRef: tradeRef,
@@ -912,34 +914,6 @@ export async function assignTruckToTrade(
         },
         include: TRUCK_INCLUDE,
       });
-
-      // Buy-side ledger: the expected invoice amount is entered directly on
-      // the seller's payables account (payments out credit it later).
-      if (truck.gateInvoiceExpectedPkr != null) {
-        const tradeRow = await tx.trade.findUnique({
-          where: { tradeRef },
-          select: { counterpartyId: true, paymentType: true, tradeParams: true },
-        });
-        if (tradeRow) {
-          const creditDays = tradeCreditDays(tradeRow);
-          await postTruckLedgerDebit(
-            {
-              side: "BUY",
-              truckId,
-              gatepassNo: truck.gatepassNo,
-              tradeRef,
-              counterpartyId: tradeRow.counterpartyId,
-              amountPkr: truck.gateInvoiceExpectedPkr,
-              dueDate:
-                creditDays != null
-                  ? new Date(truck.arrivalDate.getTime() + creditDays * 86_400_000)
-                  : null,
-              note: `Inbound ${truck.gatepassNo} · ${truck.truckNo} · Builty ${truck.builtyDetails} · Invoice ${truck.gateInvoiceNo ?? "pending"} — expected invoice`,
-            },
-            tx,
-          );
-        }
-      }
 
       return {
         truck: truckRowToRuntime(updatedTruck),
@@ -1248,7 +1222,8 @@ export async function setManualGateInvoice(
 ): Promise<PendingTruck> {
   const row = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
   if (!row) throw new Error("Gate entry not found");
-  if (!row.assignedTradeRef) throw new Error("Complete quality review and assign the truck before entering its invoice");
+  if (row.movementType === "INBOUND") throw new Error("Generate purchase invoices from Quality and Invoice");
+  if (!row.assignedTradeRef) throw new Error("Assign the truck first");
   const applied = await prisma.purchaseAdvanceAllocation.count({ where: { receipt: { gatepassNo: row.gatepassNo } } });
   if (applied) throw new Error("An advance has already been applied to this invoice; it cannot be edited");
   const invoiceNo = input.invoiceNo.trim();
@@ -1489,6 +1464,11 @@ const TRADER_APPROVABLE_STAGES: TraderApprovableStage[] = [
 export class TraderInvoiceOwnershipError extends Error {}
 
 export type TraderInvoiceApprovalRow = {
+  builtyNumber:string;
+  deductionKg:number;
+  physicalKg:number;
+  payableKg:number;
+  quality:Record<string,string>|null;
   truckId: string;
   gatepassNo: string;
   truckNo: string;
@@ -1623,6 +1603,11 @@ export async function getTraderInvoiceApprovals(
       gatepassNo: r.gatepassNo,
       truckNo: r.truckNo,
       invoiceNo: r.gateInvoiceNo!,
+      builtyNumber:r.builtyDetails ?? "-",
+      deductionKg:num(r.totalDeductionsKg),
+      physicalKg:num(r.warehouseWeightKg ?? r.weightAsPerBuiltyKg),
+      payableKg:num(r.gateInvoiceWeightKg),
+      quality:r.labReadings as Record<string,string>|null,
       amountPkr: numOrNull(r.gateInvoiceAmount) ?? 0,
       expectedPkr: numOrNull(r.gateInvoiceExpectedPkr),
       stage: r.gateInvoiceStage as TraderApprovableStage,

@@ -4,10 +4,8 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { AlertTriangle, Check, Pencil } from "lucide-react";
-import { formatCurrency } from "@/lib/formatters/numbers";
+import { AlertTriangle, Check } from "lucide-react";
 import { invalidateGateOpsCaches } from "@/lib/invalidate-caches";
-import { useDebounced } from "@/lib/use-debounced";
 import { normWarehouseName } from "@/lib/warehouse-allocation";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
@@ -191,7 +189,7 @@ export function GateTruckWorkflow({
   return (
     <div className={cn("grid gap-2 sm:grid-cols-2", inbound && "lg:grid-cols-3")}>
       <TradeStep truck={truck} contracts={contracts} />
-      {inbound && <InvoiceStep truck={truck} />}
+      {inbound && <a className="exec-panel text-sm underline" href="/execution/quality">Quality and Invoice — generate invoice after allocation</a>}
       {inbound && <InboundPaymentStep truck={truck} />}
       {!inbound && <PaymentStep truck={truck} />}
     </div>
@@ -283,7 +281,7 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
           Over-delivery approved — assign now
         </span>
       )}
-      {inbound && truck.status === "PENDING" && <a href="/execution/quality" className="text-xs underline">{truck.qualityReviewedAt ? `Lab reviewed for ${truck.qualityTradeRef}` : "Complete lab quality review before assigning"}</a>}
+      {inbound && truck.status === "PENDING" && <a href="/execution/quality" className="text-xs underline">{"Quality and Invoice follows allocation"}</a>}
       {showAssignControl && (
         <div className="flex items-center gap-2">
           <SearchableSelect
@@ -309,7 +307,7 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
           </SearchableSelect>
           <button
             type="button"
-            disabled={!tradeRef || assign.isPending || (inbound && (!truck.qualityReviewedAt || truck.qualityTradeRef !== tradeRef))}
+            disabled={!tradeRef || assign.isPending}
             onClick={() => assign.mutate({ truckId: truck.id, tradeRef })}
             className="kastros-btn-primary shrink-0 px-3 py-1.5 text-[11px] disabled:opacity-50"
           >
@@ -339,174 +337,6 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
     </StepPanel>
   );
 }
-
-// ─── Step 2 · Gate invoice ────────────────────────────────────────────────────
-
-function InvoiceStep({ truck }: { truck: WorkflowTruck }) {
-  const advance = trpc.execution.truckAdvanceSummary.useQuery({ truckId: truck.id });
-  const advanceInfo = advance.data && <p className="text-xs text-muted-foreground">Advance {advance.data.voucherNo}: {formatCurrency(advance.data.advancePkr, "PKR")} · {advance.data.remainingPercentage}% remaining terms · Actual outstanding {formatCurrency(advance.data.outstandingPkr, "PKR")}{advance.data.paid ? " · Paid" : ""}</p>;
-  const utils = trpc.useUtils();
-  const [editing, setEditing] = useState(false);
-  const [invoiceNo, setInvoiceNo] = useState("");
-  const [amount, setAmount] = useState("");
-
-  const save = trpc.execution.setManualGateInvoice.useMutation({
-    onSuccess: () => {
-      setEditing(false);
-      invalidateGateOpsCaches(utils);
-    },
-  });
-
-  // Settles after typing stops so the check runs once per number, not per key.
-  const typedInvoiceNo = useDebounced(invoiceNo.trim(), 400);
-  const { data: clash } = trpc.execution.checkGateInvoiceDuplicate.useQuery(
-    { truckId: truck.id, invoiceNo: typedInvoiceNo },
-    { enabled: typedInvoiceNo.length > 0, staleTime: 15_000 },
-  );
-
-  const tradeAssigned = truck.status === "ASSIGNED" && Boolean(truck.assignedTradeRef);
-  const hasInvoice = Boolean(truck.gateInvoiceNo);
-  const wrongInvoicing = hasInvoice && truck.gateInvoiceStage === "WRONG_INVOICING";
-  const expected = truck.gateInvoiceExpectedPkr;
-
-  function openEditor() {
-    setInvoiceNo(truck.gateInvoiceNo ?? "");
-    setAmount(truck.gateInvoiceAmount != null ? String(truck.gateInvoiceAmount) : "");
-    save.reset();
-    setEditing(true);
-  }
-
-  // Saved and matching — done.
-  if (hasInvoice && !editing && !wrongInvoicing) {
-    return (
-      <StepPanel step={2} title="Invoice" state="done" headline="Recorded">
-        {advanceInfo}
-        <span className="truncate font-mono text-xs font-semibold text-foreground">
-          {truck.gateInvoiceNo}
-          {truck.gateInvoiceAmount != null && (
-            <span className="text-muted-foreground">
-              {" "}
-              · {formatCurrency(truck.gateInvoiceAmount, "PKR")}
-            </span>
-          )}
-        </span>
-      </StepPanel>
-    );
-  }
-
-  // Saved but mismatched — flagged, editable.
-  if (hasInvoice && !editing && wrongInvoicing) {
-    return (
-      <StepPanel step={2} title="Invoice" state="error" headline="Wrong invoicing">
-        <div className="flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-            Entered{" "}
-            <span className="font-mono font-semibold text-destructive">
-              {formatCurrency(truck.gateInvoiceAmount ?? 0, "PKR")}
-            </span>
-            {expected != null && (
-              <>
-                {" "}
-                — expected{" "}
-                <span className="font-mono font-semibold text-foreground">
-                  {formatCurrency(expected, "PKR")}
-                </span>
-              </>
-            )}
-          </span>
-          <button
-            type="button"
-            onClick={openEditor}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-kastros-border px-2.5 py-1 text-[11px] font-medium text-foreground hover:bg-foreground/10"
-          >
-            <Pencil className="h-3 w-3" />
-            Fix
-          </button>
-        </div>
-      </StepPanel>
-    );
-  }
-
-  // Waiting for step 1.
-  if (!tradeAssigned && !hasInvoice) {
-    return (
-      <StepPanel step={2} title="Invoice" state="waiting" headline="After trade assignment">
-        <span className="text-[10px] text-subtle">
-          The expected amount (net weight × contract rate) appears here once a trade is assigned.
-        </span>
-      </StepPanel>
-    );
-  }
-
-  // Entry / edit form.
-  return (
-    <StepPanel step={2} title="Enter invoice" state="active">
-      {advanceInfo}
-      {expected != null && (
-        <div
-          className="flex items-baseline justify-between rounded-md border border-kastros-border/70 bg-black/10 px-2.5 py-1.5"
-          title="Expected amount — net warehouse weight × contract rate"
-        >
-          <span className="text-[10px] uppercase tracking-wider text-subtle">Expected</span>
-          <span className="font-mono text-xs font-semibold text-accent-secondary">
-            {formatCurrency(expected, "PKR")}
-          </span>
-        </div>
-      )}
-      <div className="flex items-center gap-2">
-        <input
-          value={invoiceNo}
-          onChange={(e) => setInvoiceNo(e.target.value)}
-          placeholder="Invoice no."
-          className="kastros-input kastros-input-sm w-0 min-w-0 flex-1 py-1.5 text-[11px]"
-          aria-label="Invoice number"
-        />
-        <input
-          type="number"
-          min={0}
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="Amount PKR"
-          className="kastros-input kastros-input-sm w-0 min-w-0 flex-1 py-1.5 text-[11px]"
-          aria-label="Invoice amount (PKR)"
-        />
-        <button
-          type="button"
-          disabled={
-            save.isPending || invoiceNo.trim() === "" || !(Number(amount) > 0) || Boolean(clash)
-          }
-          onClick={() =>
-            save.mutate({ truckId: truck.id, invoiceNo: invoiceNo.trim(), amountPkr: Number(amount) })
-          }
-          className="kastros-btn-primary shrink-0 px-3 py-1.5 text-[11px] disabled:opacity-50"
-        >
-          {save.isPending ? "Saving…" : "Save"}
-        </button>
-        {editing && (
-          <button
-            type="button"
-            onClick={() => setEditing(false)}
-            className="kastros-btn-secondary shrink-0 px-2.5 py-1.5 text-[11px]"
-          >
-            Cancel
-          </button>
-        )}
-      </div>
-      {clash && (
-        <p className="text-[10px] leading-relaxed text-warning">
-          {truck.counterpartyName} already has invoice{" "}
-          <span className="font-mono font-semibold">{clash.invoiceNo}</span> on{" "}
-          <span className="font-mono font-semibold">{clash.tradeRef}</span> (gate entry{" "}
-          <span className="font-mono">{clash.gatepassNo}</span>), which is still open. Paying it
-          here would pay the same invoice twice.
-        </p>
-      )}
-      {save.error && <ErrorLine message={save.error.message} />}
-    </StepPanel>
-  );
-}
-
-// ─── Step 3 · Inbound payment pipeline ───────────────────────────────────────
 
 /**
  * Inbound trucks stay in the workflow until their receipts are PAID: invoice

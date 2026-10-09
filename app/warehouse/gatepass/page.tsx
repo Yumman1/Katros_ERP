@@ -1,4 +1,5 @@
 "use client";
+import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 
@@ -30,7 +31,7 @@ const RECORDED_BY_KEY = "kastros-gatepass-recorded-by";
 type ReferenceData = {
   advances?: { id: string; tradeRef: string; builtyNumber: string; truckNo: string | null; counterpartyName: string; commodityCode: string; transporterName: string; advanceWeightKg: number }[];
   warehouses: string[];
-  inboundCounterparties: GatepassCounterparty[];
+  inboundCounterparties: (GatepassCounterparty & {trades?: {tradeRef:string;commodityCode:string;profile:string}[]})[];
   outboundCounterparties: GatepassCounterparty[];
   nextGatepassNo?: string;
 };
@@ -40,6 +41,7 @@ type MovementType = "INBOUND" | "OUTBOUND";
 const emptyForm = {
   advanceVoucherId: "",
   advanceTradeRef: "",
+  purchaseTradeRef:"",
   movementType: "INBOUND" as MovementType,
   recordedByName: "",
   counterpartyName: "",
@@ -199,7 +201,8 @@ export default function WarehouseGatepassPage() {
       warehouseName: form.warehouseName,
       truckNo: form.truckNo,
       advanceVoucherId: form.advanceVoucherId || undefined,
-      advanceTradeRef: form.advanceTradeRef || undefined,
+      advanceTradeRef: form.advanceVoucherId ? form.purchaseTradeRef : undefined,
+      purchaseTradeRef:form.purchaseTradeRef || undefined,
       transporterName: form.transporterName.trim() || undefined,
       transporterPhone: form.transporterPhone.trim() || undefined,
       builtyDetails: form.builtyDetails.trim(),
@@ -262,6 +265,9 @@ export default function WarehouseGatepassPage() {
     }
   }
 
+  const purchaseTrades=reference.inboundCounterparties.find(c=>c.name===form.counterpartyName)?.trades?.filter(t=>t.commodityCode===form.commodityCode) ?? [];
+  const purchaseTrade=purchaseTrades.find(t=>t.tradeRef===form.purchaseTradeRef);
+  const delivered=purchaseTrade?.profile === "PURCHASE_DELIVERED";
   const canSubmit =
     Boolean(form.recordedByName.trim()) &&
     Boolean(form.warehouseName.trim()) &&
@@ -269,7 +275,8 @@ export default function WarehouseGatepassPage() {
     Boolean(form.commodityCode.trim()) &&
     Boolean(form.builtyDetails.trim()) &&
     Boolean(form.truckNo.trim()) &&
-    parseFloat(form.weightAsPerBuiltyKg) > 0;
+    (form.movementType !== "INBOUND" || !!purchaseTrade) &&
+    parseFloat(delivered ? form.warehouseWeightKg : form.weightAsPerBuiltyKg) > 0;
 
   const accentColor = form.movementType === "INBOUND" ? "#34d399" : "#a78bfa";
 
@@ -343,7 +350,7 @@ export default function WarehouseGatepassPage() {
                   className={inputClass}
                 />
                 <datalist id="gatepass-warehouses">
-                  {reference.warehouses.filter((w) => w.toLocaleLowerCase().startsWith(form.warehouseName.trim().toLocaleLowerCase())).map((w) => (
+                  {reference.warehouses.filter(w=>warehouseAllowedForCommodity(w,form.commodityCode)).filter((w) => w.toLocaleLowerCase().startsWith(form.warehouseName.trim().toLocaleLowerCase())).map((w) => (
                     <option key={w} value={w} />
                   ))}
                 </datalist>
@@ -409,8 +416,8 @@ export default function WarehouseGatepassPage() {
               </div>
             </FormSection>
 
-            {form.movementType === "INBOUND" && <FormSection title="Paid advance builty" icon={<ClipboardList className="h-4 w-4" />} color={accentColor}>
-              <Field label="Trade reference"><select className={inputClass} value={form.advanceTradeRef} onChange={e => setForm(f => ({ ...f, advanceTradeRef: e.target.value, advanceVoucherId: "" }))}><option value="">No advance voucher</option>{Array.from(new Set((reference.advances ?? []).filter(v => v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => v.tradeRef))).map(ref => <option key={ref}>{ref}</option>)}</select></Field>
+            {form.movementType === "INBOUND" && <FormSection title="Purchase trade and advance" icon={<ClipboardList className="h-4 w-4" />} color={accentColor}>
+              <Field label="Trade reference" required><select className={inputClass} value={form.purchaseTradeRef} onChange={e => setForm(f => ({ ...f, purchaseTradeRef:e.target.value,advanceTradeRef: e.target.value, advanceVoucherId: "" }))}><option value="">Select trade</option>{purchaseTrades.map(t => <option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.profile === "PURCHASE_SPOT" ? "Ex-Works" : "Delivered"}</option>)}</select></Field>
               {form.advanceTradeRef && <Field label="Approved advance builty"><select className={inputClass} value={form.advanceVoucherId} onChange={e => { const v = reference.advances?.find(a => a.id === e.target.value); setForm(f => ({ ...f, advanceVoucherId: v?.id ?? "", truckNo: v?.truckNo ?? f.truckNo, builtyDetails: v?.builtyNumber ?? "", transporterName: v?.transporterName ?? "", weightAsPerBuiltyKg: String(v?.advanceWeightKg ?? "") })); }}><option value="">Select paid builty</option>{reference.advances?.filter(v => v.tradeRef === form.advanceTradeRef && v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => <option key={v.id} value={v.id}>{v.builtyNumber} · Truck {v.truckNo ?? "legacy"}</option>)}</select></Field>}
             </FormSection>}
 
@@ -472,7 +479,7 @@ export default function WarehouseGatepassPage() {
                       className={inputClass}
                     />
                   </Field>
-                  <Field label="Weight as per seller (Kg)" required>
+                  <Field label="Weight as per seller (Kg)" required={!delivered}>
                     <input
                       type="number"
                       inputMode="decimal"
@@ -492,7 +499,7 @@ export default function WarehouseGatepassPage() {
                       className={inputClass}
                     />
                   </Field>
-                  <Field label="Warehouse weight (kg)" hint="after offload / warehouse weighment">
+                  <Field label="Warehouse weight (kg)" required={delivered} hint="after offload / warehouse weighment">
                     <input
                       type="number"
                       inputMode="decimal"
@@ -531,7 +538,7 @@ export default function WarehouseGatepassPage() {
                       className={inputClass}
                     />
                   </Field>
-                  <Field label="Weight as per seller (Kg)" required>
+                  <Field label="Weight as per seller (Kg)" required={!delivered}>
                     <input
                       type="number"
                       inputMode="decimal"
