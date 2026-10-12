@@ -157,7 +157,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
   if (sesame && pathname === "/execution/inventory") content = <SesameInventory />;
   if (fzco && pathname === "/execution") content = <FzcoOverview />;
   if (fzco && pathname === "/execution/movements") content = <FzcoTrucks />;
-  if (fzco && (pathname === "/execution/contracts" || /^\/execution\/(purchase-delivered|purchase-spot|sales)\//.test(pathname))) content = <div className="kastros-desk-page"><OwnershipTrades allTrades /></div>;
+  if (fzco && (pathname === "/execution/contracts" || /^\/execution\/(purchase-delivered|purchase-spot|sales)\//.test(pathname))) content = <div className="kastros-desk-page"><OwnershipTrades allTrades commodityCode={active.code} entity={entity} /></div>;
   if (fzco && ["/execution/prices", "/execution/shifting", "/execution/warehouses", "/execution/ledgers"].includes(pathname)) content = <div className="kastros-desk-page"><p>This page is managed in the Pakistan Sesame desk.</p><button className="kastros-btn-primary" onClick={() => selectEntity("PAK", pathname === "/execution/ledgers" ? "/execution/ledgers?entity=FZCO" : pathname)}>Open Pakistan desk</button></div>;
   return (
     <AppShell

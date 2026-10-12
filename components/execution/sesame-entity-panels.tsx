@@ -11,7 +11,9 @@ import { canActOnDepartment } from "@/lib/departments";
 const qty = (value: number) => value.toLocaleString("en-PK", { maximumFractionDigits: 3 });
 const cell = "border-b border-border px-4 py-3 text-left";
 const input = "kastros-input w-full";
-function useBook() { return trpc.sesameExecution.book.useQuery(undefined, { refetchInterval: 30_000 }); }
+function useBook(commodityCode?: string) {
+  return trpc.sesameExecution.book.useQuery(commodityCode ? { commodityCode } : undefined, { refetchInterval: 30_000 });
+}
 
 export function SesamePositions() {
   const { active } = useExecutionCommodityDesk();
@@ -45,24 +47,42 @@ export function SesamePositionView({ commodityCode, canEdit = true }: { commodit
 }
 
 export function SesameInventory() {
-  const { entity } = useExecutionCommodityDesk();
-  const { data, isLoading, error } = useBook();
+  const { active, entity } = useExecutionCommodityDesk();
+  return <SesameInventoryView commodityCode={active.code} entity={entity} />;
+}
+
+export function SesameInventoryView({
+  commodityCode,
+  entity,
+  onSelectEntity,
+}: {
+  commodityCode: string;
+  entity: SesameEntity;
+  onSelectEntity?: (entity: SesameEntity) => void;
+}) {
+  const { data, isLoading, error } = useBook(commodityCode);
   const p = data?.positions.find(p => p.entity === entity);
   if (isLoading) return <p>Loading ownership inventory…</p>;
   if (error) return <p role="alert">{error.message}</p>;
-  return <div className="kastros-desk-page space-y-5"><h1 className="text-2xl font-semibold">{ENTITY_NAMES[entity]} Sesame inventory</h1>
-    <p className="text-sm text-muted-foreground">{entity === "FZCO" ? "Paper ownership, reservations and quantities still awaiting dispatch. FZCO has no physical warehouse." : "Physical Sesame stock in Pakistan, showing the share owned by each entity."}</p>
+  return <div className="kastros-desk-page space-y-5">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 className="text-2xl font-semibold">{ENTITY_NAMES[entity]} Sesame inventory</h1>
+        <p className="text-sm text-muted-foreground">{entity === "FZCO" ? "Paper ownership, reservations and quantities still awaiting dispatch. FZCO has no physical warehouse." : "Physical Sesame stock in Pakistan, showing the share owned by each entity."}</p>
+      </div>
+      {onSelectEntity && <fieldset><legend className="mb-2 text-xs text-muted-foreground">Sesame entity</legend><div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">{(["PAK", "FZCO"] as const).map(value => <button key={value} type="button" aria-pressed={entity === value} onClick={() => onSelectEntity(value)} className={`rounded-md px-3 py-2 text-xs ${entity === value ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}>{value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}</button>)}</div></fieldset>}
+    </div>
     <div className="grid gap-4 md:grid-cols-4">{([['Owned stock',p?.ownedMt],['Booked, not left',p?.bookedNotLeftMt],['Free to sell',p?.freeMt],['Loading',p?.loadingMt]] as const).map(([label,value]) => <section key={label} className="kastros-card p-4"><div className="text-sm text-muted-foreground">{label}</div><div className="text-2xl font-semibold mt-2">{qty(value ?? 0)} MT</div></section>)}</div>
     {entity === "PAK" && <div className="kastros-card overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Pakistan warehouse','Physical MT','Pakistan-owned MT','Held for FZCO MT'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{data?.warehouses.map(w => <tr key={w.name}><td className={cell}>{w.name}</td><td className={cell}>{qty(w.quantityMt)}</td><td className={cell}>{qty(w.pakistanOwnedMt)}</td><td className={cell}>{qty(w.fzcoOwnedMt)}</td></tr>)}</tbody></table>{!data?.warehouses.length && <p className="p-5">No physical Sesame receipts yet.</p>}</div>}
-    <OwnershipTrades />
+    <OwnershipTrades commodityCode={commodityCode} entity={entity} />
   </div>;
 }
 
-export function OwnershipTrades({ allTrades = false }: { allTrades?: boolean }) {
-  const { entity } = useExecutionCommodityDesk();
+export function OwnershipTrades({ allTrades = false, commodityCode, entity }: { allTrades?: boolean; commodityCode: string; entity: SesameEntity }) {
   const { role, isHead } = useTeam();
   const canConfirm = role != null && canActOnDepartment(role, isHead, "EXECUTION");
-  const { data, error, isLoading } = useBook();
+  const canReview = role === "EXECUTION" || role === "CEO" || role === "ADMIN";
+  const { data, error, isLoading } = useBook(commodityCode);
   const [ref, setRef] = useState("");
   const [amount, setAmount] = useState("");
   const [warehouse, setWarehouse] = useState("");
@@ -78,7 +98,7 @@ export function OwnershipTrades({ allTrades = false }: { allTrades?: boolean }) 
       const side = t.entity === entity ? t.direction : t.direction === "BUY" ? "SELL" : "BUY";
       const counterparty = t.internalEntity ? ENTITY_NAMES[t.entity === entity ? t.internalEntity : t.entity] : t.counterparty;
       const canRecord = t.status === "LOCKED" && (t.internalEntity || t.direction === "BUY") && t.confirmedMt < t.quantityMt && canConfirm && (!t.internalEntity || entity === "PAK");
-      return <tr key={t.tradeRef}><td className={cell}>{t.tradeRef}{t.entity !== entity && <span className="block text-xs text-subtle">Internal counterpart</span>}</td><td className={cell}>{side}</td><td className={cell}>{counterparty}</td><td className={cell}>{qty(t.quantityMt)}</td><td className={cell}>{qty(t.confirmedMt)}</td><td className={cell}>{t.status}</td><td className={cell}>{t.status === "PENDING" && t.entity === entity ? <Link href={`/execution/open-trades/${encodeURIComponent(t.tradeRef)}`} className="text-accent-secondary">Review</Link> : canRecord ? <button className="kastros-btn-secondary" onClick={() => { setRef(t.tradeRef); setAmount(String(t.quantityMt-t.confirmedMt)); setWarehouse(""); }}>Confirm ownership</button> : t.internalEntity && entity === "FZCO" && t.confirmedMt < t.quantityMt ? "Awaiting Pakistan confirmation" : "—"}</td></tr>;
+      return <tr key={t.tradeRef}><td className={cell}>{t.tradeRef}{t.entity !== entity && <span className="block text-xs text-subtle">Internal counterpart</span>}</td><td className={cell}>{side}</td><td className={cell}>{counterparty}</td><td className={cell}>{qty(t.quantityMt)}</td><td className={cell}>{qty(t.confirmedMt)}</td><td className={cell}>{t.status}</td><td className={cell}>{t.status === "PENDING" && t.entity === entity && canReview ? <Link href={`/execution/open-trades/${encodeURIComponent(t.tradeRef)}`} className="text-accent-secondary">Review</Link> : canRecord ? <button className="kastros-btn-secondary" onClick={() => { setRef(t.tradeRef); setAmount(String(t.quantityMt-t.confirmedMt)); setWarehouse(""); }}>Confirm ownership</button> : t.internalEntity && entity === "FZCO" && t.confirmedMt < t.quantityMt ? "Awaiting Pakistan confirmation" : "—"}</td></tr>;
     })}</tbody></table></div>{!rows.length && <p className="text-sm text-muted-foreground">No trades for this entity yet.</p>}
     {selected && <form className="grid gap-3 md:grid-cols-3 border-t border-border pt-4" onSubmit={e => { e.preventDefault(); save.mutate({ tradeRef: ref, quantityMt: Number(amount), warehouseName: warehouse || undefined }); }}>
       <label className="text-sm">Quantity MT<input className={input} type="number" min="0.000001" step="0.000001" max={selected.quantityMt-selected.confirmedMt} required value={amount} onChange={e => setAmount(e.target.value)} /></label>
@@ -89,8 +109,8 @@ export function OwnershipTrades({ allTrades = false }: { allTrades?: boolean }) 
 }
 
 export function FzcoOverview() {
-  const { selectEntity } = useExecutionCommodityDesk();
-  return <div className="kastros-desk-page space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold">Dubai FZCO — Sesame execution</h1><button className="kastros-btn-secondary" onClick={() => selectEntity("PAK", "/execution/ledgers?entity=FZCO")}>View FZCO ledger in Pakistan</button></div><SesamePositions /><OwnershipTrades allTrades /><Link className="kastros-btn-primary inline-block" href="/execution/movements">Load and release FZCO trucks</Link></div>;
+  const { selectEntity, active } = useExecutionCommodityDesk();
+  return <div className="kastros-desk-page space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold">Dubai FZCO — Sesame execution</h1><button className="kastros-btn-secondary" onClick={() => selectEntity("PAK", "/execution/ledgers?entity=FZCO")}>View FZCO ledger in Pakistan</button></div><SesamePositions /><OwnershipTrades allTrades commodityCode={active.code} entity="FZCO" /><Link className="kastros-btn-primary inline-block" href="/execution/movements">Load and release FZCO trucks</Link></div>;
 }
 
 export function FzcoTrucks() {

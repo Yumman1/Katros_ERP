@@ -4,7 +4,8 @@ import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { BookOpen, LayoutDashboard, LineChart, ListOrdered, PenLine, Plus, Receipt, Truck, User, Users, XCircle } from "lucide-react";
+import { BookOpen, LayoutDashboard, LineChart, ListOrdered, PenLine, Plus, Receipt, Truck, User, Users, Warehouse, XCircle } from "lucide-react";
+import { isSesameCommodity } from "@/lib/sesame";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ShellHeader } from "@/components/layout/shell-header";
@@ -59,16 +60,23 @@ export function TraderShell({ children }: { children: ReactNode }) {
     retry: false,
   });
 
-  const appNav = nav.map((item) => ({
-    ...item,
-    badge:
-      // Both destinations are tabbed, so each badge is the sum of its tabs.
-      item.href === "/trader/invoice-approvals"
-        ? navBadge((buyApprovals.data ?? 0) + (sellApprovals.data ?? 0))
-        : item.href === "/trader/approvals"
-          ? navBadge((editApprovals.data ?? 0) + (overDeliveryApprovals.data ?? 0))
-          : undefined,
-  }));
+  const sesameDesk = isSesameCommodity(desk.active?.code);
+  const appNav = nav.flatMap((item) => {
+    const mapped = {
+      ...item,
+      badge:
+        // Both destinations are tabbed, so each badge is the sum of its tabs.
+        item.href === "/trader/invoice-approvals"
+          ? navBadge((buyApprovals.data ?? 0) + (sellApprovals.data ?? 0))
+          : item.href === "/trader/approvals"
+            ? navBadge((editApprovals.data ?? 0) + (overDeliveryApprovals.data ?? 0))
+            : undefined,
+    };
+    if (sesameDesk && item.href === "/trader/positions") {
+      return [{ href: "/trader/inventory", label: "Inventory", icon: <Warehouse className="h-4 w-4" /> }, mapped];
+    }
+    return [mapped];
+  });
 
   return (
     <AppShell
