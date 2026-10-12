@@ -13,6 +13,11 @@ const n=(v:unknown)=>Number(v??0);
 const kg=z.number().finite().positive().multipleOf(0.001);
 export const processingPlanInput=z.object({warehouseName:z.string().trim().min(1),unitName:z.string().trim().min(1),fromType:z.enum(['Raw','Machine Cleaned']),toType:z.enum(['Machine Cleaned','Sortex']),reservedKg:kg,dailyCapacityKg:kg,expectedYieldRatio:z.number().finite().min(0).max(1),requestKey:z.string().uuid()});
 export const dailyProcessingInput=z.object({planId:z.string(),productionDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),outputKg:z.number().finite().nonnegative().multipleOf(.001),impuritiesKg:z.number().finite().nonnegative().multipleOf(.001),requestKey:z.string().uuid()});
+export const editProcessingInput=z.object({id:z.string().min(1),revision:z.number().int().nonnegative(),outputKg:z.number().finite().nonnegative().multipleOf(.001),impuritiesKg:z.number().finite().nonnegative().multipleOf(.001),reason:z.string().trim().min(1).max(500)});
+/** Cron is the primary runner; mutations settle any missed days before changing defaults. */
+async function settleDailyDefaults(db:Prisma.TransactionClient,code:string) {
+ await db.$queryRaw`SELECT public.run_sesame_daily_processing(${code})`;
+}
 /** Conservative allocation: unsplit sale commitments reserve across every candidate warehouse. */
 export async function processingAvailability(db:Prisma.TransactionClient,code:string,warehouse:string,grade:string,excludeTradeRef?:string) {
  const [rows,sales,custody,pending,atGate]=await Promise.all([
@@ -65,12 +70,12 @@ export async function createProcessingPlan(code:string,actor:string,input:z.infe
 }
 export async function recordWarehouseProduction(code:string,actor:string,input:z.infer<typeof dailyProcessingInput>) {
  const sum=Math.round((input.outputKg+input.impuritiesKg)*1000)/1000;
- if(sum<=0)throw new Error('Enter output and impurities; total input must exceed zero');
  const d=new Date(input.productionDate+'T00:00:00Z');if(!Number.isFinite(d.getTime())||d.toISOString().slice(0,10)!==input.productionDate||input.productionDate>pakistanDate())throw new Error('Enter a valid production date no later than today');
  return prisma.$transaction(async db=>{
   await lockSesameOwnership(db,code);
   const old=await db.sesameProcessing.findUnique({where:{requestKey:input.requestKey}});
   if(old){if(old.commodityCode!==code||old.planId!==input.planId||old.productionDate!==input.productionDate||n(old.outputKg)!==input.outputKg||n(old.impuritiesKg)!==input.impuritiesKg)throw new Error('Request already used');return {id:old.id};}
+  if(await db.sesameProcessing.findFirst({where:{planId:input.planId,productionDate:input.productionDate,automatic:true}}))throw new Error('This day already has automatic production. Edit that entry in production history.');
   const p=await db.sesameProcessingPlan.findUniqueOrThrow({where:{id:input.planId}});
   if(p.commodityCode!==code||p.status!=='ACTIVE')throw new Error('Select an active batch in this desk');
   if(input.productionDate<pakistanDate(p.createdAt))throw new Error('Production date cannot precede the batch');
@@ -78,12 +83,58 @@ export async function recordWarehouseProduction(code:string,actor:string,input:z
   const grades=await sesameGrades(db,code);const available=(grades.find(r=>r.name===p.warehouseName)?.grades[sesameGrade({sesameType:p.fromType})]??0)*1000;
   if(sum>available+.0001)throw new Error('Physical source stock is insufficient');
   const remaining=Math.round((n(p.remainingKg)-sum)*1000)/1000;
-  const r=await db.sesameProcessing.create({data:{...input,commodityCode:code,warehouseName:p.warehouseName,fromType:p.fromType,toType:p.toType,inputKg:sum,yieldRatio:input.outputKg/sum,recordedBy:actor}});
+  const r=await db.sesameProcessing.create({data:{...input,commodityCode:code,warehouseName:p.warehouseName,fromType:p.fromType,toType:p.toType,inputKg:sum,yieldRatio:sum?input.outputKg/sum:0,recordedBy:actor}});
   await db.sesameProcessingPlan.update({where:{id:p.id},data:{remainingKg:remaining,status:remaining===0?'COMPLETED':'ACTIVE'}});return {id:r.id};
  },{timeout:20000});
 }
 export async function updateProcessingPlan(code:string,input:{id:string;dailyCapacityKg?:number;expectedYieldRatio?:number;cancel?:boolean}) {
+ await settleDailyDefaults(prisma,code);
  return prisma.$transaction(async db=>{await lockSesameOwnership(db,code);const p=await db.sesameProcessingPlan.findUniqueOrThrow({where:{id:input.id}});if(p.commodityCode!==code||p.status!=='ACTIVE')throw new Error('Select an active batch in this desk');await db.sesameProcessingPlan.update({where:{id:p.id},data:input.cancel?{status:'CANCELLED'}:{dailyCapacityKg:input.dailyCapacityKg,expectedYieldRatio:input.expectedYieldRatio}});return {ok:true};});
+}
+
+/** Corrections change the grade ledger in-place and retain the original quantities in an audit trail. */
+export async function editWarehouseProduction(code:string,actor:string,input:z.infer<typeof editProcessingInput>) {
+ const total=Math.round((input.outputKg+input.impuritiesKg)*1000)/1000;
+ return prisma.$transaction(async db=>{
+  await lockSesameOwnership(db,code);
+  const old=await db.sesameProcessing.findUniqueOrThrow({where:{id:input.id}});
+  if(old.commodityCode!==code)throw new Error('Select a processing entry in this desk');
+  if(old.revision!==input.revision)throw new Error('This entry has changed. Refresh and reopen it before editing.');
+  const delta=Math.round((total-n(old.inputKg))*1000)/1000;
+  // Never remove output that has already been dispatched, reserved, sold or processed further.
+  for(const [grade,reduction] of [[old.toType,n(old.outputKg)-input.outputKg],['Impurities',n(old.impuritiesKg)-input.impuritiesKg]] as const){
+   if(reduction>.0001){
+    const available=await processingAvailability(db,code,old.warehouseName,grade);
+    if(reduction>available.availableKg+.0001)throw new Error(`Cannot reduce ${grade}: that stock has already been used or reserved. Correct the downstream entry first.`);
+   }
+  }
+  const plan=old.planId?await db.sesameProcessingPlan.findUniqueOrThrow({where:{id:old.planId}}):null;
+  if(plan){
+   if(delta>n(plan.remainingKg)+.0001)throw new Error('Corrected input exceeds the reserved batch quantity');
+   if(delta>0){
+    const available=await processingAvailability(db,code,old.warehouseName,old.fromType);
+    const usable=available.availableKg+(plan.status==='ACTIVE'?n(plan.remainingKg):0);
+    if(delta>usable+.0001)throw new Error('Insufficient unreserved source stock for this correction');
+   }
+  } else if(delta>0){
+   const available=await processingAvailability(db,code,old.warehouseName,old.fromType);
+   if(delta>available.availableKg+.0001)throw new Error('Insufficient unreserved source stock for this correction');
+   if(old.transferId){
+    const transfer=await db.stockTransfer.findUniqueOrThrow({where:{id:old.transferId}});
+    const used=await db.sesameProcessing.aggregate({where:{transferId:old.transferId},_sum:{inputKg:true}});
+    if(n(used._sum.inputKg)+delta>n(transfer.receivedQtyMt??transfer.dispatchedQtyMt)*1000+.0001)throw new Error('Corrected input exceeds the quantity received on the processing truck');
+   }
+  }
+  const now=new Date();
+  const history=Array.isArray(old.editHistory)?old.editHistory:[];
+  await db.sesameProcessing.update({where:{id:old.id},data:{inputKg:total,outputKg:input.outputKg,impuritiesKg:input.impuritiesKg,yieldRatio:total?input.outputKg/total:0,revision:{increment:1},editedBy:actor,editedAt:now,editHistory:[...history,{revision:old.revision,inputKg:n(old.inputKg),outputKg:n(old.outputKg),impuritiesKg:n(old.impuritiesKg),editedBy:actor,editedAt:now.toISOString(),reason:input.reason}] as Prisma.InputJsonValue}});
+  if(plan){
+   const remaining=Math.round((n(plan.remainingKg)-delta)*1000)/1000;
+   // Cancelling a batch releases its reservation; editing its history must not silently restart it.
+   await db.sesameProcessingPlan.update({where:{id:plan.id},data:{remainingKg:remaining,status:plan.status==='CANCELLED'?'CANCELLED':remaining===0?'COMPLETED':'ACTIVE',...(plan.status==='COMPLETED'&&remaining>0?{nextProductionDate:pakistanDate()}:{} )}});
+  }
+  return {id:old.id};
+ },{timeout:20000});
 }
 
 /** Called under the shared ownership lock by booking/edit/allocation writes. */

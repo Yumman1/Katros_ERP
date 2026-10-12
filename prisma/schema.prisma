@@ -1710,6 +1710,11 @@ model RefCounter {
 /// Immutable conversion after an internal truck is received at the processing warehouse.
 model SesameProcessing {
   id String @id @default(cuid())
+  automatic Boolean @default(false)
+  revision Int @default(0)
+  editedBy String?
+  editedAt DateTime?
+  editHistory Json @default("[]")
   requestKey String @unique
   transferId String?
   transfer StockTransfer? @relation(fields: [transferId], references: [id])
@@ -1732,6 +1737,8 @@ model SesameProcessing {
 
 model SesameProcessingPlan {
   id String @id @default(cuid())
+  automationError String?
+  nextProductionDate String @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Karachi')::date)::text"))
   requestKey String @unique
   commodityCode String
   warehouseName String

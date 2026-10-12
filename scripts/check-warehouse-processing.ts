@@ -5,7 +5,7 @@ import {prisma} from '../server/db';
 import {appRouter} from '../server/routers/_app';
 import {assignCommodityTrader} from '../server/commodity-assignments';
 import {SESAME_DEFAULTS} from '../lib/sesame';
-import {createProcessingPlan,recordWarehouseProduction,warehouseProcessing,processingAvailability,updateProcessingPlan} from '../server/execution/warehouse-processing';
+import {editWarehouseProduction,createProcessingPlan,recordWarehouseProduction,warehouseProcessing,processingAvailability,updateProcessingPlan} from '../server/execution/warehouse-processing';
 import {sesameGrades,assertGradeAvailable} from '../server/execution/sesame-processing';
 import {pakistanAvailable} from '../server/execution/sesame-stock';
 import {pakistanDate} from '../lib/sesame-processing';
@@ -40,14 +40,81 @@ async function main(){
  await assert.rejects(()=>recordWarehouseProduction('CORN','Admin',{...daily,requestKey:randomUUID()}),/desk/);
  let stock=(await sesameGrades(prisma,'SES')).find(w=>w.name==='Test WH')!;assert.equal(stock.grades.Raw,195);assert.equal(stock.grades['Machine Cleaned'],4);assert.equal(stock.grades.Impurities,1);assert.equal(stock.sesameStockMt,200);
  const view=await warehouseProcessing('SES');assert.ok(!view.warehouses.some(w=>w.name==='Faqir Warehouse'));const forecast=view.plans.find(p=>p.id===plan.id)!.forecast;assert.equal(forecast.daysRemaining,9);assert.equal(forecast.forecastOutputKg,36000);assert.ok(Math.abs(forecast.forecastImpuritiesKg-9000)<.0001);
+ // Corrections reconcile grades, reservation and audit, and reject stale concurrent editors.
+ await editWarehouseProduction('SES','Admin',{id:rec.id,revision:0,outputKg:3000,impuritiesKg:500,reason:'Correct weighment'});
+ assert.equal(Number((await prisma.sesameProcessingPlan.findUniqueOrThrow({where:{id:plan.id}})).remainingKg),46500);
+ stock=(await sesameGrades(prisma,'SES')).find(w=>w.name==='Test WH')!;assert.equal(stock.grades.Raw,196.5);assert.equal(stock.grades['Machine Cleaned'],3);assert.equal(stock.sesameStockMt,200);
+ await assert.rejects(()=>editWarehouseProduction('SES','Admin',{id:rec.id,revision:0,outputKg:4000,impuritiesKg:1000,reason:'Stale edit'}),/changed/);
+ await editWarehouseProduction('SES','Admin',{id:rec.id,revision:1,outputKg:4000,impuritiesKg:1000,reason:'Restore checked weights'});
+ assert.equal((await prisma.sesameProcessing.findUniqueOrThrow({where:{id:rec.id}})).revision,2);
+ await assert.rejects(()=>caller().sesameExecution.editProduction({id:rec.id,revision:2,outputKg:0,impuritiesKg:0,reason:'Not execution'}));
+ await assert.rejects(()=>editWarehouseProduction('CORN','Admin',{id:rec.id,revision:2,outputKg:0,impuritiesKg:0,reason:'Wrong desk'}),/desk/);
  const next=await createProcessingPlan('SES','Admin',{...base,fromType:'Machine Cleaned',toType:'Sortex',reservedKg:4000,requestKey:randomUUID()});await recordWarehouseProduction('SES','Admin',{...daily,planId:next.id,outputKg:3900,impuritiesKg:100,requestKey:randomUUID()});
  stock=(await sesameGrades(prisma,'SES')).find(w=>w.name==='Test WH')!;assert.equal(stock.grades['Machine Cleaned'],0);assert.equal(stock.grades.Sortex,3.9);assert.equal(stock.grades.Impurities,1.1);assert.equal(stock.sesameStockMt,200);
+ await assert.rejects(()=>editWarehouseProduction('SES','Admin',{id:rec.id,revision:2,outputKg:3000,impuritiesKg:1000,reason:'Output already used'}),/used or reserved/);
  const rawSortex=await createProcessingPlan('SES','Admin',{...base,toType:'Sortex',reservedKg:5000,requestKey:randomUUID()});await recordWarehouseProduction('SES','Admin',{...daily,planId:rawSortex.id,outputKg:4500,impuritiesKg:500,requestKey:randomUUID()});
  await updateProcessingPlan('SES',{id:plan.id,dailyCapacityKg:6000});assert.equal(Number((await prisma.sesameProcessingPlan.findUniqueOrThrow({where:{id:plan.id}})).dailyCapacityKg),6000);
  await updateProcessingPlan('SES',{id:plan.id,cancel:true});assert.equal(await pakistanAvailable(prisma,'SES','Test WH'),200);
  const attempts=await Promise.allSettled([1,2].map(()=>createProcessingPlan('SES','Admin',{...base,warehouseName:'Other WH',reservedKg:80000,requestKey:randomUUID()})));assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1);
  assert.equal((await caller(other).sesameExecution.positionSnapshot({commodityCode:'SES'})).positions.length,2);await assert.rejects(()=>caller(other).sesameExecution.book({commodityCode:'SES'}));await assert.rejects(()=>caller(other).trader.setPositionMarketInput({commodityCode:'SES',season:'SUMMER',fxRate:280}));assert.equal((await caller().trader.positionCommodities()).length,2);
  const entries=[{entryType:'CREDIT' as const,purchaseAdvanceFlow:true,amountPkr:1759200},{entryType:'DEBIT' as const,purchaseAdvanceFlow:true,amountPkr:2194602},{entryType:'CREDIT' as const,purchaseAdvanceFlow:true,amountPkr:435402}];assert.equal(purchasePaidTotal(entries),2194602);assert.deepEqual(entries.map(e=>supplierEntryType('BUY',e)),['DEBIT','CREDIT','DEBIT']);assert.equal(supplierEntryType('SELL',entries[0]),'CREDIT');
+ // Pakistan midnight: only closed dates run; historical batches are not backfilled on activation.
+ const day=(ago:number)=>{const d=new Date(pakistanDate()+'T00:00:00Z');d.setUTCDate(d.getUTCDate()-ago);return d.toISOString().slice(0,10);};
+ assert.equal(pakistanDate(new Date('2026-10-12T18:59:59Z')),'2026-10-12');
+ assert.equal(pakistanDate(new Date('2026-10-12T19:00:00Z')),'2026-10-13');
+ const run=()=>prisma.$queryRaw<{run_sesame_daily_processing:number}[]>`SELECT public.run_sesame_daily_processing('SES')`;
+ const auto=await createProcessingPlan('SES','Admin',{...base,reservedKg:12500,requestKey:randomUUID()});
+ await run();assert.equal(await prisma.sesameProcessing.count({where:{planId:auto.id}}),0);
+ await prisma.sesameProcessingPlan.update({where:{id:auto.id},data:{createdAt:new Date(day(3)+'T00:00:00Z'),nextProductionDate:day(3)}});
+ await Promise.all([run(),run()]);
+ let rows=await prisma.sesameProcessing.findMany({where:{planId:auto.id},orderBy:{productionDate:'asc'}});
+ assert.deepEqual(rows.map(r=>Number(r.inputKg)),[5000,5000,2500]);assert.ok(rows.every(r=>r.automatic));
+ assert.equal((await prisma.sesameProcessingPlan.findUniqueOrThrow({where:{id:auto.id}})).status,'COMPLETED');
+ assert.equal((await run())[0].run_sesame_daily_processing,0);
+ for(const grade of ['Raw','Machine Cleaned','Sortex','Impurities'] as const){
+  const sql=await prisma.$queryRaw<{kg:number}[]>`SELECT public.sesame_processing_stock_kg('SES','Test WH',${grade}) AS kg`;
+  stock=(await sesameGrades(prisma,'SES')).find(w=>w.name==='Test WH')!;
+  assert.ok(Math.abs(Number(sql[0].kg)-stock.grades[grade]*1000)<.0001);
+ }
+ // Zero correction reopens a completed batch and is not overwritten by cron.
+ const last=rows[2];await editWarehouseProduction('SES','Admin',{id:last.id,revision:0,outputKg:0,impuritiesKg:0,reason:'Unit idle that day'});
+ let batch=await prisma.sesameProcessingPlan.findUniqueOrThrow({where:{id:auto.id}});assert.equal(batch.status,'ACTIVE');assert.equal(Number(batch.remainingKg),2500);
+ await run();assert.equal(await prisma.sesameProcessing.count({where:{planId:auto.id}}),3);
+ const corrected=await prisma.sesameProcessing.findUniqueOrThrow({where:{id:last.id}});assert.equal(Number(corrected.inputKg),0);assert.equal((corrected.editHistory as unknown[]).length,1);
+ await assert.rejects(()=>editWarehouseProduction('SES','Admin',{id:last.id,revision:1,outputKg:3000,impuritiesKg:0,reason:'Too much'}),/reserved batch/);
+ await updateProcessingPlan('SES',{id:auto.id,cancel:true});
+ await editWarehouseProduction('SES','Admin',{id:last.id,revision:1,outputKg:2000,impuritiesKg:500,reason:'Correct idle record'});
+ assert.equal((await prisma.sesameProcessingPlan.findUniqueOrThrow({where:{id:auto.id}})).status,'CANCELLED');
+ // Manual zero days suppress defaults, while multiple actual runs remain supported.
+ const manual=await createProcessingPlan('SES','Admin',{...base,reservedKg:12000,requestKey:randomUUID()});
+ await prisma.sesameProcessingPlan.update({where:{id:manual.id},data:{createdAt:new Date(day(2)+'T00:00:00Z')}});
+ await recordWarehouseProduction('SES','Admin',{...daily,planId:manual.id,productionDate:day(2),outputKg:0,impuritiesKg:0,requestKey:randomUUID()});
+ await recordWarehouseProduction('SES','Admin',{...daily,planId:manual.id,productionDate:day(1),outputKg:1000,impuritiesKg:0,requestKey:randomUUID()});
+ await recordWarehouseProduction('SES','Admin',{...daily,planId:manual.id,productionDate:day(1),outputKg:1000,impuritiesKg:0,requestKey:randomUUID()});
+ await prisma.sesameProcessingPlan.update({where:{id:manual.id},data:{nextProductionDate:day(2)}});
+ await run();assert.equal(await prisma.sesameProcessing.count({where:{planId:manual.id,automatic:true}}),0);
+ assert.equal(Number((await prisma.sesameProcessingPlan.findUniqueOrThrow({where:{id:manual.id}})).remainingKg),10000);
+ await updateProcessingPlan('SES',{id:manual.id,cancel:true});
+ // Missed days use previous defaults before capacity changes.
+ const defaults=await createProcessingPlan('SES','Admin',{...base,reservedKg:15000,requestKey:randomUUID()});
+ await prisma.sesameProcessingPlan.update({where:{id:defaults.id},data:{createdAt:new Date(day(1)+'T00:00:00Z'),nextProductionDate:day(1)}});
+ await updateProcessingPlan('SES',{id:defaults.id,dailyCapacityKg:1000});
+ rows=await prisma.sesameProcessing.findMany({where:{planId:defaults.id}});assert.equal(rows.length,1);assert.equal(Number(rows[0].inputKg),5000);
+ await assert.rejects(()=>recordWarehouseProduction('SES','Admin',{...daily,planId:defaults.id,productionDate:day(1),requestKey:randomUUID()}),/automatic production/);
+ await updateProcessingPlan('SES',{id:defaults.id,cancel:true});
+ // A physical discrepancy pauses defaults visibly, then safely resumes after stock is corrected.
+ const held=await prisma.sesameProcessingPlan.findFirstOrThrow({where:{warehouseName:'Other WH',status:'ACTIVE'}});
+ const opening=await prisma.stockTransfer.findFirstOrThrow({where:{toWarehouseName:'Other WH'}});
+ await prisma.stockTransfer.update({where:{id:opening.id},data:{receivedQtyMt:0}});
+ await prisma.sesameProcessingPlan.update({where:{id:held.id},data:{nextProductionDate:day(1)}});
+ await run();assert.match((await prisma.sesameProcessingPlan.findUniqueOrThrow({where:{id:held.id}})).automationError!,/Insufficient/);
+ assert.equal(await prisma.sesameProcessing.count({where:{planId:held.id}}),0);
+ await prisma.stockTransfer.update({where:{id:opening.id},data:{receivedQtyMt:100}});
+ await run();assert.equal((await prisma.sesameProcessingPlan.findUniqueOrThrow({where:{id:held.id}})).automationError,null);
+ assert.equal(await prisma.sesameProcessing.count({where:{planId:held.id}}),1);
+ assert.ok((await caller().sesameExecution.grades({commodityCode:'SES'})).some(w=>w.grades.Impurities>0));
+ stock=(await sesameGrades(prisma,'SES')).find(w=>w.name==='Test WH')!;assert.ok(Math.abs(stock.sesameStockMt-200)<.000001);
+ console.log('PASS: automatic closed-day processing, concurrent retries, partial final day, no historical backfill, manual/zero overrides, editable production, stale-edit protection, consumed-output protection, audit trail, cancelled batch corrections, SQL/app grade parity, trader grade inventory');
  console.log('PASS: Maund price/commission, payment terms, Faqir exclusion, sales and processing reservations, all three routes, daily quantities/yield, forecasts, retries, cross-desk access, ledger labels');
 }
 main().finally(()=>prisma.$disconnect());

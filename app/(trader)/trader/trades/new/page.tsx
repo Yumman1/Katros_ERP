@@ -775,6 +775,13 @@ function BookTradeForm() {
         {/* ── 1. Deal ── */}
         <Section title="Deal" description="Commodity, counterparty, and market">
           <div className="grid gap-4 sm:grid-cols-2">
+            {isSesame && (
+              <Field label="Trading Entity">
+                  <SearchableSelect value={String(sesameTradingEntity(tradeParams))} onChange={e => setTradeParams(p => ({ ...p, tradingEntity: e.target.value, internalCounterpartyEntity: "" }))} className="kastros-select w-full">
+                    {SESAME_TRADING_ENTITIES.map(entity => <option key={entity} value={entity}>{entity}</option>)}
+                  </SearchableSelect>
+              </Field>
+            )}
             <Field label="Commodity" error={errors.commodityId?.message}>
               <SearchableSelect
                 {...register("commodityId", { onChange: e => {
@@ -1018,12 +1025,6 @@ function BookTradeForm() {
                     {SESAME_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
                   </SearchableSelect>
                 </Field>
-                <Field label="Trading Entity">
-                  <SearchableSelect value={String(sesameTradingEntity(tradeParams))} onChange={e => setTradeParams(p => ({ ...p, tradingEntity: e.target.value, internalCounterpartyEntity: "" }))} className="kastros-select w-full">
-                    {SESAME_TRADING_ENTITIES.map(entity => <option key={entity} value={entity}>{entity}</option>)}
-                  </SearchableSelect>
-                </Field>
-
               </>
             ) : (
               <Field label="Season" error={errors.season?.message}>

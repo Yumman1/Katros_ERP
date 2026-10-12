@@ -1,4 +1,4 @@
-import { warehouseProcessing, createProcessingPlan, recordWarehouseProduction, updateProcessingPlan, processingPlanInput, dailyProcessingInput } from "@/server/execution/warehouse-processing";
+import { editWarehouseProduction, editProcessingInput, warehouseProcessing, createProcessingPlan, recordWarehouseProduction, updateProcessingPlan, processingPlanInput, dailyProcessingInput } from "@/server/execution/warehouse-processing";
 import { requireTraderCommodity } from "@/server/trader-commodity-access";
 import { prisma } from "@/server/db";
 import { sesameGrades, recordProcessing } from "@/server/execution/sesame-processing";
@@ -29,6 +29,10 @@ export const sesameExecutionRouter = router({
   recordProduction: roleProcedure(["EXECUTION"]).input(dailyProcessingInput).mutation(({ctx,input}) => {
     if(ctx.executionEntity === "FZCO") throw new TRPCError({code:"FORBIDDEN",message:"Open Pakistan processing"});
     return action(()=>recordWarehouseProduction(codeOf(ctx.executionCommodityCode),ctx.session.user.name??ctx.session.user.id,input));
+  }),
+  editProduction: roleProcedure(["EXECUTION"]).input(editProcessingInput).mutation(({ctx,input}) => {
+    if(ctx.executionEntity === "FZCO") throw new TRPCError({code:"FORBIDDEN",message:"Open Pakistan processing"});
+    return action(()=>editWarehouseProduction(codeOf(ctx.executionCommodityCode),ctx.session.user.name??ctx.session.user.id,input));
   }),
   updateProcessingPlan: roleProcedure(["EXECUTION"]).input(z.object({id:z.string(),dailyCapacityKg:z.number().finite().positive().multipleOf(.001).optional(),expectedYieldRatio:z.number().finite().min(0).max(1).optional(),cancel:z.boolean().optional()})).mutation(({ctx,input}) => {
     if(ctx.executionEntity === "FZCO") throw new TRPCError({code:"FORBIDDEN",message:"Open Pakistan processing"});

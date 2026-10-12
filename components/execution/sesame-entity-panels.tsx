@@ -1,4 +1,5 @@
 "use client";
+import {SesameGradeStockView} from "./sesame-grade-stock";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -74,6 +75,7 @@ export function SesameInventoryView({
     </div>
     <div className="grid gap-4 md:grid-cols-4">{([['Owned stock',p?.ownedMt],['Booked, not left',p?.bookedNotLeftMt],['Free to sell',p?.freeMt],['Loading',p?.loadingMt]] as const).map(([label,value]) => <section key={label} className="kastros-card p-4"><div className="text-sm text-muted-foreground">{label}</div><div className="text-2xl font-semibold mt-2">{qty(value ?? 0)} MT</div></section>)}</div>
     {entity === "PAK" && <div className="kastros-card overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Pakistan warehouse','Physical MT','Pakistan-owned MT','Held for FZCO MT'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{data?.warehouses.map(w => <tr key={w.name}><td className={cell}>{w.name}</td><td className={cell}>{qty(w.quantityMt)}</td><td className={cell}>{qty(w.pakistanOwnedMt)}</td><td className={cell}>{qty(w.fzcoOwnedMt)}</td></tr>)}</tbody></table>{!data?.warehouses.length && <p className="p-5">No physical Sesame receipts yet.</p>}</div>}
+    {entity === "PAK" && <SesameGradeStockView commodityCode={commodityCode}/>}
     <OwnershipTrades commodityCode={commodityCode} entity={entity} />
   </div>;
 }
