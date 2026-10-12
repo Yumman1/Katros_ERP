@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatQty } from "@/lib/formatters/numbers";
+import { compareTickerTicks, tickerSymbol } from "@/lib/desk-market-price-meta";
 
-type Tick = { code: string; price: number; ccy: string; unit?: string; chgPct?: number };
+type Tick = { code: string; season?: string; price: number; ccy: string; unit?: string; chgPct?: number };
 
-export function PriceTicker() {
+export function PriceTicker({ preferCode }: { preferCode?: string }) {
   const [ticks, setTicks] = useState<Tick[]>([]);
 
   useEffect(() => {
@@ -24,7 +25,12 @@ export function PriceTicker() {
     return () => es.close();
   }, []);
 
-  if (!ticks.length) {
+  const ordered = useMemo(
+    () => [...ticks].sort((a, b) => compareTickerTicks(a, b, preferCode)),
+    [ticks, preferCode],
+  );
+
+  if (!ordered.length) {
     return (
       <div className="animate-pulse truncate text-xs text-subtle">
         Desk prices not published yet
@@ -34,9 +40,9 @@ export function PriceTicker() {
 
   return (
     <div className="flex gap-6 overflow-x-auto whitespace-nowrap text-xs">
-      {ticks.map((t) => (
-        <span key={t.code} className="font-mono text-muted-foreground">
-          <span className="font-semibold text-foreground">{t.code}</span>{" "}
+      {ordered.map((t) => (
+        <span key={`${t.code}-${t.season ?? ""}`} className="font-mono text-muted-foreground">
+          <span className="font-semibold text-foreground">{tickerSymbol(t.code, t.season)}</span>{" "}
           <span className="text-accent">
             {t.ccy} {formatQty(t.price, 2)}
             {t.unit ? `/${t.unit}` : ""}

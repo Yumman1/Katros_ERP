@@ -101,7 +101,7 @@ export function TraderShell({ children }: { children: ReactNode }) {
       header={
         <ShellHeader
           left={`Good ${getGreeting()}, ${firstName}`}
-          center={<DeferredPriceTicker />}
+          center={<DeferredPriceTicker preferCode={desk.active?.code} />}
         />
       }
     >
