@@ -283,7 +283,7 @@ function BookTradeForm() {
       paymentType: "LC",
       creditDays: 30,
       incoterms: "Delivered",
-      priceBasis: "Fixed",
+      priceBasis: "Fixed / Spot",
       quantityUnit: "MT",
       priceCurrency: "PKR",
       priceWeightUnit: "MT",

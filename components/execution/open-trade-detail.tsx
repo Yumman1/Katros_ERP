@@ -25,6 +25,7 @@ import {
   TRADE_SCOPE_LABELS,
   executionIncotermLabel,
   incotermsForBooking,
+  displayPriceBasis,
   isCornCommodity,
   paymentTypeLabel,
   paymentTypesForBooking,
@@ -85,7 +86,7 @@ export function OpenTradeDetail({
   const [price, setPrice] = useState("");
   const [priceCurrency, setPriceCurrency] = useState<(typeof PRICE_CURRENCIES)[number]>("PKR");
   const [priceWeightUnit, setPriceWeightUnit] = useState("MT");
-  const [priceBasis, setPriceBasis] = useState("Fixed");
+  const [priceBasis, setPriceBasis] = useState("Fixed / Spot");
   const [commissionPerUnit, setCommissionPerUnit] = useState("");
   const [deliveryStart, setDeliveryStart] = useState("");
   const [deliveryEnd, setDeliveryEnd] = useState("");
@@ -131,7 +132,7 @@ export function OpenTradeDetail({
     setPrice(String(trade.price));
     setPriceCurrency((trade.priceCurrency ?? "PKR") as (typeof PRICE_CURRENCIES)[number]);
     setPriceWeightUnit(trade.priceWeightUnit ?? trade.quantityUnit ?? "MT");
-    setPriceBasis(trade.priceBasis ?? "Fixed");
+    setPriceBasis(displayPriceBasis(trade.priceBasis) || "Fixed / Spot");
     setCommissionPerUnit(
       trade.commissionPerUnit != null
         ? String(trade.commissionPerUnit)

@@ -27,6 +27,7 @@ import {
   isCornCommodity,
   paymentTypeLabel,
   paymentTypesForBooking,
+  displayPriceBasis,
   priceBasisOptionsForCommodity,
   priceBasisRequiresQuote,
   type QualityTolerances,
@@ -72,7 +73,7 @@ export function TradeChangeForm({
   const [price, setPrice] = useState("");
   const [priceCurrency, setPriceCurrency] = useState<(typeof PRICE_CURRENCIES)[number]>("PKR");
   const [priceWeightUnit, setPriceWeightUnit] = useState("MT");
-  const [priceBasis, setPriceBasis] = useState("Fixed");
+  const [priceBasis, setPriceBasis] = useState("Fixed / Spot");
   /** Flat total broker commission in the quoted currency (stored as commissionAmount). */
   const [commissionAmount, setCommissionAmount] = useState("");
   const [deliveryStart, setDeliveryStart] = useState("");
@@ -111,7 +112,7 @@ export function TradeChangeForm({
     setPrice(trade.price > 0 ? numericStringFromValue(trade.price) : "");
     setPriceCurrency((trade.priceCurrency ?? "PKR") as (typeof PRICE_CURRENCIES)[number]);
     setPriceWeightUnit(trade.priceWeightUnit ?? trade.quantityUnit ?? "MT");
-    setPriceBasis(trade.priceBasis ?? "Fixed");
+    setPriceBasis(displayPriceBasis(trade.priceBasis) || "Fixed / Spot");
     setCommissionAmount(
       trade.commissionAmount != null ? numericStringFromValue(trade.commissionAmount) : "",
     );

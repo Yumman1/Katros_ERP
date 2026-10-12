@@ -90,11 +90,14 @@ export const QUANTITY_UNITS = [
 ] as const;
 export type QuantityUnit = (typeof QUANTITY_UNITS)[number];
 
-export const PRICE_BASIS_OPTIONS = ["Fixed", "Index-linked"] as const;
-export const CORN_PRICE_BASIS_OPTIONS = ["Fixed/Spot", "Unfixed"] as const;
+export const PRICE_BASIS_OPTIONS = ["Fixed / Spot", "Index-linked"] as const;
+export const CORN_PRICE_BASIS_OPTIONS = ["Fixed / Spot", "Unfixed"] as const;
 export const ALL_PRICE_BASIS_OPTIONS = [
-  ...PRICE_BASIS_OPTIONS,
-  ...CORN_PRICE_BASIS_OPTIONS,
+  "Fixed",
+  "Fixed/Spot",
+  "Fixed / Spot",
+  "Index-linked",
+  "Unfixed",
 ] as const;
 export type PriceBasis = (typeof ALL_PRICE_BASIS_OPTIONS)[number];
 
@@ -102,11 +105,18 @@ export function priceBasisOptionsForCommodity(code: string | undefined | null): 
   return isCornCommodity(code) ? CORN_PRICE_BASIS_OPTIONS : PRICE_BASIS_OPTIONS;
 }
 
-/** Fixed/Spot basis requires price (and commission) at booking; Unfixed / Index-linked does not. */
+/** Map stored Fixed / Fixed/Spot values onto the booking dropdown label. */
+export function displayPriceBasis(priceBasis: string | undefined | null): string {
+  const b = priceBasis?.trim() ?? "";
+  if (b === "Fixed" || b === "Fixed/Spot") return "Fixed / Spot";
+  return b;
+}
+
+/** Fixed / Spot basis requires price (and commission) at booking; Unfixed / Index-linked does not. */
 export function priceBasisRequiresQuote(priceBasis: string | undefined | null): boolean {
   if (!priceBasis) return true;
   const b = priceBasis.trim();
-  return b === "Fixed" || b === "Fixed/Spot";
+  return b === "Fixed" || b === "Fixed/Spot" || b === "Fixed / Spot";
 }
 
 export function tradeHasQuotedPrice(trade: { price?: number | null; pricePerCanonicalQty?: number | null }): boolean {
