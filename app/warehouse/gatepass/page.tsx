@@ -421,7 +421,7 @@ export default function WarehouseGatepassPage() {
               {form.advanceTradeRef && <Field label="Approved advance builty"><select className={inputClass} value={form.advanceVoucherId} onChange={e => { const v = reference.advances?.find(a => a.id === e.target.value); setForm(f => ({ ...f, advanceVoucherId: v?.id ?? "", truckNo: v?.truckNo ?? f.truckNo, builtyDetails: v?.builtyNumber ?? "", transporterName: v?.transporterName ?? "", weightAsPerBuiltyKg: String(v?.advanceWeightKg ?? "") })); }}><option value="">Select paid builty</option>{reference.advances?.filter(v => v.tradeRef === form.advanceTradeRef && v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => <option key={v.id} value={v.id}>{v.builtyNumber} · Truck {v.truckNo ?? "legacy"}</option>)}</select></Field>}
             </FormSection>}
 
-            <FormSection title={form.movementType === "OUTBOUND" ? "Outbound details" : "Vehicle"} icon={<Truck className="h-4 w-4" />} color={accentColor}>
+            <FormSection title={form.movementType === "OUTBOUND" ? "Outbound details" : "Inbound details"} icon={<Truck className="h-4 w-4" />} color={accentColor}>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Truck number" required>
                   <input
@@ -463,74 +463,37 @@ export default function WarehouseGatepassPage() {
                     className={inputClass}
                   />
                 </Field>
-                {form.movementType === "OUTBOUND" && <>
-                  <Field label="Builty number" required>
-                    <input
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={form.builtyDetails}
-                      onChange={(e) => update("builtyDetails", digitsOnly(e.target.value))}
-                      placeholder="e.g. 8821"
-                      className={inputClass}
-                    />
-                  </Field>
-                  <Field label="Weight as per seller (Kg)" required={!delivered}>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="1"
-                      min="0"
-                      value={form.weightAsPerBuiltyKg}
-                      onChange={(e) => update("weightAsPerBuiltyKg", e.target.value)}
-                      placeholder="e.g. 21500"
-                      className={inputClass}
-                    />
-                  </Field>
-                  <Field label="Weigh bridge name">
-                    <input
-                      value={form.weighBridgeName}
-                      onChange={(e) => update("weighBridgeName", e.target.value)}
-                      placeholder="e.g. Main gate weighbridge"
-                      className={inputClass}
-                    />
-                  </Field>
-                </>}
-              </div>
-            </FormSection>
-
-            {form.movementType === "INBOUND" ? (
-              <FormSection title="Inbound details" icon={<ArrowDownToLine className="h-4 w-4" />} color={accentColor}>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Builty number" required>
-                    <input
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={form.builtyDetails}
-                      onChange={(e) => update("builtyDetails", digitsOnly(e.target.value))}
-                      placeholder="e.g. 8821"
-                      className={inputClass}
-                    />
-                  </Field>
-                  <Field label="Weight as per seller (Kg)" required={!delivered}>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="1"
-                      min="0"
-                      value={form.weightAsPerBuiltyKg}
-                      onChange={(e) => update("weightAsPerBuiltyKg", e.target.value)}
-                      placeholder="e.g. 21500"
-                      className={inputClass}
-                    />
-                  </Field>
-                  <Field label="Weigh bridge name">
-                    <input
-                      value={form.weighBridgeName}
-                      onChange={(e) => update("weighBridgeName", e.target.value)}
-                      placeholder="e.g. Main gate weighbridge"
-                      className={inputClass}
-                    />
-                  </Field>
+                <Field label="Builty number" required>
+                  <input
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={form.builtyDetails}
+                    onChange={(e) => update("builtyDetails", digitsOnly(e.target.value))}
+                    placeholder="e.g. 8821"
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Weight as per seller (Kg)" required={!delivered}>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="1"
+                    min="0"
+                    value={form.weightAsPerBuiltyKg}
+                    onChange={(e) => update("weightAsPerBuiltyKg", e.target.value)}
+                    placeholder="e.g. 21500"
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Weigh bridge name">
+                  <input
+                    value={form.weighBridgeName}
+                    onChange={(e) => update("weighBridgeName", e.target.value)}
+                    placeholder="e.g. Main gate weighbridge"
+                    className={inputClass}
+                  />
+                </Field>
+                {form.movementType === "INBOUND" && <>
                   <Field label="Warehouse weight (kg)" required={delivered} hint="after offload / warehouse weighment">
                     <input
                       type="number"
@@ -554,10 +517,9 @@ export default function WarehouseGatepassPage() {
                     />
                   </Field>
 
-                </div>
-
-              </FormSection>
-            ) : null}
+                </>}
+              </div>
+            </FormSection>
 
             <FormSection title="Documents" icon={<Upload className="h-4 w-4" />} color={accentColor}>
               <Field label="Upload documents for gate pass" hint="builty, weigh slip, photos">
