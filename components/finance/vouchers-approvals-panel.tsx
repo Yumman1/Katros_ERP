@@ -135,7 +135,7 @@ export function FinanceVouchersPanel() {
                           <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-bold uppercase text-warning">
                             Pending finance
                           </span>
-                          <TradeRefChip tradeRef={v.tradeRef} />
+                          <TradeRefChip tradeRef={v.tradeRef} />{v.blNo&&<span className="font-semibold">BL {v.blNo}</span>}
                         </div>
                         <div className="mt-1 text-sm text-foreground">
                           {v.counterpartyName}{" "}
@@ -249,7 +249,7 @@ export function FinanceVouchersPanel() {
                             <span className="font-mono text-xs text-muted-foreground">({v.counterpartyCode})</span>
                           </td>
                           <td className="whitespace-nowrap">
-                            <TradeRefChip tradeRef={v.tradeRef} />
+                            <TradeRefChip tradeRef={v.tradeRef} />{v.blNo&&<span className="font-semibold">BL {v.blNo}</span>}
                           </td>
                           <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(v.amountPkr)}</td>
                           <td className="whitespace-nowrap">

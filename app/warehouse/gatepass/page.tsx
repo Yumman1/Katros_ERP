@@ -1,4 +1,6 @@
 "use client";
+import {SesameExportContainers} from "@/components/warehouse/sesame-export-containers";
+import {isSesameCommodity} from "@/lib/sesame";
 import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 
 import { ThemeToggle } from "@/components/theme/theme-toggle";
@@ -29,6 +31,7 @@ import { formatPkDateTime } from "@/lib/formatters/datetime";
 const RECORDED_BY_KEY = "kastros-gatepass-recorded-by";
 
 type ReferenceData = {
+  exportTrades?: {tradeRef:string;counterpartyName:string;commodityCode:string;commodityName:string;entity:string}[];
   advances?: { id: string; tradeRef: string; builtyNumber: string; truckNo: string | null; counterpartyName: string; commodityCode: string; transporterName: string; advanceWeightKg: number }[];
   warehouses: string[];
   inboundCounterparties: (GatepassCounterparty & {trades?: {tradeRef:string;commodityCode:string;profile:string}[]})[];
@@ -78,6 +81,7 @@ export default function WarehouseGatepassPage() {
     inboundCounterparties: [],
     outboundCounterparties: [],
   });
+  const [exportTrade,setExportTrade]=useState('');
   const [form, setForm] = useState(emptyForm);
   const [documents, setDocuments] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
@@ -192,6 +196,7 @@ export default function WarehouseGatepassPage() {
   const selectedCommodity = commodityOptions.find((c) => c.code === form.commodityCode);
 
   async function submit() {
+    if(exportMode)return;
     setSaving(true);
     setError(null);
     setSuccess(null);
@@ -265,10 +270,13 @@ export default function WarehouseGatepassPage() {
     }
   }
 
+  const exportOptions=(reference.exportTrades??[]).filter(t=>t.counterpartyName===form.counterpartyName&&t.commodityCode===form.commodityCode);
+  const selectedExport=exportOptions.find(t=>t.tradeRef===exportTrade);
+  const exportMode=form.movementType==='OUTBOUND'&&!!selectedExport;
   const purchaseTrades=reference.inboundCounterparties.find(c=>c.name===form.counterpartyName)?.trades?.filter(t=>t.commodityCode===form.commodityCode) ?? [];
   const purchaseTrade=purchaseTrades.find(t=>t.tradeRef===form.purchaseTradeRef);
   const delivered=purchaseTrade?.profile === "PURCHASE_DELIVERED";
-  const canSubmit =
+  const canSubmit = !exportMode &&
     Boolean(form.recordedByName.trim()) &&
     Boolean(form.warehouseName.trim()) &&
     Boolean(form.counterpartyName.trim()) &&
@@ -421,6 +429,8 @@ export default function WarehouseGatepassPage() {
               {form.advanceTradeRef && <Field label="Approved advance builty"><select className={inputClass} value={form.advanceVoucherId} onChange={e => { const v = reference.advances?.find(a => a.id === e.target.value); setForm(f => ({ ...f, advanceVoucherId: v?.id ?? "", truckNo: v?.truckNo ?? f.truckNo, builtyDetails: v?.builtyNumber ?? "", transporterName: v?.transporterName ?? "", weightAsPerBuiltyKg: String(v?.advanceWeightKg ?? "") })); }}><option value="">Select paid builty</option>{reference.advances?.filter(v => v.tradeRef === form.advanceTradeRef && v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => <option key={v.id} value={v.id}>{v.builtyNumber} · Truck {v.truckNo ?? "legacy"}</option>)}</select></Field>}
             </FormSection>}
 
+            {form.movementType==='OUTBOUND'&&isSesameCommodity(form.commodityCode)&&exportOptions.length>0&&<FormSection title="International sale shipment" icon={<Truck className="h-4 w-4" />} color={accentColor}><Field label="Trade reference"><select className={inputClass} value={selectedExport?.tradeRef??''} onChange={e=>setExportTrade(e.target.value)}><option value="">Select international trade for grouped containers</option>{exportOptions.map(t=><option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.entity}</option>)}</select></Field></FormSection>}
+            {exportMode?<SesameExportContainers key={[exportTrade,form.warehouseName].join(':')} tradeRef={exportTrade} warehouseName={form.warehouseName} recordedByName={form.recordedByName} onSaved={()=>setPreviewTick(v=>v+1)}/>:<>
             <FormSection title={form.movementType === "OUTBOUND" ? "Outbound details" : "Inbound details"} icon={<Truck className="h-4 w-4" />} color={accentColor}>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Truck number" required>
@@ -473,7 +483,7 @@ export default function WarehouseGatepassPage() {
                     className={inputClass}
                   />
                 </Field>
-                <Field label="Weight as per seller (Kg)" required={!delivered}>
+                <Field label={form.movementType === "OUTBOUND" && isSesameCommodity(form.commodityCode) ? "Container / Truck Weight (kg)" : "Weight as per seller (Kg)"} required={!delivered}>
                   <input
                     type="number"
                     inputMode="decimal"
@@ -553,6 +563,7 @@ export default function WarehouseGatepassPage() {
                 )}
               </Field>
             </FormSection>
+            </>}
 
             {error && (
               <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">

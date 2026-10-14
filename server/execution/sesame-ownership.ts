@@ -61,7 +61,7 @@ export async function sesameBook(code: string) {
   const confirmed = new Map<string, number>();
   for (const e of entries) if (!e.truckId) confirmed.set(e.tradeRef, (confirmed.get(e.tradeRef) ?? 0) + n(e.quantityMt));
   const rows = trades.filter(t => !["CANCELLED", "REJECTED"].includes(t.tradeStatus)).map(t => ({
-    sesameType: sesameGrade(t.tradeParams), tradeRef: t.tradeRef, entity: tradeEntity(t.tradeParams), internalEntity: internalEntity(t.tradeParams), direction: t.direction,
+    tradeScope: t.tradeScope, sesameType: sesameGrade(t.tradeParams), tradeRef: t.tradeRef, entity: tradeEntity(t.tradeParams), internalEntity: internalEntity(t.tradeParams), direction: t.direction,
     quantityMt: n(t.quantity), confirmedMt: confirmed.get(t.tradeRef) ?? 0, openMt: n(t.contract?.openQtyMt ?? t.quantity),
     counterparty: t.counterparty.name, status: t.tradeStatus, submitted: t.submittedToExecution, price: n(t.pricePerCanonicalQty ?? t.price), currency: t.currency,
     confirmedValue: (confirmed.get(t.tradeRef) ?? 0) * n(t.pricePerCanonicalQty ?? t.price),
@@ -101,6 +101,7 @@ export async function loadFzcoTruck(input: { tradeRef: string; truckNo: string; 
     const t = await db.trade.findUniqueOrThrow({ where: { tradeRef: input.tradeRef }, include: { commodity: true, counterparty: true, contract: true } });
     const c = t.contract;
     if (!c || !isSesameCommodity(t.commodity.code) || t.tradeStatus !== "LOCKED" || tradeEntity(t.tradeParams) !== "FZCO" || internalEntity(t.tradeParams) || t.direction !== "SELL") throw new Error("Choose a locked external FZCO sale");
+    if(t.tradeScope==='INTERNATIONAL')throw new Error('Use the warehouse gatepass link to add international Sesame containers as a shipment group');
     await lockSesameOwnership(db, t.commodity.code);
     const allocated = await db.outboundDispatch.aggregate({ where: { tradeRef: t.tradeRef }, _sum: { allocatedQtyMt: true } });
     const qty = input.weightKg / 1000;

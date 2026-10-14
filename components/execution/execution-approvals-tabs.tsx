@@ -44,9 +44,10 @@ export function ExecutionApprovalsTabs() {
     staleTime: DESK_REFETCH_MS,
   });
 
+  const exports=trpc.sesameExport.list.useQuery(undefined,{enabled:isExecutionHead,refetchInterval:DESK_REFETCH_MS});
   const countFor = (match: (typeof TABS)[number]["match"]) => {
     if (match === "team") return pendingTeam;
-    if (match === "do") return pendingDo?.length;
+    if (match === "do") return (pendingDo?.length??0)+(exports.data?.filter(s=>s.status==="EXECUTION_PENDING").length??0);
     return rejections?.length;
   };
 

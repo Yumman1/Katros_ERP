@@ -8,6 +8,7 @@ import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
 const TABS = [
+  { href: "/trader/approvals/export-delivery-orders", label: "Sesame export DOs" },
   { href: "/trader/approvals/trade-changes", label: "Trade changes" },
   { href: "/trader/approvals/over-delivery", label: "Over-delivery" },
 ] as const;
@@ -28,8 +29,9 @@ export default function TraderApprovalsLayout({ children }: { children: ReactNod
     retry: false,
   });
 
+  const exports=trpc.sesameExport.list.useQuery(undefined,{refetchInterval:30000});
   const countFor = (href: string) =>
-    href.endsWith("/trade-changes") ? editCount.data : overDeliveryCount.data;
+    href.endsWith("/export-delivery-orders") ? exports.data?.filter(s=>s.status==="TRADER_PENDING").length : href.endsWith("/trade-changes") ? editCount.data : overDeliveryCount.data;
 
   return (
     <div className="kastros-desk-page">

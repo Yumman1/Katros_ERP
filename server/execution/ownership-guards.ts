@@ -10,6 +10,14 @@ async function assertProcessingSource(code:string,warehouse:string) {
 }
 /** Paper ownership is changed by journal entries and releases, never by editing movements. */
 export async function assertOwnershipWrite(path: string, raw: unknown): Promise<void> {
+  if(!path.startsWith("sesameExport.")&&raw&&typeof raw==='object'&&/(update|delete|cancel|close|settle|allocate|assign|release|approve|generate|confirm)/i.test(path)){
+    const input=raw as Record<string,unknown>;
+    if(typeof input.tradeRef==='string'&&/(cancel|close|settle|delete)/i.test(path)&&await prisma.sesameExportShipment.count({where:{tradeRef:input.tradeRef}}))throw new TRPCError({code:'BAD_REQUEST',message:'This trade has export shipment records; resolve its shipment and BL accounting before changing its lifecycle'});
+    const truckId=typeof input.truckId==='string'?input.truckId:/GateEntry|PendingTruck/.test(path)&&typeof input.id==='string'?input.id:null;
+    if(truckId&&(await prisma.pendingTruck.findUnique({where:{id:truckId},select:{exportShipmentId:true}}))?.exportShipmentId)throw new TRPCError({code:'BAD_REQUEST',message:'Use the grouped Sesame export shipment workflow'});
+    const dispatchId=typeof input.dispatchId==='string'?input.dispatchId:/OutboundDispatch/.test(path)&&typeof input.id==='string'?input.id:null;
+    if(dispatchId){const d=await prisma.outboundDispatch.findUnique({where:{id:dispatchId},select:{gatepassNo:true}});if(d?.gatepassNo&&(await prisma.pendingTruck.findUnique({where:{gatepassNo:d.gatepassNo},select:{exportShipmentId:true}}))?.exportShipmentId)throw new TRPCError({code:'BAD_REQUEST',message:'Use the grouped Sesame export shipment workflow'});}
+  }
   if (path.startsWith("sesameExecution.") || !/(update|delete|cancel|close|settle|allocate|advanceSpot|submitSpot)/i.test(path) || !raw || typeof raw !== "object") return;
   const input = raw as Record<string, unknown>;
   const fail = () => { throw new TRPCError({ code: "BAD_REQUEST", message: "Use the Sesame ownership workflow. A confirmed ownership record cannot be changed through physical-stock edits or settlement." }); };

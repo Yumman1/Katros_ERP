@@ -313,6 +313,7 @@ enum TradeSeason {
 }
 
 model Trade {
+  exportShipments SesameExportShipment[]
   sesameOwnershipEntries SesameOwnershipEntry[]
   id        String         @id @default(cuid())
   tradeRef  String         @unique
@@ -824,6 +825,11 @@ enum SaleTruckStage {
 
 /// Gatepass entry logged at the warehouse gate (public REST form).
 model PendingTruck {
+  exportShipmentId String?
+  exportShipment SesameExportShipment? @relation(fields: [exportShipmentId], references: [id], onDelete: Restrict)
+  containerNo String?
+  croNo String?
+
   purchaseTradeRef String?
   qualityReviewedAt DateTime?
   qualityReviewedBy String?
@@ -1515,6 +1521,9 @@ enum SettlementNoteStatus {
 /// (receivable incl. 236G); CREDIT rows are posted when finance approves a
 /// payment voucher.
 model CounterpartyLedgerEntry {
+  exportShipmentId String? @unique
+  exportShipment SesameExportShipment? @relation(fields: [exportShipmentId], references: [id], onDelete: Restrict)
+
   purchaseAdvanceFlow Boolean @default(false)
   id             String       @id @default(cuid())
   counterpartyId String
@@ -1603,6 +1612,9 @@ model PurchaseAdvanceAllocation {
 }
 
 model Voucher {
+  exportShipmentId String?
+  exportShipment SesameExportShipment? @relation(fields: [exportShipmentId], references: [id], onDelete: Restrict)
+
   agreedAdvancePercentage Decimal? @db.Decimal(8, 4)
   agreedTradeAmountPkr Decimal? @db.Decimal(20, 2)
   traderApprovalRequired Boolean @default(false)
@@ -1755,4 +1767,43 @@ model SesameProcessingPlan {
   updatedAt DateTime @updatedAt
   records SesameProcessing[]
   @@index([commodityCode, warehouseName, status])
+}
+
+model SesameExportShipment {
+ id String @id @default(cuid())
+ tradeRef String
+ trade Trade @relation(fields: [tradeRef], references: [tradeRef], onDelete: Restrict)
+ warehouseName String
+ status String @default("DRAFT")
+ revision Int @default(0)
+ deliveryOrderNo String? @unique
+ gateOutSlipNo String? @unique
+ blNo String? @unique
+ totalWeightKg Decimal @db.Decimal(20,3)
+ ratePkrPerKg Decimal @db.Decimal(20,8)
+ quotedCurrency String
+ fxRate Decimal @db.Decimal(20,8)
+ defaultAmountPkr Decimal @db.Decimal(20,2)
+ amountPkr Decimal @db.Decimal(20,2)
+ createdBy String
+ traderApprovedBy String?
+ executionApprovedBy String?
+ financeApprovedBy String?
+ releasedAt DateTime?
+ blRecordedAt DateTime?
+ audit Json @default("[]")
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ trucks PendingTruck[]
+ vouchers Voucher[]
+ ledgerEntry CounterpartyLedgerEntry?
+ submissions SesameExportSubmission[]
+ @@index([tradeRef,status])
+}
+model SesameExportSubmission {
+ id String @id
+ shipmentId String
+ shipment SesameExportShipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+ payloadHash String
+ createdAt DateTime @default(now())
 }

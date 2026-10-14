@@ -213,12 +213,12 @@ export const SERIALS = {
   },
   DELIVERY_ORDER: {
     counter: COUNTER.DELIVERY_ORDER,
-    sources: [{ table: "PendingTruck", column: "deliveryOrderNo", pattern: "^DO-[0-9]+$" }],
+    sources: [{ table: "PendingTruck", column: "deliveryOrderNo", pattern: "^DO-[0-9]+$" }, { table: "SesameExportShipment", column: "deliveryOrderNo", pattern: "^DO-[0-9]+$" }],
     format: (seq) => `DO-${pad(seq, 5)}`,
   },
   GATE_OUT_SLIP: {
     counter: COUNTER.GATE_OUT_SLIP,
-    sources: [{ table: "PendingTruck", column: "gateOutSlipNo", pattern: "^GOS-[0-9]+$" }],
+    sources: [{ table: "PendingTruck", column: "gateOutSlipNo", pattern: "^GOS-[0-9]+$" }, { table: "SesameExportShipment", column: "gateOutSlipNo", pattern: "^GOS-[0-9]+$" }],
     format: (seq) => `GOS-${pad(seq, 5)}`,
   },
   SETTLEMENT_INVOICE: {

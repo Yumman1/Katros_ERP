@@ -1,3 +1,4 @@
+import {prisma} from "@/server/db";
 import { purchaseInvoiceDocument } from "@/server/finance/purchase-invoice";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -96,7 +97,7 @@ export const financeRouter = router({
     const counts = {
       payments: payments.length,
       vouchers: vouchers.length,
-      doApprovals: doApprovals.length,
+      doApprovals: doApprovals.length + await prisma.sesameExportShipment.count({where:{status:"FINANCE_PENDING"}}),
       changeRequests,
     };
     return {

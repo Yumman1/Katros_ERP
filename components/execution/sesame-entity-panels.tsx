@@ -1,4 +1,5 @@
 "use client";
+import {SesameExportShipments} from "./sesame-export-shipments";
 import {SesameGradeStockView} from "./sesame-grade-stock";
 
 import { useState } from "react";
@@ -129,9 +130,9 @@ export function FzcoTrucks() {
   const credit = trpc.execution.requestClearWithoutPayment.useMutation({ onSuccess: refresh });
   const cancel = trpc.sesameExecution.cancelLoad.useMutation({ onSuccess: refresh });
   const issue = load.error ?? order.error ?? gate.error ?? release.error ?? credit.error ?? cancel.error ?? error;
-  return <div className="kastros-desk-page space-y-5"><h1 className="text-2xl font-semibold">FZCO trucks</h1><p className="text-sm text-muted-foreground">Load against FZCO-owned stock. Loading reserves ownership; physical stock leaves Pakistan after approvals and release.</p>
+  return <div className="kastros-desk-page space-y-5"><h1 className="text-2xl font-semibold">FZCO trucks</h1><SesameExportShipments mode="movement"/><p>International Sesame sales: <Link href="/warehouse/gatepass" target="_blank" className="underline">add container gatepasses</Link>, then manage the group in Truck Movement.</p><p className="text-sm text-muted-foreground">Load against FZCO-owned stock. Loading reserves ownership; physical stock leaves Pakistan after approvals and release.</p>
     <form className="kastros-card p-5 grid gap-3 md:grid-cols-2" onSubmit={e => { e.preventDefault(); load.mutate({ tradeRef: ref, truckNo: truck, weightKg: Number(weight), transporterName: transporter }); }}>
-      <label>FZCO sale<select className="kastros-select w-full" required value={ref} onChange={e => setRef(e.target.value)}><option value="">Select a locked sale</option>{data?.trades.filter(t => t.entity === "FZCO" && !t.internalEntity && t.direction === "SELL" && t.status === "LOCKED").map(t => <option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.counterparty} · {qty(t.openMt)} MT</option>)}</select></label>
+      <label>FZCO sale<select className="kastros-select w-full" required value={ref} onChange={e => setRef(e.target.value)}><option value="">Select a locked sale</option>{data?.trades.filter(t => t.tradeScope !== "INTERNATIONAL" && t.entity === "FZCO" && !t.internalEntity && t.direction === "SELL" && t.status === "LOCKED").map(t => <option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.counterparty} · {qty(t.openMt)} MT</option>)}</select></label>
       <label>Truck number<input className={input} required value={truck} onChange={e => setTruck(e.target.value)} /></label><label>Load weight (kg)<input className={input} type="number" min="1" step="0.001" required value={weight} onChange={e => setWeight(e.target.value)} /></label><label>Transporter<input className={input} required value={transporter} onChange={e => setTransporter(e.target.value)} /></label>
       <button className="kastros-btn-primary" disabled={load.isPending}>Record load</button>
     </form>{issue && <p className="text-destructive" role="alert">{issue.message}</p>}

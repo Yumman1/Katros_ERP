@@ -1,4 +1,5 @@
 "use client";
+import {SesameExportShipments} from "@/components/execution/sesame-export-shipments";
 import { downloadPurchaseVoucher } from "@/lib/purchase-voucher-pdf";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -161,6 +162,7 @@ export default function ExecutionVouchersPage() {
 
   return (
     <div className="kastros-desk-page pb-6">
+      <SesameExportShipments mode="voucher"/>
       <PageHeader
         breadcrumb={
           <>

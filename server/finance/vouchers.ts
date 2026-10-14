@@ -15,6 +15,8 @@ import {
 } from "./ledger";
 
 export type VoucherView = {
+  blNo?: string | null;
+  exportShipmentId?: string | null;
   agreedAdvancePercentage: number | null;
   agreedTradeAmountPkr: number | null;
   traderApprovalRequired: boolean;
@@ -60,6 +62,7 @@ export type VoucherView = {
 };
 
 const VOUCHER_INCLUDE = {
+  exportShipment: {select: {blNo:true}},
   counterparty: { select: { name: true, code: true } },
   advanceAllocations: { include: { receipt: { include: { gatepassTruck: true } } } },
   advanceTruck: true,
@@ -150,6 +153,8 @@ export async function findDuplicateVoucher(input: {
 
 function voucherRowToView(row: VoucherRow): VoucherView {
   return {
+    blNo: row.exportShipment?.blNo,
+    exportShipmentId: row.exportShipmentId,
     agreedAdvancePercentage: row.agreedAdvancePercentage == null ? null : num(row.agreedAdvancePercentage),
     agreedTradeAmountPkr: row.agreedTradeAmountPkr == null ? null : num(row.agreedTradeAmountPkr),
     traderApprovalRequired: row.traderApprovalRequired,
@@ -217,6 +222,7 @@ export async function createVoucher(input: {
   note?: string | null;
   enteredByName: string;
 }): Promise<VoucherView> {
+  if(input.tradeRef&&(input.side??'SELL')==='SELL'&&!input.noteRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef},include:{commodity:true}});if(t&&t.tradeScope==='INTERNATIONAL'&&(await import('@/lib/sesame')).isSesameCommodity(t.commodity.code))throw new Error('Select the shipment BL in Receive payment against a BL');}
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Voucher amount must be positive");
   }
@@ -410,6 +416,13 @@ export async function approveVoucher(
     const current = await tx.voucher.findUniqueOrThrow({where:{id:voucherId}});
     if (current.status !== "PENDING_FINANCE") throw new Error("Voucher not found or already resolved");
     if (current.traderApprovalRequired && !current.traderApprovedAt) throw new Error("The trade’s trader must approve this excess advance before Finance can pay it");
+    if(current.exportShipmentId){
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`export-receipt:${current.exportShipmentId}`}))::text`;
+      const shipment=await tx.sesameExportShipment.findUniqueOrThrow({where:{id:current.exportShipmentId},include:{vouchers:true}});
+      if(shipment.status!=="BL_RECORDED")throw new Error("Record BL before approving collection");
+      const paid=shipment.vouchers.filter(v=>v.status==='APPROVED').reduce((a,v)=>a+num(v.amountPkr),0);
+      if(paid+num(current.amountPkr)>num(shipment.amountPkr)+.005)throw new Error("Receipt exceeds outstanding BL balance");
+    }
     const reference = paymentReference?.trim() || current.reference?.trim();
     if (!reference) throw new Error("Enter the payment reference after payment before approving this voucher");
     const method = current.side === "BUY" ? paymentDetails?.method?.trim() || current.method : current.method;

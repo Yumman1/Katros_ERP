@@ -1,4 +1,5 @@
 "use client";
+import {SesameExportShipments} from "@/components/execution/sesame-export-shipments";
 
 import Link from "next/link";
 import { useState } from "react";
@@ -38,6 +39,7 @@ export function FinanceDoApprovalsPanel() {
 
   return (
     <div className="kastros-desk-page">
+        <SesameExportShipments mode="finance"/>
       <PageHeader
         breadcrumb={
           <>

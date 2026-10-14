@@ -1,3 +1,4 @@
+import {exportGateTrades} from "@/server/execution/sesame-export";
 import { approvedAdvanceBuiltys } from "@/server/finance/purchase-advances";
 import { NextResponse } from "next/server";
 import { gatepassSchema } from "@/lib/gatepass-schema";
@@ -65,7 +66,14 @@ export async function GET(request: Request) {
   const inboundCounterparties = await getLiveCounterpartiesForGatepass("INBOUND", warehouse);
   const outboundCounterparties = await getLiveCounterpartiesForGatepass("OUTBOUND", warehouse);
 
+  const exportTrades=await exportGateTrades(warehouse);
+  for(const t of exportTrades){
+    const cp=outboundCounterparties.find(c=>c.name===t.counterpartyName);
+    if(cp){if(!cp.commodities.some(c=>c.code===t.commodityCode))cp.commodities.push({code:t.commodityCode,name:t.commodityName});if(!cp.trades.some(r=>r.tradeRef===t.tradeRef)){cp.trades.push({tradeRef:t.tradeRef,commodityCode:t.commodityCode,profile:'SALE_EX_WAREHOUSE'});cp.openTradeCount++;}}
+    else outboundCounterparties.push({name:t.counterpartyName,code:t.counterpartyCode,openTradeCount:1,commodities:[{code:t.commodityCode,name:t.commodityName}],trades:[{tradeRef:t.tradeRef,commodityCode:t.commodityCode,profile:'SALE_EX_WAREHOUSE'}]});
+  }
   return NextResponse.json({
+    exportTrades,
     warehouses: Array.from(warehouseSet).sort((a, b) => a.localeCompare(b)),
     advances: await approvedAdvanceBuiltys(),
     inboundCounterparties,

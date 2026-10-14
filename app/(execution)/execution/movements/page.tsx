@@ -1,4 +1,5 @@
 "use client";
+import {SesameExportShipments} from "@/components/execution/sesame-export-shipments";
 
 import { Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -65,6 +66,7 @@ function hasOpenSaleStage(t: PendingTruck): boolean {
  * in the incomplete workflow list.
  */
 function isGateWorkflowComplete(t: PendingTruck, paidGatepasses: ReadonlySet<string>): boolean {
+  if (t.exportShipmentId) return true;
   if (t.status !== "ASSIGNED") return false;
   if (t.movementType === "OUTBOUND") return !hasOpenSaleStage(t);
   return Boolean(t.gateInvoiceNo) && paidGatepasses.has(t.gatepassNo);
@@ -426,6 +428,7 @@ function ExternalTruckMovements() {
           <Kpi icon={<Truck className="h-5 w-5" />} label="Awaiting Assignment" value={unassignedGatepassCount} variant="accent" />
         </div>
 
+        <SesameExportShipments mode="movement"/>
         {/* ── Truck Workflow: unassigned / incomplete gatepass trucks ── */}
         {unassignedGatepassCount > 0 && (
           <section className="flex min-w-0 flex-col gap-3">

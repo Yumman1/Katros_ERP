@@ -24,6 +24,7 @@ import { json, num, numOrNull } from "@/server/db/convert";
 // ─── Pending Truck (Gatepass) Types ───────────────────────────────────────────
 export type PendingTruckStatus = "PENDING" | "ASSIGNED" | "PARTIAL";
 export type PendingTruck = {
+  exportShipmentId?: string | null;
   executionEntity?: string;
   id: string;
   /** Gatepass no. — the single unique gate-entry reference (truck no. can repeat). Auto-generated if not supplied. */
@@ -362,6 +363,7 @@ export function truckRowToRuntime(row: PendingTruckRowWithDocs): PendingTruck {
     saleBasePkr: numOrNull(row.saleBasePkr),
     saleTaxPkr: numOrNull(row.saleTaxPkr),
     saleExpectedPkr: numOrNull(row.saleExpectedPkr),
+    exportShipmentId: row.exportShipmentId,
     saleStage: row.saleStage,
     saleTraderApprovedBy: row.saleTraderApprovedBy,
     saleTraderApprovedAt: row.saleTraderApprovedAt,

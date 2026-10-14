@@ -1,4 +1,5 @@
 "use client";
+import {SesameExportShipments} from "@/components/execution/sesame-export-shipments";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field, tradeFields } from "@/lib/record-filters";
@@ -46,6 +47,7 @@ export function DoApprovalsPanel() {
 
   return (
     <div className="kastros-desk-scroll pt-4">
+        <SesameExportShipments mode="execution"/>
         {listFilters.controls}
       {!rows?.length ? (
         <p className="text-sm text-subtle">No delivery orders awaiting execution approval.</p>
