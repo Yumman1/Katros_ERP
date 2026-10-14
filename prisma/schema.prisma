@@ -1770,6 +1770,10 @@ model SesameProcessingPlan {
 }
 
 model SesameExportShipment {
+ directThirdParty Boolean @default(false)
+ dispatchLocation String?
+ movementDate DateTime?
+ documentLinks Json @default("[]")
  id String @id @default(cuid())
  tradeRef String
  trade Trade @relation(fields: [tradeRef], references: [tradeRef], onDelete: Restrict)

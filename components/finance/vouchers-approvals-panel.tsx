@@ -153,7 +153,7 @@ export function FinanceVouchersPanel() {
                       </div>
                       <div className="text-right">
                         <div className="text-[10px] uppercase tracking-wider text-subtle">Amount</div>
-                        <div className="text-lg font-bold tabular-nums text-foreground">{fmtPkr(v.amountPkr)}</div>
+                        <div className="text-lg font-bold tabular-nums text-foreground">{v.amountUsd!=null?`${v.amountUsd.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} USD`:fmtPkr(v.amountPkr)}</div>
                         {v.builtyNumber && <p className="text-xs text-subtle">Truck {v.truckNo ?? "—"} · Builty {v.builtyNumber} · {v.advanceWeightKg} kg · {v.advancePercentage}% advance · Calculated {fmtPkr(v.calculatedAdvancePkr ?? 0)}{Math.abs(v.amountPkr - (v.calculatedAdvancePkr ?? 0)) > .005 ? " · Manual override" : ""}</p>}
                       </div>
                     </div>
@@ -164,7 +164,7 @@ export function FinanceVouchersPanel() {
                       <button className="kastros-btn-secondary" onClick={() => download(v)}>Download printable PDF</button>
                       <p>Print the voucher for reconciliation. Complete these fields after making payment.</p>
                       <label className="block">Payment method<select className="kastros-select ml-2" value={methods[v.id] ?? v.method ?? ""} onChange={e=>setMethods(m=>({...m,[v.id]:e.target.value as "Bank transfer" | "Cheque" | "Cash" | "Other"}))}><option value="">Select method</option>{["Bank transfer","Cheque","Cash","Other"].map(m=><option key={m}>{m}</option>)}</select></label>
-                      {(methods[v.id] ?? v.method) === "Bank transfer" && <label className="block">Bank<select className="kastros-select ml-2" value={banks[v.id] ?? v.bankName ?? ""} onChange={e=>setBanks(b=>({...b,[v.id]:e.target.value}))}><option value="">Select bank</option>{PAKISTAN_BANKS.map(b=><option key={b}>{b}</option>)}</select></label>}
+                      {(methods[v.id] ?? v.method) === "Bank transfer" && <label className="block">Bank{v.executionEntity==="FZCO"?<input className="kastros-input ml-2" value={banks[v.id]??v.bankName??""} onChange={e=>setBanks(b=>({...b,[v.id]:e.target.value}))}/>:<select className="kastros-select ml-2" value={banks[v.id] ?? v.bankName ?? ""} onChange={e=>setBanks(b=>({...b,[v.id]:e.target.value}))}><option value="">Select bank</option>{PAKISTAN_BANKS.map(b=><option key={b}>{b}</option>)}</select>}</label>}
                       <label className="block">Payment reference (after payment)<input className="kastros-input ml-2" value={references[v.id] ?? v.reference ?? ""} onChange={e => setReferences(r => ({...r,[v.id]:e.target.value}))} /></label>
                     </div>}
                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -251,7 +251,7 @@ export function FinanceVouchersPanel() {
                           <td className="whitespace-nowrap">
                             <TradeRefChip tradeRef={v.tradeRef} />{v.blNo&&<span className="font-semibold">BL {v.blNo}</span>}
                           </td>
-                          <td className="whitespace-nowrap text-right tabular-nums">{fmtPkr(v.amountPkr)}</td>
+                          <td className="whitespace-nowrap text-right tabular-nums">{v.amountUsd!=null?`${v.amountUsd.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} USD`:fmtPkr(v.amountPkr)}</td>
                           <td className="whitespace-nowrap">
                             <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", chip.className)}>
                               {v.side === "BUY" && v.status === "APPROVED" ? "Complete" : chip.label}

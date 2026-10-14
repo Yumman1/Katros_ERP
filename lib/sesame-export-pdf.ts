@@ -1,18 +1,14 @@
 import type {inferRouterOutputs} from '@trpc/server';
 import type {AppRouter} from '@/server/routers/_app';
-type RouterOutputs=inferRouterOutputs<AppRouter>;
-type Shipment=RouterOutputs['sesameExport']['list'][number];
+import {downloadPurchaseDocument} from './purchase-document-pdf';
+type Shipment=inferRouterOutputs<AppRouter>['sesameExport']['list'][number];
 export async function downloadSesameExport(s:Shipment,kind:'DO'|'GATE_OUT'){
- const {jsPDF}=await import('jspdf');const doc=new jsPDF();let y=20;
- const line=(value:string,size=10)=>{doc.setFontSize(size);const lines=doc.splitTextToSize(value,178);if(y+lines.length*6>278){doc.addPage();y=20;}doc.setFontSize(size);doc.text(lines,16,y);y+=lines.length*6+2;};
- line('KASTROS - SESAME EXPORT',17);line(kind==='DO'?'Delivery Order':'Collective Gate-Out Slip',14);
- line(`Document: ${kind==='DO'?s.deliveryOrderNo:s.gateOutSlipNo}`);line(`Status: ${s.status.replaceAll('_',' ')}${s.status==='REJECTED'?' - VOID':''}`);
- line(`Trade: ${s.tradeRef} | Entity: ${s.entity}`);line(`Counterparty: ${s.counterparty}`);line(`Warehouse: ${s.warehouseName}`);
- if(s.blNo)line(`BL: ${s.blNo}`);
- line('Truck / Container / CRO / Weight (kg)',11);
- for(const t of s.trucks)line(`${t.truckNo} / ${t.containerNo} / ${t.croNo} / ${t.weightKg.toLocaleString('en-PK',{maximumFractionDigits:3})} kg`);
- line(`Total: ${s.totalWeightKg.toLocaleString('en-PK',{maximumFractionDigits:3})} kg (${(s.totalWeightKg/1000).toFixed(3)} MT)`,13);
- line(`Trader approval: ${s.traderApprovedBy??'Pending'}`);line(`Execution approval: ${s.executionApprovedBy??'Pending'}`);line(`Finance approval: ${s.financeApprovedBy??'Pending'}`);
- line(kind==='DO'?'Release requires the approved collective gate-out slip.':'Applies only to the containers listed above. Warehouse release acknowledgement: __________________');
- doc.save(`${kind==='DO'?s.deliveryOrderNo:s.gateOutSlipNo}_${s.status}.pdf`);
+ const ref=(kind==='DO'?s.deliveryOrderNo:s.gateOutSlipNo)??'DRAFT';
+ const title=kind==='DO'?'DELIVERY ORDER':s.directThirdParty?'COLLECTIVE DISPATCH RECORD':'COLLECTIVE GATE-OUT SLIP';
+ const fmt=(n:number)=>n.toLocaleString('en-PK',{maximumFractionDigits:3});
+ const rows:string[][]=[['Status',s.status.replaceAll('_',' ')+(s.status==='REJECTED'?' - VOID':'')],['Trade / side',`${s.tradeRef} / ${s.side}`],['Entity / commodity',`${s.entity} / ${s.commodityCode}`],['Counterparty',s.counterparty],[s.directThirdParty?'Dispatch location':'Warehouse',s.dispatchLocation||s.warehouseName]];
+ if(s.blNo)rows.push(['BL',s.blNo]);
+ for(const [i,t] of s.trucks.entries())rows.push([`Container / truck ${i+1}`,`Truck: ${t.truckNo}\nContainer: ${t.containerNo||'-'}\nCRO: ${t.croNo||'-'}\nWeight: ${fmt(t.weightKg)} kg`]);
+ rows.push(['Total weight',`${fmt(s.totalWeightKg)} kg (${fmt(s.totalWeightKg/1000)} MT)`],['Trader approval',s.traderApprovedBy??'Pending'],['Execution approval',s.executionApprovedBy??'Pending'],['Finance approval',s.financeApprovedBy??'Pending'],['Release acknowledgement','Applies only to the containers listed above.\nSignature: __________________']);
+ return downloadPurchaseDocument(title,ref,s.createdAt,rows,`${ref}_${s.status}.pdf`);
 }

@@ -21,6 +21,7 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
     if (!internalEntity(t.tradeParams) && !(tradeEntity(t.tradeParams) === "FZCO" && t.direction === "BUY")) throw new Error("External sales require a truck release");
     if (internalEntity(t.tradeParams) && input.entity !== "PAK") throw new Error("Pakistan execution must confirm the stock held in custody");
     await lockSesameOwnership(db, t.commodity.code);
+    if(!internalEntity(t.tradeParams)&&await db.sesameExportShipment.count({where:{tradeRef:t.tradeRef,directThirdParty:true}}))throw new Error("This purchase is fulfilled through FZCO Truck Movement");
     const confirmed = await db.sesameOwnershipEntry.aggregate({ where: { tradeRef: t.tradeRef, truckId: null }, _sum: { quantityMt: true } });
     if (input.quantityMt <= 0 || n(confirmed._sum.quantityMt) + input.quantityMt > n(t.quantity) + 0.000001) throw new Error("Quantity exceeds the unconfirmed trade quantity");
     const custody = await fzcoCustody(db, t.commodity.code);
@@ -90,7 +91,7 @@ export async function sesameBook(code: string) {
     const marketRate = market?.marketRatePkrPerMaund ?? null;
     const inOut = entryRate != null && marketRate != null ? marketRate-entryRate : null;
     const valuePkr = inOut != null ? inOut*(owned+buys-sells)*25 : null;
-    return { entity, ownedMt: owned, openBuyMt: buys, bookedNotLeftMt: sells, freeMt: owned-sells, netPositionMt: owned+buys-sells, physicalInPakistanMt: entity === "PAK" ? physicalPak-impurities : heldForFzco-heldImpurities, loadingMt: entity === "FZCO" ? [...reserved.values()].reduce((a,b)=>a+b,0) : 0, entryRatePkrPerMaund: entryRate, marketRatePkrPerMaund: marketRate, inOutPkrPerMaund: inOut, inOutValuePkr: valuePkr, inOutValueUsd: valuePkr != null && market?.fxRate ? valuePkr/market.fxRate : null };
+    return { entity, ownedMt: owned, openBuyMt: buys, bookedNotLeftMt: sells, freeMt: owned-sells, netPositionMt: entity === "FZCO" ? buys-sells : owned+buys-sells, physicalInPakistanMt: entity === "PAK" ? physicalPak-impurities : heldForFzco-heldImpurities, loadingMt: entity === "FZCO" ? [...reserved.values()].reduce((a,b)=>a+b,0) : 0, entryRatePkrPerMaund: entryRate, marketRatePkrPerMaund: marketRate, inOutPkrPerMaund: inOut, inOutValuePkr: valuePkr, inOutValueUsd: valuePkr != null && market?.fxRate ? valuePkr/market.fxRate : null };
   });
   return { trades: rows, positions, warehouses: [...physical].map(([name, quantityMt]) => ({ name, quantityMt, fzcoOwnedMt: custody.get(name) ?? 0, pakistanOwnedMt: quantityMt-(custody.get(name) ?? 0) })), entries: entries.map(e => ({ ...e, quantityMt: n(e.quantityMt) })) };
 }

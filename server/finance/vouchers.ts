@@ -16,6 +16,7 @@ import {
 
 export type VoucherView = {
   blNo?: string | null;
+  amountUsd?: number | null;
   exportShipmentId?: string | null;
   agreedAdvancePercentage: number | null;
   agreedTradeAmountPkr: number | null;
@@ -62,7 +63,7 @@ export type VoucherView = {
 };
 
 const VOUCHER_INCLUDE = {
-  exportShipment: {select: {blNo:true}},
+  exportShipment: {select: {blNo:true,fxRate:true}},
   counterparty: { select: { name: true, code: true } },
   advanceAllocations: { include: { receipt: { include: { gatepassTruck: true } } } },
   advanceTruck: true,
@@ -154,6 +155,7 @@ export async function findDuplicateVoucher(input: {
 function voucherRowToView(row: VoucherRow): VoucherView {
   return {
     blNo: row.exportShipment?.blNo,
+    amountUsd: row.executionEntity==="FZCO" && row.exportShipment ? num(row.amountPkr)/num(row.exportShipment.fxRate):null,
     exportShipmentId: row.exportShipmentId,
     agreedAdvancePercentage: row.agreedAdvancePercentage == null ? null : num(row.agreedAdvancePercentage),
     agreedTradeAmountPkr: row.agreedTradeAmountPkr == null ? null : num(row.agreedTradeAmountPkr),

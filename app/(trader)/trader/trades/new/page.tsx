@@ -406,6 +406,8 @@ function BookTradeForm() {
 
   const isCorn = isCornCommodity(selectedCommodity?.code);
   const isSesame = isSesameCommodity(selectedCommodity?.code, selectedCommodity?.name);
+  const fzcoBooking = isSesame && sesameTradingEntity(tradeParams) === "Kastros FZCO";
+  useEffect(() => { if(fzcoBooking && priceCurrency!=="USD") setValue("priceCurrency","USD",{shouldValidate:true}); },[fzcoBooking,priceCurrency,setValue]);
   const paperOwnership = isSesame && (sesameTradingEntity(tradeParams) === "Kastros FZCO" || Boolean(tradeParams.internalCounterpartyEntity));
   useEffect(() => {
     if (isSesame) setTradeParams(current => ({ ...SESAME_DEFAULTS, ...current, tradingEntity: sesameTradingEntity(current) }));
@@ -1168,7 +1170,7 @@ function BookTradeForm() {
                 {...register("priceCurrency")}
                 className="kastros-select w-full"
               >
-                {priceCurrencyOptions.map((c) => (
+                {(fzcoBooking?["USD"]:priceCurrencyOptions).map((c) => (
                   <option key={c} value={c}>
                     {PRICE_CURRENCY_LABELS[c as PriceCurrency] ?? c}
                   </option>

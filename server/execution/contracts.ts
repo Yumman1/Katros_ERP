@@ -78,7 +78,8 @@ async function computeFulfilledQty(
   quantityUnit: string,
 ): Promise<number> {
   const ownership = await db.sesameOwnershipEntry.aggregate({ where: { tradeRef, truckId: null }, _sum: { quantityMt: true } });
-  const paperQty = num(ownership._sum.quantityMt);
+  const direct = await db.sesameExportShipment.aggregate({where:{tradeRef,directThirdParty:true,status:{in:["RELEASED","BL_RECORDED"]}},_sum:{totalWeightKg:true}});
+  const paperQty = num(ownership._sum.quantityMt) + kgToQuantityUnit(num(direct._sum.totalWeightKg),quantityUnit);
   if (direction === TradeDirection.SELL) {
     const agg = await db.outboundDispatch.aggregate({
       where: { tradeRef, status: { not: "AT_GATE" } },

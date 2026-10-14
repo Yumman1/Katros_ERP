@@ -3,6 +3,11 @@ import { downloadPurchaseDocument } from "./purchase-document-pdf";
 export async function downloadPurchaseVoucher(v:VoucherView){
   const money=(n:number|null)=>n==null?"Not recorded":`${n.toLocaleString("en-PK")} PKR`;
   const state=v.status==="APPROVED"?"COMPLETED":v.status==="REJECTED"?"REJECTED":v.traderApprovalRequired&&!v.traderApprovedAt?"PENDING-TRADER":"PENDING-FINANCE";
+  if(v.exportShipmentId) return downloadPurchaseDocument(v.side==='BUY'?"FZCO SUPPLIER PAYMENT":"FZCO BUYER RECEIPT",v.voucherNo,v.voucherDate,[
+    ["Status",state],["Commodity",v.commodityCode??"-"],["Counterparty",v.counterpartyName],["Trade reference",v.tradeRef??"-"],["BL",v.blNo??"-"],
+    ["Amount",v.amountUsd!=null?`${v.amountUsd.toFixed(2)} USD`:money(v.amountPkr)],["Shipment details",v.note??"-"],
+    ["Method",v.method??"Pending Finance"],["Bank",v.bankName??"-"],["Payment reference",v.reference??"Pending payment"],["Prepared by",v.enteredByName],["Finance approval",v.resolvedByName??"Pending"]
+  ],`${v.voucherNo}-${state}-shipment-voucher.pdf`);
   return downloadPurchaseDocument("PURCHASE PAYMENT VOUCHER",v.voucherNo,v.voucherDate,[
     ["Status",state],["Commodity",v.commodityCode??"-"],["Supplier",v.counterpartyName],["Trade reference",v.tradeRef??"-"],
     ["Purchase basis",v.purchaseProfile==="PURCHASE_SPOT"?"Spot":v.purchaseProfile==="PURCHASE_DELIVERED"?"Delivered":"Purchase settlement"],

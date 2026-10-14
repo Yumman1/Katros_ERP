@@ -1,4 +1,5 @@
 "use client";
+import {FzcoUsdLedger} from "@/components/execution/fzco-usd-ledger";
 
 import { useState } from "react";
 import { CounterpartyNetPosition } from "@/components/finance/counterparty-net-position";
@@ -40,6 +41,7 @@ export default function FinanceLedgersPage() {
         subtitle="One ledger account per counterparty per side — debit, credit and balance on both buy and sell; aging and settle actions on the sell side only."
       />
       <div className="kastros-desk-scroll space-y-4 pb-6">
+        <FzcoUsdLedger hideEmpty/>
         {settleError && (
           <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {settleError}

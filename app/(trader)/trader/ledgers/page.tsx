@@ -1,4 +1,5 @@
 "use client";
+import {FzcoUsdLedger} from "@/components/execution/fzco-usd-ledger";
 
 import Link from "next/link";
 import { CounterpartyLedgersPanel } from "@/components/ledgers/counterparty-ledgers-panel";
@@ -29,6 +30,7 @@ export default function TraderLedgersPage() {
       />
 
       <DeskScroll className="flex flex-col gap-4 pb-6">
+        <FzcoUsdLedger hideEmpty/>
         <CounterpartyLedgersPanel enableFilters rows={data} isLoading={isLoading} />
       </DeskScroll>
     </DeskPage>

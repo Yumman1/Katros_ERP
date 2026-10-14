@@ -147,7 +147,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
               },
             ]),
         { href: "/execution/trade-files", label: "Trade Files", icon: <FileSpreadsheet className="h-4 w-4" /> },
-      ].filter(item => !fzco || !["/execution/prices", "/execution/shifting", "/execution/warehouses", "/execution/ledgers"].includes(item.href)),
+      ].filter(item => !fzco || !["/execution/prices", "/execution/shifting", "/execution/warehouses"].includes(item.href)),
     },
     { href: "/account", label: "Account", icon: <User className="h-4 w-4" /> },
   ];
@@ -158,7 +158,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
   if (fzco && pathname === "/execution") content = <FzcoOverview />;
   if (fzco && pathname === "/execution/movements") content = <FzcoTrucks />;
   if (fzco && (pathname === "/execution/contracts" || /^\/execution\/(purchase-delivered|purchase-spot|sales)\//.test(pathname))) content = <div className="kastros-desk-page"><OwnershipTrades allTrades commodityCode={active.code} entity={entity} /></div>;
-  if (fzco && ["/execution/prices", "/execution/shifting", "/execution/warehouses", "/execution/ledgers"].includes(pathname)) content = <div className="kastros-desk-page"><p>This page is managed in the Pakistan Sesame desk.</p><button className="kastros-btn-primary" onClick={() => selectEntity("PAK", pathname === "/execution/ledgers" ? "/execution/ledgers?entity=FZCO" : pathname)}>Open Pakistan desk</button></div>;
+  if (fzco && ["/execution/prices", "/execution/shifting", "/execution/warehouses"].includes(pathname)) content = <div className="kastros-desk-page"><p>This page is managed in the Pakistan Sesame desk.</p><button className="kastros-btn-primary" onClick={() => selectEntity("PAK", pathname === "/execution/ledgers" ? "/execution/ledgers?entity=FZCO" : pathname)}>Open Pakistan desk</button></div>;
   return (
     <AppShell
       brandSubtitle={`${active.name}${sesame ? fzco ? " · Dubai FZCO" : " · Pakistan" : ""} Execution`}

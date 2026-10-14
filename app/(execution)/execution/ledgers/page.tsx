@@ -10,10 +10,11 @@ import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { isSesameCommodity } from "@/lib/sesame";
 import { type SesameEntity } from "@/lib/sesame-entity";
+import {FzcoUsdLedger} from "@/components/execution/fzco-usd-ledger";
 import { SesameInternalLedger } from "@/components/execution/sesame-entity-panels";
 
 export default function ExecutionLedgersPage() {
-  const { active } = useExecutionCommodityDesk();
+  const { active, entity: deskEntity } = useExecutionCommodityDesk();
   const search = useSearchParams();
   const [entity, setEntity] = useState<SesameEntity | "">(search.get("entity") === "FZCO" ? "FZCO" : "");
   const sesame = isSesameCommodity(active.code);
@@ -21,6 +22,7 @@ export default function ExecutionLedgersPage() {
     refetchInterval: DESK_REFETCH_MS,
   });
 
+  if(sesame && deskEntity === "FZCO") return <div className="kastros-desk-page"><FzcoUsdLedger/><SesameInternalLedger entity="FZCO"/></div>;
   return (
     <div className="kastros-desk-page">
       <PageHeader
@@ -39,7 +41,7 @@ export default function ExecutionLedgersPage() {
 
       <div className="kastros-desk-scroll flex flex-col gap-4">
         {sesame && <label className="text-sm" htmlFor="sesame-ledger-entity">Trading entity<select id="sesame-ledger-entity" aria-label="Trading entity" className="kastros-select ml-3" value={entity} onChange={e => setEntity(e.target.value as SesameEntity | "")}><option value="">All Sesame entities</option><option value="PAK">Kastros Pakistan</option><option value="FZCO">Dubai FZCO</option></select></label>}
-        <CounterpartyLedgersPanel enableFilters rows={data} isLoading={isLoading} />
+        {sesame&&entity==="FZCO"?<FzcoUsdLedger/>:<CounterpartyLedgersPanel enableFilters rows={data} isLoading={isLoading} />}
         {sesame && <SesameInternalLedger entity={entity || undefined} />}
       </div>
     </div>
