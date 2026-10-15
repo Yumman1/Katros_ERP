@@ -182,6 +182,8 @@ enum KycStatus {
 }
 
 model Counterparty {
+  heldSesame SesameOwnershipEntry[] @relation("SesameStockHolder")
+  heldShipments SesameExportShipment[] @relation("SesameShipmentHolder")
   id          String           @id @default(cuid())
   name        String
   code        String           @unique
@@ -1521,6 +1523,8 @@ enum SettlementNoteStatus {
 /// (receivable incl. 236G); CREDIT rows are posted when finance approves a
 /// payment voucher.
 model CounterpartyLedgerEntry {
+  executionEntity String?
+  paymentFxRate Decimal? @db.Decimal(20,8)
   exportShipmentId String? @unique
   exportShipment SesameExportShipment? @relation(fields: [exportShipmentId], references: [id], onDelete: Restrict)
 
@@ -1612,6 +1616,9 @@ model PurchaseAdvanceAllocation {
 }
 
 model Voucher {
+  internalPaymentRef String?
+  paymentFxRate Decimal? @db.Decimal(20,8)
+  @@unique([tradeRef, executionEntity, internalPaymentRef])
   exportShipmentId String?
   exportShipment SesameExportShipment? @relation(fields: [exportShipmentId], references: [id], onDelete: Restrict)
 
@@ -1679,6 +1686,13 @@ model Voucher {
 /// Ownership changes never create a physical receipt or dispatch.
 /// Null entity represents an external counterparty; null warehouse is off-site custody.
 model SesameOwnershipEntry {
+  holder Counterparty? @relation("SesameStockHolder",fields:[holderId],references:[id],onDelete:Restrict)
+  @@index([holderId,holderLocation])
+  holderId String?
+  holderLocation String?
+  documentRef String?
+  ownershipDate DateTime?
+  requestKey String? @unique
   id String @id @default(cuid())
   tradeRef String
   commodityCode String
@@ -1770,6 +1784,8 @@ model SesameProcessingPlan {
 }
 
 model SesameExportShipment {
+ holder Counterparty? @relation("SesameShipmentHolder",fields:[holderId],references:[id],onDelete:Restrict)
+ holderId String?
  gateIntakes SesameExportGateIntake[]
  directThirdParty Boolean @default(false)
  dispatchLocation String?
@@ -1814,6 +1830,7 @@ model SesameExportSubmission {
 }
 
 model SesameExportGateIntake {
+ directThirdParty Boolean @default(false)
  id String @id
  warehouseName String
  counterpartyName String

@@ -1,0 +1,11 @@
+ALTER TABLE "SesameOwnershipEntry" ADD COLUMN "holderId" TEXT, ADD COLUMN "holderLocation" TEXT, ADD COLUMN "documentRef" TEXT, ADD COLUMN "ownershipDate" TIMESTAMP(3), ADD COLUMN "requestKey" TEXT;
+CREATE UNIQUE INDEX "SesameOwnershipEntry_requestKey_key" ON "SesameOwnershipEntry"("requestKey");
+ALTER TABLE "SesameOwnershipEntry" ADD CONSTRAINT "SesameOwnershipEntry_holderId_fkey" FOREIGN KEY ("holderId") REFERENCES "Counterparty"("id") ON DELETE RESTRICT;
+ALTER TABLE "SesameExportShipment" ADD COLUMN "holderId" TEXT;
+ALTER TABLE "SesameExportShipment" ADD CONSTRAINT "SesameExportShipment_holderId_fkey" FOREIGN KEY ("holderId") REFERENCES "Counterparty"("id") ON DELETE RESTRICT;
+ALTER TABLE "SesameExportGateIntake" ADD COLUMN "directThirdParty" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Voucher" ADD COLUMN "internalPaymentRef" TEXT, ADD COLUMN "paymentFxRate" DECIMAL(20,8);
+CREATE UNIQUE INDEX "Voucher_tradeRef_executionEntity_internalPaymentRef_key" ON "Voucher"("tradeRef","executionEntity","internalPaymentRef");
+ALTER TABLE "CounterpartyLedgerEntry" ADD COLUMN "executionEntity" TEXT, ADD COLUMN "paymentFxRate" DECIMAL(20,8);
+CREATE INDEX "SesameOwnershipEntry_holderId_holderLocation_idx" ON "SesameOwnershipEntry"("holderId","holderLocation");
+ALTER TABLE "Voucher" ADD CONSTRAINT "Voucher_internal_payment_check" CHECK ("internalPaymentRef" IS NULL OR ("tradeRef" IS NOT NULL AND "executionEntity" IN ('PAK','FZCO') AND ("executionEntity" <> 'FZCO' OR ("paymentFxRate" IS NOT NULL AND "paymentFxRate" > 0))));

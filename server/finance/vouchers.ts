@@ -15,6 +15,7 @@ import {
 } from "./ledger";
 
 export type VoucherView = {
+  internalPaymentRef?: string | null;
   blNo?: string | null;
   amountUsd?: number | null;
   exportShipmentId?: string | null;
@@ -155,7 +156,8 @@ export async function findDuplicateVoucher(input: {
 function voucherRowToView(row: VoucherRow): VoucherView {
   return {
     blNo: row.exportShipment?.blNo,
-    amountUsd: row.executionEntity==="FZCO" && row.exportShipment ? num(row.amountPkr)/num(row.exportShipment.fxRate):null,
+    internalPaymentRef:row.internalPaymentRef,
+    amountUsd:row.paymentFxRate&&row.executionEntity==="FZCO"?num(row.amountPkr)/num(row.paymentFxRate): row.executionEntity==="FZCO" && row.exportShipment ? num(row.amountPkr)/num(row.exportShipment.fxRate):null,
     exportShipmentId: row.exportShipmentId,
     agreedAdvancePercentage: row.agreedAdvancePercentage == null ? null : num(row.agreedAdvancePercentage),
     agreedTradeAmountPkr: row.agreedTradeAmountPkr == null ? null : num(row.agreedTradeAmountPkr),
@@ -224,6 +226,7 @@ export async function createVoucher(input: {
   note?: string | null;
   enteredByName: string;
 }): Promise<VoucherView> {
+  if(input.tradeRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef}});if(t&&(await import("@/lib/sesame-entity")).internalEntity(t.tradeParams))throw new Error("Use Internal trade payments in Vouchers");}
   if(input.tradeRef&&(input.side??'SELL')==='SELL'&&!input.noteRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef},include:{commodity:true}});if(t&&t.tradeScope==='INTERNATIONAL'&&(await import('@/lib/sesame')).isSesameCommodity(t.commodity.code))throw new Error('Select the shipment BL in Receive payment against a BL');}
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Voucher amount must be positive");
@@ -427,12 +430,12 @@ export async function approveVoucher(
     }
     const reference = paymentReference?.trim() || current.reference?.trim();
     if (!reference) throw new Error("Enter the payment reference after payment before approving this voucher");
-    const method = current.side === "BUY" ? paymentDetails?.method?.trim() || current.method : current.method;
-    const bankName = current.side === "BUY" ? (method === "Bank transfer" ? paymentDetails?.bankName?.trim() || current.bankName : null) : current.bankName;
-    if (current.side === "BUY" && !["Bank transfer", "Cheque", "Cash", "Other"].includes(method ?? "")) throw new Error("Select the payment method used by Finance");
+    const method = (current.side === "BUY" || current.internalPaymentRef) ? paymentDetails?.method?.trim() || current.method : current.method;
+    const bankName = (current.side === "BUY" || current.internalPaymentRef) ? (method === "Bank transfer" ? paymentDetails?.bankName?.trim() || current.bankName : null) : current.bankName;
+    if ((current.side === "BUY" || current.internalPaymentRef) && !["Bank transfer", "Cheque", "Cash", "Other"].includes(method ?? "")) throw new Error("Select the payment method used by Finance");
     if (method === "Bank transfer" && !bankName) throw new Error("Select the bank used for payment");
     const candidates = await tx.voucher.findMany({where:{id:{not:voucherId},status:"APPROVED"}});
-    if (candidates.some(v => vouchersSharePaymentKey({...current,reference,bankName},v))) throw new Error("This payment reference, bank, date and amount are already approved");
+    if (candidates.some(v => !(current.internalPaymentRef && v.internalPaymentRef===current.internalPaymentRef && v.tradeRef===current.tradeRef && v.executionEntity!==current.executionEntity) && vouchersSharePaymentKey({...current,reference,bankName},v))) throw new Error("This payment reference, bank, date and amount are already approved");
     const updated = await tx.voucher.updateMany({
       where: { id: voucherId, status: "PENDING_FINANCE" },
       data: {
@@ -464,6 +467,7 @@ export async function approveVoucher(
       },
       tx,
     );
+    if(row?.internalPaymentRef)await tx.counterpartyLedgerEntry.updateMany({where:{voucherId},data:{executionEntity:row.executionEntity,paymentFxRate:row.paymentFxRate}});
     if (row?.builtyNumber) await tx.counterpartyLedgerEntry.updateMany({ where: { voucherId }, data: { purchaseAdvanceFlow: true } });
     // Close the note only once the internal sub-ledger is within tolerance.
     if (row!.noteRef) {

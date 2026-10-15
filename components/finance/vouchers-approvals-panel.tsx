@@ -158,8 +158,8 @@ export function FinanceVouchersPanel() {
                       </div>
                     </div>
 
-                    {v.side === "BUY" && <div className="mt-3 space-y-2 text-xs">
-                      {v.side === "BUY" && <p>Commodity: {v.commodityCode} · Agreed trade amount: {v.agreedTradeAmountPkr?.toLocaleString() ?? "—"} PKR · Agreed advance: {v.agreedAdvancePercentage ?? "—"}%{v.traderApprovedBy ? ` · Excess advance approved by ${v.traderApprovedBy}` : ""}</p>}
+                    {(v.side === "BUY" || !!v.internalPaymentRef) && <div className="mt-3 space-y-2 text-xs">
+                      {(v.side === "BUY" || !!v.internalPaymentRef) && <p>Commodity: {v.commodityCode} · Agreed trade amount: {v.agreedTradeAmountPkr?.toLocaleString() ?? "—"} PKR · Agreed advance: {v.agreedAdvancePercentage ?? "—"}%{v.traderApprovedBy ? ` · Excess advance approved by ${v.traderApprovedBy}` : ""}</p>}
                       {v.builtyNumber && <p>Purchase basis: {v.purchaseProfile === "PURCHASE_SPOT" ? "Spot" : "Delivered"} · Transporter: {v.transporterName}</p>}
                       <button className="kastros-btn-secondary" onClick={() => download(v)}>Download printable PDF</button>
                       <p>Print the voucher for reconciliation. Complete these fields after making payment.</p>
@@ -176,7 +176,7 @@ export function FinanceVouchersPanel() {
                       />
                       <button
                         type="button"
-                        disabled={busy || (v.side === "BUY" && (!(references[v.id] ?? v.reference ?? "").trim() || !(methods[v.id] ?? v.method) || ((methods[v.id] ?? v.method) === "Bank transfer" && !(banks[v.id] ?? v.bankName ?? "").trim())))}
+                        disabled={busy || ((v.side === "BUY" || !!v.internalPaymentRef) && (!(references[v.id] ?? v.reference ?? "").trim() || !(methods[v.id] ?? v.method) || ((methods[v.id] ?? v.method) === "Bank transfer" && !(banks[v.id] ?? v.bankName ?? "").trim())))}
                         onClick={() => approve.mutate({ voucherId: v.id, paymentReference: references[v.id] || undefined, paymentMethod: methods[v.id], bankName: banks[v.id], note: notes[v.id] || undefined })}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-xs font-bold text-white hover:bg-success/90 disabled:opacity-50"
                       >
@@ -243,7 +243,7 @@ export function FinanceVouchersPanel() {
                       const chip = STATUS_CHIP[v.status] ?? STATUS_CHIP.PENDING_FINANCE;
                       return (
                         <tr key={v.id}>
-                          <td className="whitespace-nowrap font-mono text-xs">{v.voucherNo}{v.side === "BUY" && <button className="block underline" onClick={() => download(v)}>PDF</button>}</td>
+                          <td className="whitespace-nowrap font-mono text-xs">{v.voucherNo}{(v.side === "BUY" || !!v.internalPaymentRef) && <button className="block underline" onClick={() => download(v)}>PDF</button>}</td>
                           <td className="whitespace-nowrap">
                             {v.counterpartyName}{" "}
                             <span className="font-mono text-xs text-muted-foreground">({v.counterpartyCode})</span>
@@ -254,7 +254,7 @@ export function FinanceVouchersPanel() {
                           <td className="whitespace-nowrap text-right tabular-nums">{v.amountUsd!=null?`${v.amountUsd.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} USD`:fmtPkr(v.amountPkr)}</td>
                           <td className="whitespace-nowrap">
                             <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", chip.className)}>
-                              {v.side === "BUY" && v.status === "APPROVED" ? "Complete" : chip.label}
+                              {(v.side === "BUY" || !!v.internalPaymentRef) && v.status === "APPROVED" ? "Complete" : chip.label}
                             </span>
                           </td>
                           <td className="whitespace-nowrap">{v.resolvedByName ?? "—"}</td>

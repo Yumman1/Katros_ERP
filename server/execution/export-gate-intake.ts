@@ -21,7 +21,7 @@ export async function logExportGate(raw:z.infer<typeof intakeInput>){
  });
 }
 export async function pendingExportGates(code?:string){
- const rows=await prisma.sesameExportGateIntake.findMany({where:{shipmentId:null,...(code?{commodityCode:code}:{})},orderBy:{createdAt:'asc'}});
+ const rows=await prisma.sesameExportGateIntake.findMany({where:{directThirdParty:false,shipmentId:null,...(code?{commodityCode:code}:{})},orderBy:{createdAt:'asc'}});
  return Promise.all(rows.map(async r=>{const data=r.payload as {input:z.infer<typeof intakeInput>;gatepasses:string[]};return {id:r.id,warehouseName:r.warehouseName,counterpartyName:r.counterpartyName,commodityCode:r.commodityCode,createdAt:r.createdAt,...data,choices:(await exportGateTrades(r.warehouseName)).filter(t=>t.counterpartyName===r.counterpartyName&&t.commodityCode===r.commodityCode)};}));
 }
 export async function assignExportGate(id:string,tradeRef:string,_actor:string,code?:string){
@@ -29,6 +29,7 @@ export async function assignExportGate(id:string,tradeRef:string,_actor:string,c
  return prisma.$transaction(async db=>{
   await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`gate-intake:${id}`}))::text`;
   const row=await db.sesameExportGateIntake.findUniqueOrThrow({where:{id}});
+  if(row.directThirdParty)throw new Error('Use FZCO trade assignment');
   if(!warehouses.some(w=>w.name===row.warehouseName))throw new Error('Warehouse is no longer registered');
   if(code&&row.commodityCode!==code)throw new Error('Switch to the correct commodity desk');
   if(row.shipmentId)throw new Error('This gate entry is already assigned');

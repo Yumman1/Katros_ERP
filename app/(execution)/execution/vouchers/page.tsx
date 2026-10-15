@@ -1,4 +1,7 @@
 "use client";
+import {InternalTradePayments} from "@/components/execution/internal-trade-payments";
+import {useExecutionCommodityDesk} from "@/components/execution/commodity-desk-provider";
+import {isSesameCommodity} from "@/lib/sesame";
 import {SesameExportShipments} from "@/components/execution/sesame-export-shipments";
 import { downloadPurchaseVoucher } from "@/lib/purchase-voucher-pdf";
 
@@ -52,6 +55,8 @@ export default function ExecutionVouchersPage() {
   const { data: counterparties } = trpc.execution.sellCounterparties.useQuery();
   const { data: vouchers, isLoading } = trpc.execution.vouchers.useQuery(undefined);
 
+  const {active}=useExecutionCommodityDesk();
+  const [internal,setInternal]=useState(false);
   const [international,setInternational]=useState(false);
   const [side, setSide] = useState<"SELL" | "BUY">("SELL");
   const [counterpartyId, setCounterpartyId] = useState("");
@@ -194,18 +199,19 @@ export default function ExecutionVouchersPage() {
                   key={s}
                   type="button"
                   onClick={() => {
-                    setInternational(s==="INTERNATIONAL");
+                    setInternal(false);setInternational(s==="INTERNATIONAL");
                     setSide(s==="INTERNATIONAL"?"SELL":s);
                     clearAgainst();
                   }}
                   className={cn(
                     "exec-segment-item px-3 py-1 text-xs",
-                    (s==="INTERNATIONAL"?international:!international&&side===s) && "exec-segment-active",
+                    (!internal&&(s==="INTERNATIONAL"?international:!international&&side===s)) && "exec-segment-active",
                   )}
                 >
                   {s === "INTERNATIONAL" ? "International Sale" : s === "SELL" ? "Sale" : "Purchase"}
                 </button>
               ))}
+              {isSesameCommodity(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",internal&&"exec-segment-active")} onClick={()=>{setInternal(true);setInternational(false);}}>Internal trade</button>}
             </div>
             <span className="text-xs text-subtle">
               {side === "SELL"
@@ -214,7 +220,7 @@ export default function ExecutionVouchersPage() {
             </span>
           </div>
 
-          {international?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
+          {internal?<InternalTradePayments/>:international?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Counterparty
@@ -522,8 +528,8 @@ export default function ExecutionVouchersPage() {
                   </td>
                   <td className="px-5 py-3">
                     {v.traderApprovalRequired && !v.traderApprovedAt && v.status === "PENDING_FINANCE" ? <span className="text-warning">Pending trader approval</span> : <StatusChip status={v.status} />}
-                    {v.side === "BUY" && <button className="block text-xs underline mt-2" onClick={()=>void downloadPurchaseVoucher(v).catch(e=>alert(e.message))}>Download {v.status === "APPROVED" ? "completed" : "pending"} voucher PDF</button>}
-                    {v.side === "BUY" && <p className="text-xs">{v.commodityCode} · Agreed trade amount {v.agreedTradeAmountPkr?.toLocaleString() ?? "—"} PKR · Agreed advance {v.agreedAdvancePercentage ?? "—"}%</p>}
+                    {(v.side === "BUY" || v.internalPaymentRef) && <button className="block text-xs underline mt-2" onClick={()=>void downloadPurchaseVoucher(v).catch(e=>alert(e.message))}>Download {v.status === "APPROVED" ? "completed" : "pending"} voucher PDF</button>}
+                    {(v.side === "BUY" || v.internalPaymentRef) && <p className="text-xs">{v.commodityCode} · Agreed trade amount {v.agreedTradeAmountPkr?.toLocaleString() ?? "—"} PKR · Agreed advance {v.agreedAdvancePercentage ?? "—"}%</p>}
                     {v.builtyNumber && <div className="mt-2 space-y-1"><p>Truck {v.truckNo ?? "—"} · Builty {v.builtyNumber} · {v.advancePercentage}% advance / {100 - (v.advancePercentage ?? 0)}% remaining terms</p><p>Invoice {v.invoiceNo ?? "pending"}</p>{v.adjustments.map((a, i) => <p key={i}>Applied {fmtPkr(a.amountPkr)} · {a.tradeRef} · Builty {a.builty} · Invoice {a.invoice ?? "pending"}</p>)}<p className={v.truckPaid ? "text-success" : "text-warning"}>{v.truckPaid ? "Paid" : "Truck settlement pending"}</p>{v.truckPaid && v.availableAdvancePkr > 0 && <button className="underline" onClick={() => { setAdjustVoucher(v.id); setAdjustAmount(String(v.availableAdvancePkr)); }}>Adjust excess {fmtPkr(v.availableAdvancePkr)} with future truck</button>}</div>}
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">{v.enteredByName ?? "—"}</td>

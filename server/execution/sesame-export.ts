@@ -1,3 +1,4 @@
+import {assertCustody} from './fzco-custody';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import type {Prisma} from '@prisma/client';
@@ -36,9 +37,9 @@ export async function exportGateTrades(warehouse?:string){
  return trades.filter(t=>!internalEntity(t.tradeParams)&&isSesameCommodity(t.commodity.code)&&(!warehouse||warehouseAllowedForCommodity(warehouse,t.commodity.code))&&(!warehouse||!t.contract?.warehouseAllocations.length||tradeEntity(t.tradeParams)==='FZCO'||t.contract.warehouseAllocations.some(a=>a.warehouseName===warehouse))).map(t=>({tradeRef:t.tradeRef,counterpartyName:t.counterparty.name,counterpartyCode:t.counterparty.code,commodityCode:t.commodity.code,commodityName:t.commodity.name,entity:tradeEntity(t.tradeParams)}));
 }
 const directContainers=z.array(z.object({truckNo:text,containerNo:z.string().trim().max(120).default(''),croNo:z.string().trim().max(120).default(''),weightKg:z.number().finite().positive().multipleOf(.001).max(1000000)})).min(1).max(100);
-export const directGateInput=exportGateInput.omit({warehouseName:true,recordedByName:true}).extend({containers:directContainers,dispatchLocation:text,movementDate:z.coerce.date(),documentLinks:z.array(z.string().url().max(2000).refine(v=>v.startsWith("https://"),"Use HTTPS document links")).max(20).default([])});
-export async function addExportContainers(raw:z.infer<typeof exportGateInput>, direct?:{dispatchLocation:string;movementDate:Date;documentLinks:string[]}, transaction?:Prisma.TransactionClient, gatepassNumbers?:string[]){
- const input=(direct?exportGateInput.extend({containers:directContainers}):exportGateInput).parse(raw);const hash=createHash('sha256').update(JSON.stringify({input,direct:direct?{dispatchLocation:direct.dispatchLocation,movementDate:direct.movementDate,documentLinks:direct.documentLinks}:null})).digest('hex');
+export const directGateInput=exportGateInput.omit({warehouseName:true,recordedByName:true}).extend({containers:directContainers,holderId:z.string().min(1),dispatchLocation:text,movementDate:z.coerce.date(),documentLinks:z.array(z.string().url().max(2000).refine(v=>v.startsWith("https://"),"Use HTTPS document links")).max(20).default([])});
+export async function addExportContainers(raw:z.infer<typeof exportGateInput>, direct?:{holderId:string;dispatchLocation:string;movementDate:Date;documentLinks:string[]}, transaction?:Prisma.TransactionClient, gatepassNumbers?:string[]){
+ const input=(direct?exportGateInput.extend({containers:directContainers}):exportGateInput).parse(raw);const hash=createHash('sha256').update(JSON.stringify({input,direct:direct?{holderId:direct.holderId,dispatchLocation:direct.dispatchLocation,movementDate:direct.movementDate,documentLinks:direct.documentLinks}:null})).digest('hex');
  const warehouses=direct||transaction?[]:await getCompanyWarehouses();if(!direct&&!transaction&&!warehouses.some(w=>w.name===input.warehouseName))throw new Error('Select a company warehouse');
  const run=async (db:Prisma.TransactionClient)=>{
   const trade=await db.trade.findUniqueOrThrow({where:{tradeRef:input.tradeRef},include:{commodity:true,counterparty:true,contract:{include:{warehouseAllocations:true}}}});validTrade(trade,!!direct);
@@ -54,6 +55,7 @@ export async function addExportContainers(raw:z.infer<typeof exportGateInput>, d
   const ownership=trade.direction==='BUY'?await db.sesameOwnershipEntry.aggregate({where:{tradeRef:trade.tradeRef,truckId:null},_sum:{quantityMt:true}}):null;
   if(n(allocated._sum.allocatedQtyMt)*1000+n(directAllocated._sum.totalWeightKg)+n(ownership?._sum.quantityMt)*1000+total>quantityUnitToKg(n(c.contractualQtyMt)+n(c.quantityToleranceMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds remaining trade quantity');
   if(!direct&&entity==='PAK'&&c.warehouseAllocations.length){const a=c.warehouseAllocations.find(a=>a.warehouseName===input.warehouseName);if(!a)throw new Error('Warehouse is not allocated to this trade');const used=await db.outboundDispatch.aggregate({where:{tradeRef:trade.tradeRef,warehouseName:input.warehouseName},_sum:{allocatedQtyMt:true}});if(n(used._sum.allocatedQtyMt)*1000+total>quantityUnitToKg(n(a.qtyMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds the trade warehouse allocation');}
+  if(direct){await db.counterparty.findUniqueOrThrow({where:{id:direct.holderId}});if(trade.direction==='SELL')await assertCustody(db,code,grade,total/1000,{holderId:direct.holderId,location:direct.dispatchLocation});}
   if(!direct&&entity==='PAK'){
    const available=await processingAvailability(db,code,input.warehouseName,grade,trade.tradeRef);if(total>available.availableKg+.001)throw new Error('Insufficient unreserved Pakistan-owned stock');
   }else if(!direct){
@@ -68,8 +70,8 @@ export async function addExportContainers(raw:z.infer<typeof exportGateInput>, d
   let group=await db.sesameExportShipment.findFirst({where:{tradeRef:trade.tradeRef,warehouseName:input.warehouseName,directThirdParty:!!direct,status:'DRAFT'}});
   const rate=n(c.ratePerKg);if(rate<=0)throw new Error('The locked trade needs a valid settlement rate');
   const params=trade.tradeParams as Record<string,unknown>|null;const fx=trade.currency==='PKR'?1:n(params?.executionFxPkrPerUsd);if(!['PKR','USD'].includes(trade.currency)||fx<=0)throw new Error('Lock a valid exchange rate for this trade first');
-  if(!group)group=await db.sesameExportShipment.create({data:{tradeRef:trade.tradeRef,warehouseName:input.warehouseName,directThirdParty:!!direct,dispatchLocation:direct?.dispatchLocation,movementDate:direct?.movementDate,documentLinks:direct?.documentLinks??[],totalWeightKg:0,ratePkrPerKg:rate,quotedCurrency:trade.currency,fxRate:fx,defaultAmountPkr:0,amountPkr:0,createdBy:input.recordedByName}});
-  if(group.directThirdParty&&group.dispatchLocation!==direct?.dispatchLocation)throw new Error('Finish the open shipment before changing dispatch location');
+  if(!group)group=await db.sesameExportShipment.create({data:{tradeRef:trade.tradeRef,warehouseName:input.warehouseName,directThirdParty:!!direct,holderId:direct?.holderId,dispatchLocation:direct?.dispatchLocation,movementDate:direct?.movementDate,documentLinks:direct?.documentLinks??[],totalWeightKg:0,ratePkrPerKg:rate,quotedCurrency:trade.currency,fxRate:fx,defaultAmountPkr:0,amountPkr:0,createdBy:input.recordedByName}});
+  if(group.directThirdParty&&(group.dispatchLocation!==direct?.dispatchLocation||group.holderId!==direct?.holderId))throw new Error('Finish the open shipment before changing dispatch location');
   const numbers=input.containers.map(t=>t.containerNo.toUpperCase()).filter(Boolean);if(new Set(numbers).size!==numbers.length)throw new Error('Container numbers must be unique within the shipment');
   if(await db.pendingTruck.count({where:{exportShipment:{tradeRef:trade.tradeRef},containerNo:{in:numbers}}}))throw new Error('This container is already recorded against this trade');
   for(const [index,item] of input.containers.entries()){
@@ -103,6 +105,11 @@ export async function exportAction(id:string,revision:number,actor:string,action
    requireStage('APPROVED');if(!s.gateOutSlipNo)throw new Error('Approved gate-out slip required');
    const grade=sesameGrade(s.trade.tradeParams);const stock=(await sesameGrades(db,s.trade.commodity.code)).find(w=>w.name===s.warehouseName)?.grades[grade]??0;
    if(!s.directThirdParty&&n(s.totalWeightKg)>stock*1000+.001)throw new Error('Physical grade stock no longer covers this shipment');
+   if(s.directThirdParty){
+    if(!s.holderId)throw new Error('Confirm the stock holder before releasing this legacy shipment');
+    if(s.trade.direction==='SELL')await assertCustody(db,s.trade.commodity.code,grade,n(s.totalWeightKg)/1000,{holderId:s.holderId,location:s.dispatchLocation??''},true);
+    await db.sesameOwnershipEntry.create({data:{tradeRef:s.tradeRef,commodityCode:s.trade.commodity.code,fromEntity:s.trade.direction==='SELL'?'FZCO':null,toEntity:s.trade.direction==='BUY'?'FZCO':null,holderId:s.holderId,holderLocation:s.dispatchLocation,quantityMt:n(s.totalWeightKg)/1000,truckId:s.trucks[0].id,recordedBy:actor,documentRef:s.deliveryOrderNo,ownershipDate:new Date()}});
+   }
    for(const t of s.trucks){if(t.saleReleasedAt)throw new Error('Container already released');if(!s.directThirdParty&&t.executionEntity==='FZCO')await releaseFzcoOwnership(db,t.id,actor);await db.pendingTruck.update({where:{id:t.id},data:{saleReleasedAt:new Date(),saleReleasedBy:actor}});await db.outboundDispatch.updateMany({where:{gatepassNo:t.gatepassNo,status:'AT_GATE'},data:{status:'RELEASED',doRef:s.deliveryOrderNo!,dispatchDate:new Date()}});}
    data.status='RELEASED';data.releasedAt=new Date();
   }

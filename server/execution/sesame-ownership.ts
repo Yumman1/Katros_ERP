@@ -1,3 +1,4 @@
+import {custodyRows,assertCustody} from './fzco-custody';
 import { sesameGrades, assertGradeAvailable } from "./sesame-processing";
 import { sesameGrade } from "@/lib/sesame-processing";
 import { Prisma } from "@prisma/client";
@@ -12,7 +13,7 @@ type DB = Prisma.TransactionClient;
 const n = (v: unknown) => Number(v ?? 0);
 import { lockSesameOwnership, fzcoCustody, reservedFzco, physicalStock, pakistanAvailable } from "./sesame-stock";
 
-export async function confirmOwnership(input: { tradeRef: string; quantityMt: number; warehouseName?: string; entity: SesameEntity; actor: string }) {
+export async function confirmOwnership(input: { tradeRef: string; quantityMt: number; warehouseName?: string; entity: SesameEntity; actor: string; holderId?: string; holderLocation?: string; documentRef?: string; ownershipDate?: Date; requestKey?: string }) {
   await prisma.$transaction(async db => {
     const t = await db.trade.findUniqueOrThrow({ where: { tradeRef: input.tradeRef }, include: { commodity: true, contract: true } });
     const contract = t.contract;
@@ -21,6 +22,7 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
     if (!internalEntity(t.tradeParams) && !(tradeEntity(t.tradeParams) === "FZCO" && t.direction === "BUY")) throw new Error("External sales require a truck release");
     if (internalEntity(t.tradeParams) && input.entity !== "PAK") throw new Error("Pakistan execution must confirm the stock held in custody");
     await lockSesameOwnership(db, t.commodity.code);
+    if(input.requestKey && await db.sesameOwnershipEntry.findUnique({where:{requestKey:input.requestKey}})) throw new Error("Ownership confirmation already recorded");
     if(!internalEntity(t.tradeParams)&&await db.sesameExportShipment.count({where:{tradeRef:t.tradeRef,directThirdParty:true}}))throw new Error("This purchase is fulfilled through FZCO Truck Movement");
     const confirmed = await db.sesameOwnershipEntry.aggregate({ where: { tradeRef: t.tradeRef, truckId: null }, _sum: { quantityMt: true } });
     if (input.quantityMt <= 0 || n(confirmed._sum.quantityMt) + input.quantityMt > n(t.quantity) + 0.000001) throw new Error("Quantity exceeds the unconfirmed trade quantity");
@@ -33,12 +35,24 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
       if (await pakistanAvailable(db, t.commodity.code, warehouseName) + 0.000001 < input.quantityMt) throw new Error("Insufficient unreserved Pakistan-owned stock at this warehouse");
     } else if (sides.fromEntity === "FZCO") {
       if (!warehouseName) throw new Error("Pakistan execution must identify the existing custody warehouse for an internal return");
+      await assertCustody(db,t.commodity.code,sesameGrade(t.tradeParams),input.quantityMt,{warehouseName});
       if ((custody.get(warehouseName) ?? 0) - (reserved.get(warehouseName) ?? 0) + 0.000001 < input.quantityMt) throw new Error("Insufficient unreserved FZCO ownership at this warehouse");
     } else {
       // External FZCO purchases are paper inventory; never manufacture a warehouse receipt.
+      if(input.entity!=="FZCO" || !input.holderId || !input.holderLocation?.trim() || !input.documentRef?.trim() || !input.ownershipDate)throw new Error("Enter the stock holder, location, ownership date and supporting document");
+      await db.counterparty.findUniqueOrThrow({where:{id:input.holderId}});
       warehouseName = null;
     }
-    const entry = await db.sesameOwnershipEntry.create({ data: { tradeRef: t.tradeRef, commodityCode: t.commodity.code, ...sides, quantityMt: input.quantityMt, warehouseName, recordedBy: input.actor } });
+    const entry = await db.sesameOwnershipEntry.create({ data: { tradeRef: t.tradeRef, commodityCode: t.commodity.code, ...sides, quantityMt: input.quantityMt, warehouseName, recordedBy: input.actor, requestKey:input.requestKey, holderId:warehouseName?null:input.holderId,holderLocation:warehouseName?null:input.holderLocation?.trim(),documentRef:input.documentRef,ownershipDate:input.ownershipDate } });
+    if(internalEntity(t.tradeParams)){
+      const {entityCounterparty}=await import('@/server/finance/internal-payments');
+      for(const entity of ['PAK','FZCO'] as const){
+        const cp=await entityCounterparty(db,entity==='PAK'?'FZCO':'PAK',t.createdById);
+        const side=tradeEntity(t.tradeParams)===entity?t.direction:t.direction==='BUY'?'SELL':'BUY';
+        const fx=Number((t.tradeParams as Record<string,unknown>)?.executionFxPkrPerUsd)||null;
+        await db.counterpartyLedgerEntry.create({data:{executionEntity:entity,paymentFxRate:fx,counterpartyId:cp.id,side,entryType:'DEBIT',amountPkr:Math.round(input.quantityMt*1000*n(contract.ratePerKg)*100)/100,sourceType:'INVOICE',sourceRef:`OWN-${entry.id}-${entity}`,tradeRef:t.tradeRef,note:`Internal ${side==='BUY'?'purchase':'sale'} ownership invoice · ${input.quantityMt} MT`}});
+      }
+    }
     if (!internalEntity(t.tradeParams)) {
       // A paper purchase has no gate invoice. Its payable is an open ownership
       // note, settled by the existing finance-approved note-voucher workflow.
@@ -93,7 +107,7 @@ export async function sesameBook(code: string) {
     const valuePkr = inOut != null ? inOut*(owned+buys-sells)*25 : null;
     return { entity, ownedMt: owned, openBuyMt: buys, bookedNotLeftMt: sells, freeMt: owned-sells, netPositionMt: entity === "FZCO" ? buys-sells : owned+buys-sells, physicalInPakistanMt: entity === "PAK" ? physicalPak-impurities : heldForFzco-heldImpurities, loadingMt: entity === "FZCO" ? [...reserved.values()].reduce((a,b)=>a+b,0) : 0, entryRatePkrPerMaund: entryRate, marketRatePkrPerMaund: marketRate, inOutPkrPerMaund: inOut, inOutValuePkr: valuePkr, inOutValueUsd: valuePkr != null && market?.fxRate ? valuePkr/market.fxRate : null };
   });
-  return { trades: rows, positions, warehouses: [...physical].map(([name, quantityMt]) => ({ name, quantityMt, fzcoOwnedMt: custody.get(name) ?? 0, pakistanOwnedMt: quantityMt-(custody.get(name) ?? 0) })), entries: entries.map(e => ({ ...e, quantityMt: n(e.quantityMt) })) };
+  return { custody:await custodyRows(prisma,code), trades: rows, positions, warehouses: [...physical].map(([name, quantityMt]) => ({ name, quantityMt, fzcoOwnedMt: custody.get(name) ?? 0, pakistanOwnedMt: quantityMt-(custody.get(name) ?? 0) })), entries: entries.map(e => ({ ...e, quantityMt: n(e.quantityMt) })) };
 }
 
 /** FZCO trucks reserve existing ownership and use the existing DO/finance/gate workflow. */
@@ -108,7 +122,9 @@ export async function loadFzcoTruck(input: { tradeRef: string; truckNo: string; 
     const qty = input.weightKg / 1000;
     if (qty <= 0 || n(allocated._sum.allocatedQtyMt)+qty > n(t.quantity)+0.000001) throw new Error("Truck exceeds the remaining sale quantity");
     const custody = await fzcoCustody(db, t.commodity.code), reserved = await reservedFzco(db, t.commodity.code);
-    const available = [...custody].map(([warehouseName,total]) => ({ warehouseName, available: total-(reserved.get(warehouseName)??0) })).sort((a,b) => a.warehouseName.localeCompare(b.warehouseName));
+    const grade=sesameGrade(t.tradeParams);
+    const graded=await custodyRows(db,t.commodity.code);
+    const available = [...custody].filter(([wh])=>!!wh).map(([warehouseName,total]) => ({ warehouseName, available: Math.min(total-(reserved.get(warehouseName)??0),graded.find(r=>r.warehouseName===warehouseName&&r.grade===grade)?.availableMt??0) })).sort((a,b) => a.warehouseName.localeCompare(b.warehouseName));
     if (available.reduce((s,a)=>s+Math.max(0,a.available),0)+0.000001 < qty) throw new Error("FZCO does not own enough unreserved stock");
     const amount = Math.round(input.weightKg*n(c.ratePerKg)*100)/100;
     // UUID-based document source; the existing workflow issues sequential DO/gate-out documents.
@@ -135,6 +151,9 @@ export async function releaseFzcoOwnership(db: DB, truckId: string, actor: strin
   const custody = await fzcoCustody(db, truck.commodityCode!);
   const physical = await physicalStock(db, truck.commodityCode!);
   for (const d of dispatches) {
+    const trade=await db.trade.findUniqueOrThrow({where:{tradeRef:d.tradeRef}});
+    if(!d.warehouseName)throw new Error("Use third-party movements for off-site stock");
+    await assertCustody(db,truck.commodityCode!,sesameGrade(trade.tradeParams),n(d.allocatedQtyMt),{warehouseName:d.warehouseName},true);
     if ((custody.get(d.warehouseName) ?? 0)+0.000001 < n(d.allocatedQtyMt)) throw new Error("FZCO ownership no longer covers this load");
     if (d.warehouseName && (physical.get(d.warehouseName) ?? 0)+0.000001 < n(d.allocatedQtyMt)) throw new Error("Physical stock no longer covers this load");
     await db.sesameOwnershipEntry.create({ data: { commodityCode: truck.commodityCode!, tradeRef: d.tradeRef, fromEntity: "FZCO", toEntity: null, quantityMt: d.allocatedQtyMt, warehouseName: d.warehouseName || null, truckId, recordedBy: actor } });

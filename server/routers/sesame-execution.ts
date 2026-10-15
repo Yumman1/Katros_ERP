@@ -1,3 +1,4 @@
+import {internalPaymentRows,createInternalPayment} from '@/server/finance/internal-payments';
 import { editWarehouseProduction, editProcessingInput, warehouseProcessing, createProcessingPlan, recordWarehouseProduction, updateProcessingPlan, processingPlanInput, dailyProcessingInput } from "@/server/execution/warehouse-processing";
 import { requireTraderCommodity } from "@/server/trader-commodity-access";
 import { prisma } from "@/server/db";
@@ -15,6 +16,8 @@ async function action<T>(fn: () => Promise<T>) {
   try { return await fn(); } catch(e) { throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Execution action failed" }); }
 }
 export const sesameExecutionRouter = router({
+  internalPayments:roleProcedure(['EXECUTION','FINANCE']).query(({ctx})=>internalPaymentRows(codeOf(ctx.executionCommodityCode),ctx.executionEntity??'PAK')),
+  createInternalPayment:roleProcedure(['EXECUTION']).input(z.object({tradeRef:z.string(),paymentRef:z.string().trim().min(1).max(120),amountPkr:z.number().finite().positive().multipleOf(.01)})).mutation(({ctx,input})=>action(()=>createInternalPayment({...input,entity:ctx.executionEntity??'PAK',actor:ctx.session.user.name??ctx.session.user.id,userId:ctx.session.user.id,code:codeOf(ctx.executionCommodityCode)}))),
   positionSnapshot: roleProcedure(["TRADER","EXECUTION","ADMIN","FINANCE"]).input(z.object({commodityCode:z.string()})).query(async ({ctx,input}) => {
     const code=codeOf(ctx.session.user.role === "TRADER" ? input.commodityCode : ctx.executionCommodityCode);
     const user=await prisma.user.findUnique({where:{id:ctx.session.user.id},select:{disabled:true}});
@@ -63,7 +66,7 @@ export const sesameExecutionRouter = router({
     }
     return sesameBook(code);
   }),
-  confirmOwnership: headProcedure("EXECUTION").input(z.object({ tradeRef: z.string(), quantityMt: z.number().finite().positive(), warehouseName: z.string().optional() })).mutation(({ctx,input}) => {
+  confirmOwnership: headProcedure("EXECUTION").input(z.object({ tradeRef: z.string(), quantityMt: z.number().finite().positive(), warehouseName: z.string().optional(),holderId:z.string().optional(),holderLocation:z.string().trim().min(1).max(120).optional(),documentRef:z.string().trim().min(1).max(2000).optional(),ownershipDate:z.coerce.date().optional(),requestKey:z.string().uuid().optional() })).mutation(({ctx,input}) => {
     codeOf(ctx.executionCommodityCode);
     return action(() => confirmOwnership({ ...input, entity: ctx.executionEntity ?? "PAK", actor: ctx.session.user.name ?? ctx.session.user.id }));
   }),
