@@ -1,4 +1,5 @@
 "use client";
+import {ExportGateAssignment} from "@/components/execution/export-gate-assignment";
 import {SesameExportShipments} from "@/components/execution/sesame-export-shipments";
 
 import { Suspense } from "react";
@@ -428,7 +429,7 @@ function ExternalTruckMovements() {
           <Kpi icon={<Truck className="h-5 w-5" />} label="Awaiting Assignment" value={unassignedGatepassCount} variant="accent" />
         </div>
 
-        <SesameExportShipments mode="movement"/>
+        <ExportGateAssignment/><SesameExportShipments mode="movement"/>
         {/* ── Truck Workflow: unassigned / incomplete gatepass trucks ── */}
         {unassignedGatepassCount > 0 && (
           <section className="flex min-w-0 flex-col gap-3">

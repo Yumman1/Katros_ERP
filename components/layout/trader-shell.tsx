@@ -60,6 +60,8 @@ export function TraderShell({ children }: { children: ReactNode }) {
     retry: false,
   });
 
+  const groupedDos=trpc.sesameExport.list.useQuery(undefined,{refetchInterval:15000,retry:false});
+  const groupedDoCount=groupedDos.data?.filter(s=>s.status==="TRADER_PENDING").length??0;
   const sesameDesk = isSesameCommodity(desk.active?.code);
   const appNav = nav.flatMap((item) => {
     const mapped = {
@@ -69,7 +71,7 @@ export function TraderShell({ children }: { children: ReactNode }) {
         item.href === "/trader/invoice-approvals"
           ? navBadge((buyApprovals.data ?? 0) + (sellApprovals.data ?? 0))
           : item.href === "/trader/approvals"
-            ? navBadge((editApprovals.data ?? 0) + (overDeliveryApprovals.data ?? 0))
+            ? navBadge((editApprovals.data ?? 0) + (overDeliveryApprovals.data ?? 0) + groupedDoCount)
             : undefined,
     };
     if (sesameDesk && item.href === "/trader/positions") {

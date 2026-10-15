@@ -9,6 +9,7 @@ const qualitySchema = z.object({
 });
 
 export const gatepassSchema = z.object({
+  purchaseBasis: z.enum(["PURCHASE_SPOT","PURCHASE_DELIVERED"]).default("PURCHASE_DELIVERED"),
   advanceVoucherId: z.string().optional(),
   purchaseTradeRef: z.string().optional(),
   advanceTradeRef: z.string().optional(),

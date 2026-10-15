@@ -1770,6 +1770,7 @@ model SesameProcessingPlan {
 }
 
 model SesameExportShipment {
+ gateIntakes SesameExportGateIntake[]
  directThirdParty Boolean @default(false)
  dispatchLocation String?
  movementDate DateTime?
@@ -1810,4 +1811,18 @@ model SesameExportSubmission {
  shipment SesameExportShipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
  payloadHash String
  createdAt DateTime @default(now())
+}
+
+model SesameExportGateIntake {
+ id String @id
+ warehouseName String
+ counterpartyName String
+ commodityCode String
+ recordedByName String
+ payload Json
+ shipmentId String?
+ shipment SesameExportShipment? @relation(fields:[shipmentId],references:[id],onDelete:Restrict)
+ createdAt DateTime @default(now())
+ assignedAt DateTime?
+ @@index([commodityCode,shipmentId])
 }

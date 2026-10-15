@@ -1,4 +1,6 @@
 /** Integration check. Refuses non-local databases and requires an empty disposable schema. */
+import {logExportGate,pendingExportGates} from '../server/execution/export-gate-intake';
+import {POST as postWarehouseGate} from '../app/api/warehouse-gatepass/route';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {prisma} from '../server/db';
@@ -107,6 +109,25 @@ async function main(){
  assert.ok((await caller(exec,'PAK').sesameExport.list()).some(s=>s.id===f.id));
  assert.ok(!(await caller(exec,'PAK').sesameExport.list()).some(s=>s.id===d.id));
  await assert.rejects(()=>caller(exec,'PAK').sesameExport.release({id:d.id,revision:d.revision}));
+
+ const gateInput={requestKey:randomUUID(),warehouseName:'Export Store',counterpartyName:cp.name,commodityCode:'SES',recordedByName:'Warehouse staff',transporterName:'Carrier',transporterPhone:'',remarks:'',containers:[{truckNo:'NO-REF-1',containerNo:'NO-REF-C1',croNo:'CRO-NR',weightKg:5000}]};
+ const gate=await logExportGate(gateInput);assert.equal(gate.gatepasses.length,1);
+ assert.deepEqual(await logExportGate(gateInput),gate);
+ assert.equal(await prisma.pendingTruck.count({where:{gatepassNo:gate.gatepasses[0]}}),0);
+ assert.ok((await pendingExportGates('SES')).some(g=>g.id===gate.id));
+ await assert.rejects(()=>caller(exec,'FZCO').sesameExport.assignGate({id:gate.id,tradeRef:ft.tradeRef}));
+ const assigned=await caller(exec,'PAK').sesameExport.assignGate({id:gate.id,tradeRef:ft.tradeRef});
+ assert.equal(assigned.trucks[0].gatepassNo,gate.gatepasses[0]);assert.equal(assigned.totalWeightKg,5000);
+ assert.equal((await pendingExportGates('SES')).length,0);
+ await assert.rejects(()=>caller(exec,'PAK').sesameExport.assignGate({id:gate.id,tradeRef:ft.tradeRef}),/already assigned/);
+ assert.equal(await stock(),90);
+ const pbuy=await trade('WAREHOUSE-NO-REF','PAK','LOCAL');await prisma.trade.update({where:{id:pbuy.id},data:{direction:'BUY'}});
+ await prisma.executionContract.update({where:{tradeRef:pbuy.tradeRef},data:{direction:'BUY',executionProfile:'PURCHASE_SPOT',paperOwnership:false}});
+ const response=await postWarehouseGate(new Request('http://localhost/api/warehouse-gatepass',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({movementType:'INBOUND',counterpartyName:cp.name,warehouseName:'Export Store',truckNo:'IN-NO-REF',builtyDetails:'123456',commodityCode:'SES',commodityName:'Sesame',recordedByName:'Warehouse staff',purchaseBasis:'PURCHASE_SPOT',weightAsPerBuiltyKg:1000,warehouseWeightKg:990})}));
+ const gateResponse=await response.json();assert.equal(response.status,200,JSON.stringify(gateResponse));
+ const inbound=await prisma.pendingTruck.findFirstOrThrow({where:{truckNo:'IN-NO-REF'}});assert.equal(inbound.purchaseTradeRef,null);assert.equal(inbound.assignedTradeRef,null);assert.equal(Number(inbound.weightKg),990);
+ const missingWeight=await postWarehouseGate(new Request('http://localhost/api/warehouse-gatepass',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({movementType:'INBOUND',counterpartyName:cp.name,warehouseName:'Export Store',truckNo:'IN-BAD',builtyDetails:'123457',commodityCode:'SES',commodityName:'Sesame',recordedByName:'Warehouse staff',purchaseBasis:'PURCHASE_DELIVERED',weightAsPerBuiltyKg:1000})}));assert.equal(missingWeight.status,400);assert.match((await missingWeight.json()).error,/Warehouse weight/);
+ console.log('PASS: no-reference inbound gate, delivered validation, unassigned international gate logging, retry safety, Execution assignment, preserved gate numbers and physical stock');
  console.log('PASS: FZCO independent long/short, purchases and sales, third-party stock isolation, partial fulfilment, USD ledger, Finance supplier payment, PAK movement visibility and permissions');
  console.log('PASS: grouped gates, retries, trade quantity, immutable DOs, all approvals, role/entity isolation, unpaid release, physical inventory, BL uniqueness, manual amount, partial receipts, ledger, double-payment protection, earmarked funds, partial shipments, local exclusion, FZCO ownership');
 }

@@ -433,7 +433,7 @@ function AccountCard({
                       </td>
                       <td className="whitespace-nowrap">
                         <span className="text-[10px] uppercase tracking-wider text-subtle">
-                          {SOURCE_LABELS[e.sourceType]}
+                          {e.sourceType==="INVOICE"?(isSell?"Sales invoice":"Purchase invoice"):e.sourceType==="VOUCHER"?(isSell?"Payment receipt":"Payment voucher"):SOURCE_LABELS[e.sourceType]}
                         </span>
                         <span className="ml-1.5 font-mono text-xs">{e.sourceRef ?? e.voucherNo ?? "—"}</span>
                       </td>

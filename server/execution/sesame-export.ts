@@ -37,10 +37,10 @@ export async function exportGateTrades(warehouse?:string){
 }
 const directContainers=z.array(z.object({truckNo:text,containerNo:z.string().trim().max(120).default(''),croNo:z.string().trim().max(120).default(''),weightKg:z.number().finite().positive().multipleOf(.001).max(1000000)})).min(1).max(100);
 export const directGateInput=exportGateInput.omit({warehouseName:true,recordedByName:true}).extend({containers:directContainers,dispatchLocation:text,movementDate:z.coerce.date(),documentLinks:z.array(z.string().url().max(2000).refine(v=>v.startsWith("https://"),"Use HTTPS document links")).max(20).default([])});
-export async function addExportContainers(raw:z.infer<typeof exportGateInput>, direct?:{dispatchLocation:string;movementDate:Date;documentLinks:string[]}){
+export async function addExportContainers(raw:z.infer<typeof exportGateInput>, direct?:{dispatchLocation:string;movementDate:Date;documentLinks:string[]}, transaction?:Prisma.TransactionClient, gatepassNumbers?:string[]){
  const input=(direct?exportGateInput.extend({containers:directContainers}):exportGateInput).parse(raw);const hash=createHash('sha256').update(JSON.stringify({input,direct:direct?{dispatchLocation:direct.dispatchLocation,movementDate:direct.movementDate,documentLinks:direct.documentLinks}:null})).digest('hex');
- const warehouses=direct?[]:await getCompanyWarehouses();if(!direct&&!warehouses.some(w=>w.name===input.warehouseName))throw new Error('Select a company warehouse');
- return prisma.$transaction(async db=>{
+ const warehouses=direct||transaction?[]:await getCompanyWarehouses();if(!direct&&!transaction&&!warehouses.some(w=>w.name===input.warehouseName))throw new Error('Select a company warehouse');
+ const run=async (db:Prisma.TransactionClient)=>{
   const trade=await db.trade.findUniqueOrThrow({where:{tradeRef:input.tradeRef},include:{commodity:true,counterparty:true,contract:{include:{warehouseAllocations:true}}}});validTrade(trade,!!direct);
   const code=trade.commodity.code,entity=tradeEntity(trade.tradeParams);if(!direct&&!warehouseAllowedForCommodity(input.warehouseName,code))throw new Error('Warehouse is not allocated to Sesame');
   await lockSesameOwnership(db,code);
@@ -72,8 +72,8 @@ export async function addExportContainers(raw:z.infer<typeof exportGateInput>, d
   if(group.directThirdParty&&group.dispatchLocation!==direct?.dispatchLocation)throw new Error('Finish the open shipment before changing dispatch location');
   const numbers=input.containers.map(t=>t.containerNo.toUpperCase()).filter(Boolean);if(new Set(numbers).size!==numbers.length)throw new Error('Container numbers must be unique within the shipment');
   if(await db.pendingTruck.count({where:{exportShipment:{tradeRef:trade.tradeRef},containerNo:{in:numbers}}}))throw new Error('This container is already recorded against this trade');
-  for(const item of input.containers){
-   const gatepassNo=await nextSerial(SERIALS.GATEPASS_OUTBOUND,db);
+  for(const [index,item] of input.containers.entries()){
+   const gatepassNo=gatepassNumbers?.[index]??await nextSerial(SERIALS.GATEPASS_OUTBOUND,db);
    const truck=await db.pendingTruck.create({data:{exportShipmentId:group.id,containerNo:item.containerNo.toUpperCase()||null,croNo:item.croNo||null,truckNo:item.truckNo.toUpperCase(),gatepassNo,arrivalDate:direct?.movementDate??new Date(),movementType:trade.direction==='BUY'?'INBOUND':'OUTBOUND',status:'ASSIGNED',warehouseName:direct?'':input.warehouseName,counterpartyName:trade.counterparty.name,commodityCode:code,commodityName:trade.commodity.name,executionEntity:entity,recordedByName:input.recordedByName,transporterName:input.transporterName,transporterPhone:input.transporterPhone,remarks:input.remarks,builtyDetails:item.croNo,weightKg:item.weightKg,weightAsPerBuiltyKg:item.weightKg,remainingKg:0,assignedTradeRef:trade.tradeRef,assignedAt:new Date()}});
    if(!direct)await db.outboundDispatch.create({data:{gatepassNo,tradeRef:trade.tradeRef,dispatchDate:new Date(),liftedBy:input.transporterName||input.recordedByName,buyerName:trade.counterparty.name,warehouseName:input.warehouseName,truckNo:truck.truckNo,dispatchWeightKg:item.weightKg,invoiceWeightKg:item.weightKg,fungusPct:0,doRef:gatepassNo,allocatedQtyMt:item.weightKg/1000,amountDue:money(item.weightKg*rate),status:'AT_GATE'}});
   }
@@ -81,7 +81,8 @@ export async function addExportContainers(raw:z.infer<typeof exportGateInput>, d
   await db.sesameExportShipment.update({where:{id:group.id},data:{...(direct?{documentLinks:[...new Set([...(Array.isArray(group.documentLinks)?group.documentLinks.filter((v):v is string=>typeof v==="string"):[]),...direct.documentLinks])]}:{}),totalWeightKg:newWeight,defaultAmountPkr:amount,amountPkr:amount,revision:{increment:1},audit:audit(group,input.recordedByName,'Containers added',{weightKg:total})}});
   await db.sesameExportSubmission.create({data:{id:input.requestKey,shipmentId:group.id,payloadHash:hash}});
   return exportView(await db.sesameExportShipment.findUniqueOrThrow({where:{id:group.id},include}));
- },{timeout:30000});
+ };
+ return transaction?run(transaction):prisma.$transaction(run,{timeout:30000});
 }
 export async function exportRows(){return prisma.sesameExportShipment.findMany({include,orderBy:{createdAt:'desc'}});}
 export async function exportAction(id:string,revision:number,actor:string,action:'generate'|'trader'|'execution'|'finance'|'reject'|'release'|'bl'|'adjust',value?:{blNo?:string;amountPkr?:number;reason?:string;expectedStage?:string}){

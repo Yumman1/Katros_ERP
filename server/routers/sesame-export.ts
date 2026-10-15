@@ -1,3 +1,4 @@
+import {pendingExportGates,assignExportGate} from '@/server/execution/export-gate-intake';
 import {z} from 'zod';
 import {TRPCError} from '@trpc/server';
 import {router,roleProcedure,headProcedure} from '@/server/trpc/trpc';
@@ -20,6 +21,12 @@ async function access(ctx:Context,id:string,financial=false){
 const actor=(ctx:Context)=>ctx.session!.user.name??ctx.session!.user.id;
 async function action<T>(fn:()=>Promise<T>){try{return await fn();}catch(e){if(e instanceof TRPCError)throw e;throw new TRPCError({code:'BAD_REQUEST',message:e instanceof Error?e.message:'Shipment action failed'});}}
 export const sesameExportRouter=router({
+ pendingGates:roleProcedure(['EXECUTION']).query(async({ctx})=>{const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});return ctx.executionEntity==='FZCO'?[]:pendingExportGates(ctx.executionCommodityCode);}),
+ assignGate:roleProcedure(['EXECUTION']).input(z.object({id:z.string().uuid(),tradeRef:z.string().min(1)})).mutation(async({ctx,input})=>{
+  if(ctx.executionEntity==='FZCO')throw new TRPCError({code:'FORBIDDEN',message:'Assign warehouse gates in Pakistan Execution'});
+  const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
+  return action(()=>assignExportGate(input.id,input.tradeRef,actor(ctx),ctx.executionCommodityCode));
+ }),
  usdLedger:roleProcedure(['EXECUTION','TRADER','FINANCE']).query(async({ctx})=>{
   const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
   const trades=(await prisma.trade.findMany({include:{commodity:true,counterparty:true},where:{commodity:ctx.executionCommodityCode?{code:ctx.executionCommodityCode}:undefined}})).filter(t=>isSesameCommodity(t.commodity.code)&&tradeEntity(t.tradeParams)==='FZCO'&&(ctx.session.user.role!=='TRADER'||traderNamesMatch(t.traderName,ctx.session.user.name??'')));

@@ -61,7 +61,9 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
     retry: false,
   });
 
-  const teamApprovalsBadgeCount = (pendingApprovals ?? 0) + (pendingDo?.length ?? 0);
+  const groupedDos=trpc.sesameExport.list.useQuery(undefined,{enabled:isExecutionHead,refetchInterval:15000,retry:false});
+  const groupedDoCount=groupedDos.data?.filter(s=>s.status==="EXECUTION_PENDING").length??0;
+  const teamApprovalsBadgeCount = (pendingApprovals ?? 0) + (pendingDo?.length ?? 0) + groupedDoCount;
   const myApprovalsBadgeCount =
     myRequests?.filter((r) => ["PENDING", "PENDING_CEO"].includes(r.status)).length ?? 0;
 

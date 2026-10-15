@@ -1,0 +1,9 @@
+"use client";
+import {useState} from 'react';
+import {trpc} from '@/lib/trpc/client';
+export function ExportGateAssignment(){
+ const q=trpc.sesameExport.pendingGates.useQuery(undefined,{refetchInterval:15000});const utils=trpc.useUtils();const [refs,setRefs]=useState<Record<string,string>>({});const [message,setMessage]=useState('');
+ const save=trpc.sesameExport.assignGate.useMutation({onSuccess:r=>{setMessage(`Gate entries assigned to ${r.tradeRef}. Generate the grouped DO below.`);void utils.invalidate();}});
+ if(!q.data?.length&&!q.error&&!message)return null;
+ return <section className="kastros-card p-5 space-y-4"><h2 className="font-semibold text-lg">International gate entries — assign trade</h2><p>Warehouse staff have recorded these containers. Select their sale trade before generating a DO.</p>{q.error&&<p role="alert">{q.error.message}</p>}{save.error&&<p role="alert" className="text-destructive">{save.error.message}</p>}{message&&<p role="status">{message}</p>}{q.data?.map(r=><div className="border border-border rounded p-4 space-y-3" key={r.id}><p className="font-semibold">{r.counterpartyName} · {r.warehouseName} · {r.commodityCode}</p><ul>{r.input.containers.map((c,i)=><li key={i}>{r.gatepasses[i]} · {c.truckNo} · {c.containerNo} · CRO {c.croNo} · {c.weightKg.toLocaleString()} kg</li>)}</ul><p>Total: {r.input.containers.reduce((a,c)=>a+c.weightKg,0).toLocaleString()} kg</p><label>Sale trade<select className="kastros-select w-full" value={refs[r.id]??''} onChange={e=>setRefs({...refs,[r.id]:e.target.value})}><option value="">Select trade</option>{r.choices.map(t=><option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.entity}</option>)}</select></label><button type="button" className="kastros-btn-primary" disabled={!refs[r.id]||save.isPending} onClick={()=>save.mutate({id:r.id,tradeRef:refs[r.id]})}>Assign container group</button></div>)}</section>;
+}

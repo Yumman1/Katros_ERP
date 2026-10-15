@@ -81,7 +81,8 @@ export default function WarehouseGatepassPage() {
     inboundCounterparties: [],
     outboundCounterparties: [],
   });
-  const [exportTrade,setExportTrade]=useState('');
+  const [outboundScope,setOutboundScope]=useState<'LOCAL'|'INTERNATIONAL'>('LOCAL');
+  const [purchaseBasis,setPurchaseBasis]=useState<'PURCHASE_DELIVERED'|'PURCHASE_SPOT'>('PURCHASE_DELIVERED');
   const [form, setForm] = useState(emptyForm);
   const [documents, setDocuments] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,7 +144,7 @@ export default function WarehouseGatepassPage() {
   }, []);
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
-    setForm((s) => ({ ...s, [key]: value }));
+    setForm((s) => ({ ...s, [key]: value, ...(key === "commodityCode" ? {advanceVoucherId:""}: {}) }));
     setSuccess(null);
   }
 
@@ -153,6 +154,7 @@ export default function WarehouseGatepassPage() {
       movementType,
       counterpartyName: "",
       commodityCode: "",
+      advanceVoucherId: "",
     }));
     setSuccess(null);
   }
@@ -163,12 +165,13 @@ export default function WarehouseGatepassPage() {
       warehouseName: name,
       counterpartyName: "",
       commodityCode: "",
+      advanceVoucherId: "",
     }));
     setSuccess(null);
   }
 
   function setCounterparty(name: string) {
-    setForm((s) => ({ ...s, counterpartyName: name, commodityCode: "" }));
+    setForm((s) => ({ ...s, counterpartyName: name, commodityCode: "", advanceVoucherId: "" }));
     setSuccess(null);
   }
 
@@ -206,8 +209,8 @@ export default function WarehouseGatepassPage() {
       warehouseName: form.warehouseName,
       truckNo: form.truckNo,
       advanceVoucherId: form.advanceVoucherId || undefined,
-      advanceTradeRef: form.advanceVoucherId ? form.purchaseTradeRef : undefined,
-      purchaseTradeRef:form.purchaseTradeRef || undefined,
+
+      purchaseBasis,
       transporterName: form.transporterName.trim() || undefined,
       transporterPhone: form.transporterPhone.trim() || undefined,
       builtyDetails: form.builtyDetails.trim(),
@@ -270,21 +273,12 @@ export default function WarehouseGatepassPage() {
     }
   }
 
-  const exportOptions=(reference.exportTrades??[]).filter(t=>t.counterpartyName===form.counterpartyName&&t.commodityCode===form.commodityCode);
-  const selectedExport=exportOptions.find(t=>t.tradeRef===exportTrade);
-  const exportMode=form.movementType==='OUTBOUND'&&!!selectedExport;
-  const purchaseTrades=reference.inboundCounterparties.find(c=>c.name===form.counterpartyName)?.trades?.filter(t=>t.commodityCode===form.commodityCode) ?? [];
-  const purchaseTrade=purchaseTrades.find(t=>t.tradeRef===form.purchaseTradeRef);
-  const delivered=purchaseTrade?.profile === "PURCHASE_DELIVERED";
-  const canSubmit = !exportMode &&
-    Boolean(form.recordedByName.trim()) &&
-    Boolean(form.warehouseName.trim()) &&
-    Boolean(form.counterpartyName.trim()) &&
-    Boolean(form.commodityCode.trim()) &&
-    Boolean(form.builtyDetails.trim()) &&
-    Boolean(form.truckNo.trim()) &&
-    (form.movementType !== "INBOUND" || !!purchaseTrade) &&
-    parseFloat(delivered ? form.warehouseWeightKg : form.weightAsPerBuiltyKg) > 0;
+  const exportMode=form.movementType==='OUTBOUND'&&isSesameCommodity(form.commodityCode)&&outboundScope==='INTERNATIONAL';
+  const paidAdvance=reference.advances?.find(v=>v.id===form.advanceVoucherId);
+  const purchaseTrade=reference.inboundCounterparties.find(c=>c.name===form.counterpartyName)?.trades?.find(t=>t.tradeRef===paidAdvance?.tradeRef);
+  const delivered=form.movementType==='INBOUND'&&(purchaseTrade?.profile??purchaseBasis)==='PURCHASE_DELIVERED';
+  const missing=[!form.recordedByName.trim()&&'Enter your name',!form.warehouseName.trim()&&'Select warehouse',!form.counterpartyName.trim()&&'Select counterparty',!form.commodityCode.trim()&&'Select commodity',!form.truckNo.trim()&&'Enter truck number',!/^\d+$/.test(form.builtyDetails.trim())&&'Enter a numeric builty number',(!(Number(delivered?form.warehouseWeightKg:form.weightAsPerBuiltyKg)>0)||!Number.isFinite(Number(delivered?form.warehouseWeightKg:form.weightAsPerBuiltyKg)))&&(delivered?'Enter warehouse weight after offloading':form.movementType==='OUTBOUND'?'Enter Container / Truck Weight':'Enter weight as per seller')].filter(Boolean);
+  const canSubmit=!exportMode&&missing.length===0;
 
   const accentColor = form.movementType === "INBOUND" ? "#34d399" : "#a78bfa";
 
@@ -424,13 +418,12 @@ export default function WarehouseGatepassPage() {
               </div>
             </FormSection>
 
-            {form.movementType === "INBOUND" && <FormSection title="Purchase trade and advance" icon={<ClipboardList className="h-4 w-4" />} color={accentColor}>
-              <Field label="Trade reference" required><select className={inputClass} value={form.purchaseTradeRef} onChange={e => setForm(f => ({ ...f, purchaseTradeRef:e.target.value,advanceTradeRef: e.target.value, advanceVoucherId: "" }))}><option value="">Select trade</option>{purchaseTrades.map(t => <option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.profile === "PURCHASE_SPOT" ? "Ex-Works" : "Delivered"}</option>)}</select></Field>
-              {form.advanceTradeRef && <Field label="Approved advance builty"><select className={inputClass} value={form.advanceVoucherId} onChange={e => { const v = reference.advances?.find(a => a.id === e.target.value); setForm(f => ({ ...f, advanceVoucherId: v?.id ?? "", truckNo: v?.truckNo ?? f.truckNo, builtyDetails: v?.builtyNumber ?? "", transporterName: v?.transporterName ?? "", weightAsPerBuiltyKg: String(v?.advanceWeightKg ?? "") })); }}><option value="">Select paid builty</option>{reference.advances?.filter(v => v.tradeRef === form.advanceTradeRef && v.counterpartyName === form.counterpartyName && v.commodityCode === form.commodityCode).map(v => <option key={v.id} value={v.id}>{v.builtyNumber} · Truck {v.truckNo ?? "legacy"}</option>)}</select></Field>}
+            {form.movementType === "INBOUND" && <FormSection title="Purchase details" icon={<ClipboardList className="h-4 w-4" />} color={accentColor}>
+              <Field label="Purchase basis"><select className={inputClass} value={purchaseTrade?.profile??purchaseBasis} disabled={!!purchaseTrade} onChange={e=>setPurchaseBasis(e.target.value as typeof purchaseBasis)}><option value="PURCHASE_DELIVERED">Delivered</option><option value="PURCHASE_SPOT">Ex-Works</option></select></Field>
+              <Field label="Approved advance builty (if paid)"><select className={inputClass} value={form.advanceVoucherId} onChange={e=>{const v=reference.advances?.find(a=>a.id===e.target.value);setForm(f=>({...f,advanceVoucherId:v?.id??'',truckNo:v?.truckNo??f.truckNo,builtyDetails:v?.builtyNumber??f.builtyDetails,transporterName:v?.transporterName??f.transporterName,weightAsPerBuiltyKg:v?String(v.advanceWeightKg):f.weightAsPerBuiltyKg}));}}><option value="">No advance selected</option>{reference.advances?.filter(v=>v.counterpartyName===form.counterpartyName&&v.commodityCode===form.commodityCode).map(v=><option key={v.id} value={v.id}>{v.builtyNumber} · Truck {v.truckNo??'—'}</option>)}</select></Field>
             </FormSection>}
-
-            {form.movementType==='OUTBOUND'&&isSesameCommodity(form.commodityCode)&&exportOptions.length>0&&<FormSection title="International sale shipment" icon={<Truck className="h-4 w-4" />} color={accentColor}><Field label="Trade reference"><select className={inputClass} value={selectedExport?.tradeRef??''} onChange={e=>setExportTrade(e.target.value)}><option value="">Select international trade for grouped containers</option>{exportOptions.map(t=><option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.entity}</option>)}</select></Field></FormSection>}
-            {exportMode?<SesameExportContainers key={[exportTrade,form.warehouseName].join(':')} tradeRef={exportTrade} warehouseName={form.warehouseName} recordedByName={form.recordedByName} onSaved={()=>setPreviewTick(v=>v+1)}/>:<>
+            {form.movementType==='OUTBOUND'&&isSesameCommodity(form.commodityCode)&&<div className="exec-segment">{(['LOCAL','INTERNATIONAL'] as const).map(scope=><button key={scope} type="button" aria-pressed={outboundScope===scope} className={`exec-segment-item ${outboundScope===scope?'exec-segment-active':''}`} onClick={()=>setOutboundScope(scope)}>{scope==='LOCAL'?'Local':'International'}</button>)}</div>}
+            {exportMode?<SesameExportContainers key={[form.counterpartyName,form.commodityCode,form.warehouseName].join(':')} counterpartyName={form.counterpartyName} commodityCode={form.commodityCode} warehouseName={form.warehouseName} recordedByName={form.recordedByName} onSaved={()=>setPreviewTick(v=>v+1)}/>:<>
             <FormSection title={form.movementType === "OUTBOUND" ? "Outbound details" : "Inbound details"} icon={<Truck className="h-4 w-4" />} color={accentColor}>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Truck number" required>
@@ -587,7 +580,8 @@ export default function WarehouseGatepassPage() {
               </div>
             )}
 
-            <button
+            {!exportMode&&missing.length>0&&<div role="status" className="text-sm text-destructive"><p>Complete these fields to submit:</p><ul className="list-disc pl-5">{missing.map((m,i)=><li key={i}>{m}</li>)}</ul></div>}
+            {!exportMode&&<button
               type="button"
               disabled={!canSubmit || saving}
               onClick={submit}
@@ -604,7 +598,7 @@ export default function WarehouseGatepassPage() {
               {saving
                 ? "Saving…"
                 : `Log ${form.movementType === "INBOUND" ? "Gate In" : "Gate Out"}`}
-            </button>
+            </button>}
           </div>
         )}
       </div>
