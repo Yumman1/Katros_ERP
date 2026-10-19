@@ -54,26 +54,27 @@ export async function internationalPurchaseTrades(code: string, entity: SesameEn
 
 export async function internationalPurchaseBls(tradeRef: string) {
   const rows = await prisma.sesameExportShipment.findMany({
-    where: { OR: [{ tradeRef }, { fzcoSaleTradeRef: tradeRef }], status: "BL_RECORDED", blNo: { not: null } },
+    where: { OR: [{ tradeRef }, { fzcoSaleTradeRef: tradeRef },{sourcePurchaseTradeRef:tradeRef}], status: "BL_RECORDED", blNo: { not: null } },
     include: { vouchers: true, fzcoSaleTrade: { select: { tradeRef: true } } },
     orderBy: { blRecordedAt: "desc" },
   });
   return rows.map((s) => {
+    const purchaseAmount=n(s.sourcePurchaseTradeRef?s.supplierAmountPkr:s.amountPkr);
     const purchasePaid = s.vouchers.filter((v) => v.side === "BUY" && v.status !== "REJECTED").reduce((a, v) => a + n(v.amountPkr), 0);
     const salePaid = s.vouchers.filter((v) => v.side === "SELL" && v.status === "APPROVED").reduce((a, v) => a + n(v.amountPkr), 0);
     return {
       id: s.id,
       blNo: s.blNo!,
-      tradeRef: s.tradeRef,
+      tradeRef: s.sourcePurchaseTradeRef??s.tradeRef,
       fzcoSaleTradeRef: s.fzcoSaleTradeRef,
       triparty: s.triparty,
-      amountPkr: n(s.amountPkr),
+      amountPkr: purchaseAmount,
       fzcoAmountPkr: n(s.fzcoAmountPkr),
-      fxRate: n(s.fxRate),
-      outstandingPkr: money(Math.max(0, n(s.amountPkr) - purchasePaid)),
+      fxRate: n(s.sourcePurchaseTradeRef?s.supplierFxRate:s.fxRate),
+      outstandingPkr: money(Math.max(0, purchaseAmount - purchasePaid)),
       buyerPaidPkr: money(salePaid),
       buyerPaid: salePaid > 0.005,
-      payablePkr: money(Math.max(0, Math.min(n(s.amountPkr) - purchasePaid, salePaid - purchasePaid))),
+      payablePkr: money(Math.max(0, Math.min(purchaseAmount - purchasePaid, (s.triparty?salePaid-purchasePaid:purchaseAmount-purchasePaid)))),
     };
   });
 }
@@ -91,8 +92,10 @@ export async function createInternationalPurchase(input: {
   code: string;
 }) {
   return prisma.$transaction(async (db) => {
+    await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`purchase-payment:${input.tradeRef}`}))::text`;
     const t = await db.trade.findUniqueOrThrow({ where: { tradeRef: input.tradeRef }, include: { commodity: true, contract: true } });
     if (!isSesameCommodity(t.commodity.code) || t.commodity.code !== input.code) throw new Error("Select a Sesame trade on this desk");
+    if(!t.contract||!["LOCKED","CONFIRMED","EXECUTED"].includes(t.tradeStatus))throw new Error("Select a locked purchase trade");
     const internal = internalPakSale(t.commodity.code, t.direction, t.tradeParams);
     if (internal && input.entity !== "FZCO") throw new Error("Dubai FZCO pays Kastros Pakistan on the internal sale");
     if (internal && !input.exportShipmentId) throw new Error("Select the BL. FZCO can pay Kastros Pakistan only after the buyer has paid Dubai FZCO");
@@ -102,6 +105,8 @@ export async function createInternationalPurchase(input: {
     if (t.currency === "USD" && fx <= 0) throw new Error("Lock a USD / PKR exchange rate on the trade first");
     if (!(amountPkr > 0)) throw new Error("Enter a positive amount");
 
+    const existing=await db.voucher.aggregate({where:{tradeRef:t.tradeRef,side:'BUY',executionEntity:input.entity,status:{not:'REJECTED'}},_sum:{amountPkr:true}});
+    if(amountPkr+n(existing._sum.amountPkr)>n(t.quantity)*1000*n(t.contract.ratePerKg)+.005)throw new Error('Payment exceeds the purchase balance including pending vouchers');
     let counterpartyId = input.counterpartyId;
     if (internal) {
       const pak = await entityCounterparty(db, "PAK", input.userId);
@@ -119,9 +124,9 @@ export async function createInternationalPurchase(input: {
       : null;
     if (shipment) {
       if (shipment.status !== "BL_RECORDED" || !shipment.blNo) throw new Error("Record the BL before paying against it");
-      if (shipment.tradeRef !== t.tradeRef && shipment.fzcoSaleTradeRef !== t.tradeRef) throw new Error("BL does not belong to this trade");
+      if (shipment.tradeRef !== t.tradeRef && shipment.fzcoSaleTradeRef !== t.tradeRef && shipment.sourcePurchaseTradeRef !==t.tradeRef) throw new Error("BL does not belong to this trade");
       const committed = shipment.vouchers.filter((v) => v.side === "BUY" && v.status !== "REJECTED").reduce((a, v) => a + n(v.amountPkr), 0);
-      if (amountPkr > n(shipment.amountPkr) - committed + 0.005) throw new Error("Payment exceeds the remaining BL balance including pending vouchers");
+      if (amountPkr > n(shipment.sourcePurchaseTradeRef?shipment.supplierAmountPkr:shipment.amountPkr) - committed + 0.005) throw new Error("Payment exceeds the remaining BL balance including pending vouchers");
     }
     if (internal) await assertTripartyPakistanPayment(db, { tradeRef: t.tradeRef, amountPkr });
 

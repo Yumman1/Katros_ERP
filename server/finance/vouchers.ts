@@ -421,11 +421,18 @@ export async function approveVoucher(
     const current = await tx.voucher.findUniqueOrThrow({where:{id:voucherId}});
     if (current.status !== "PENDING_FINANCE") throw new Error("Voucher not found or already resolved");
     if (current.traderApprovalRequired && !current.traderApprovedAt) throw new Error("The trade’s trader must approve this excess advance before Finance can pay it");
+    if(current.executionEntity==='FZCO'&&current.side==='BUY'&&current.tradeRef){
+      const purchase=await tx.trade.findUnique({where:{tradeRef:current.tradeRef},include:{contract:true}});
+      if(purchase?.direction==='BUY'&&purchase.contract){
+        const credits=await tx.counterpartyLedgerEntry.aggregate({where:{tradeRef:current.tradeRef,side:'BUY',entryType:'CREDIT',executionEntity:'FZCO'},_sum:{amountPkr:true}});
+        if(num(credits._sum.amountPkr)+num(current.amountPkr)>num(purchase.quantity)*1000*num(purchase.contract.ratePerKg)+.005)throw new Error('Payment exceeds the outstanding supplier purchase balance');
+      }
+    }
     if(current.exportShipmentId){
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`export-receipt:${current.exportShipmentId}`}))::text`;
       const shipment=await tx.sesameExportShipment.findUniqueOrThrow({where:{id:current.exportShipmentId},include:{vouchers:true}});
       if(shipment.status!=="BL_RECORDED")throw new Error("Record BL before approving collection");
-      const cap=current.side==="SELL"&&shipment.triparty?num(shipment.fzcoAmountPkr??shipment.amountPkr):num(shipment.amountPkr);
+      const cap=current.side==="BUY"&&shipment.sourcePurchaseTradeRef?num(shipment.supplierAmountPkr):current.side==="SELL"&&shipment.triparty?num(shipment.fzcoAmountPkr??shipment.amountPkr):num(shipment.amountPkr);
       const paid=shipment.vouchers.filter(v=>v.status==='APPROVED'&&v.side===current.side).reduce((a,v)=>a+num(v.amountPkr),0);
       if(paid+num(current.amountPkr)>cap+.005)throw new Error("Receipt exceeds outstanding BL balance");
     }
@@ -524,6 +531,7 @@ export async function approveVoucher(
     const { closeOnFullPayment } = await import("@/server/execution/contracts");
     await closeOnFullPayment(fresh.tradeRef);
   }
+  if(fresh?.tradeRef&&fresh.noteRef){const {closeOnFullPayment}=await import("@/server/execution/contracts");await closeOnFullPayment(fresh.tradeRef);}
   return voucherRowToView(fresh!);
 }
 

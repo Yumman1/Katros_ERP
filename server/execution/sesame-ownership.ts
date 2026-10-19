@@ -19,7 +19,7 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
   await prisma.$transaction(async db => {
     const t = await db.trade.findUniqueOrThrow({ where: { tradeRef: input.tradeRef }, include: { commodity: true, contract: true } });
     const contract = t.contract;
-    if (!isSesameCommodity(t.commodity.code) || !contract?.paperOwnership || t.tradeStatus !== "LOCKED") throw new Error("Lock this ownership trade before confirming stock");
+    if (!isSesameCommodity(t.commodity.code) || !contract?.paperOwnership || !["LOCKED","EXECUTED"].includes(t.tradeStatus)) throw new Error("Lock this ownership trade before confirming stock");
     const sides = ownershipSides(t.direction, t.tradeParams);
     if (internalEntity(t.tradeParams)) throw new Error("Internal Pakistan → FZCO sales move through the triparty gate-out, not ownership confirmation");
     if (!(tradeEntity(t.tradeParams) === "FZCO" && t.direction === "BUY")) throw new Error("External sales require a truck release");
@@ -47,13 +47,13 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
     }
     const entry = await db.sesameOwnershipEntry.create({ data: { tradeRef: t.tradeRef, commodityCode: t.commodity.code, ...sides, quantityMt: input.quantityMt, warehouseName, recordedBy: input.actor, requestKey:input.requestKey, holderId:warehouseName?null:input.holderId,holderLocation:warehouseName?null:input.holderLocation?.trim(),documentRef:input.documentRef,ownershipDate:input.ownershipDate } });
     if (!internalEntity(t.tradeParams)) {
-      // A paper purchase has no gate invoice. Its payable is an open ownership
-      // note, settled by the existing finance-approved note-voucher workflow.
+      // Confirmed third-party stock creates the purchase invoice once.
+      // Supplier vouchers settle it independently of onward shipments.
       await db.counterpartyLedgerEntry.create({ data: {
         counterpartyId: t.counterpartyId, side: "BUY", entryType: "DEBIT",
         amountPkr: Math.round(input.quantityMt * 1000 * n(contract.ratePerKg) * 100) / 100,
-        sourceType: "ADJUSTMENT", sourceRef: `OWN-${entry.id}`, tradeRef: t.tradeRef,
-        noteStatus: "UNPAID", note: `FZCO ownership purchase: ${input.quantityMt} MT; confirmed by ${input.actor}`,
+        sourceType: "INVOICE", sourceRef: `OWN-${entry.id}`, tradeRef: t.tradeRef,
+        executionEntity:"FZCO", paymentFxRate:Number((t.tradeParams as Record<string,unknown>)?.executionFxPkrPerUsd)||null, note: `FZCO ownership purchase: ${input.quantityMt} MT; confirmed by ${input.actor}`,
       } });
     }
   });
@@ -96,7 +96,7 @@ export async function sesameBook(code: string) {
   const fzcoEntry = purchased > 0 ? acquisitions.reduce((s,e) => s+n(e.quantityMt)*n(contracts.get(e.tradeRef)?.ratePerMaund),0)/purchased : null;
   const positions = (["PAK", "FZCO"] as const).map(entity => {
     const own = rows.filter(t => t.sesameType !== "Impurities" && (t.entity === entity || t.internalEntity === entity));
-    const open = own.filter(t => ["PENDING", "LOCKED"].includes(t.status) && t.submitted);
+    const open = own.filter(t => ["PENDING", "LOCKED", "CONFIRMED", "EXECUTED"].includes(t.status) && t.submitted);
     const side = (t: typeof rows[number]) => t.entity === entity ? t.direction : t.direction === "BUY" ? "SELL" : "BUY";
     const qty = (t: typeof rows[number]) => sesameBookQty({ quantityMt: t.quantityMt, openMt: t.openMt, receivedMt: t.receivedMt, internal: t.internalEntity != null, closeOnPayment: t.closeOnPayment, contractStatus: t.contractStatus, asEntity: entity });
     const buys = open.filter(t => side(t) === "BUY").reduce((sum,t) => sum+qty(t), 0);

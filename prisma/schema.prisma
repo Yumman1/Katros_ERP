@@ -317,6 +317,7 @@ enum TradeSeason {
 }
 
 model Trade {
+ thirdPartySourceShipments SesameExportShipment[] @relation("ThirdPartySourcePurchase")
   exportShipments SesameExportShipment[]
   fzcoSaleShipments SesameExportShipment[] @relation("FzcoSaleShipments")
   sesameOwnershipEntries SesameOwnershipEntry[]
@@ -1793,6 +1794,11 @@ model SesameProcessingPlan {
 }
 
 model SesameExportShipment {
+ sourcePurchaseTradeRef String?
+ sourcePurchaseTrade Trade? @relation("ThirdPartySourcePurchase",fields:[sourcePurchaseTradeRef],references:[tradeRef],onDelete:Restrict)
+ supplierAmountPkr Decimal? @db.Decimal(20,2)
+ supplierFxRate Decimal? @db.Decimal(20,8)
+ @@index([sourcePurchaseTradeRef])
  holder Counterparty? @relation("SesameShipmentHolder",fields:[holderId],references:[id],onDelete:Restrict)
  holderId String?
  gateIntakes SesameExportGateIntake[]

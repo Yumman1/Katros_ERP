@@ -51,7 +51,7 @@ export const sesameExportRouter=router({
  directParties:roleProcedure(['EXECUTION']).query(async({ctx})=>{await fzcoAccess(ctx);return prisma.counterparty.findMany({where:{tradingEntities:{has:'FZCO'}},select:{id:true,name:true},orderBy:{name:'asc'}});}),
  logDirect:roleProcedure(['EXECUTION']).input(fzcoIntakeInput).mutation(async({ctx,input})=>{await fzcoAccess(ctx);return action(()=>logFzcoIntake(input,actor(ctx)));}),
  pendingDirect:roleProcedure(['EXECUTION']).query(async({ctx})=>{await fzcoAccess(ctx);return pendingFzcoIntakes(ctx.executionCommodityCode);}),
- assignDirect:roleProcedure(['EXECUTION']).input(z.object({id:z.string().uuid(),tradeRef:z.string().min(1)})).mutation(async({ctx,input})=>{await fzcoAccess(ctx);return action(()=>assignFzcoIntake(input.id,input.tradeRef,ctx.executionCommodityCode!,actor(ctx)));}),
+ assignDirect:roleProcedure(['EXECUTION']).input(z.object({id:z.string().uuid(),tradeRef:z.string().min(1),sourcePurchaseTradeRef:z.string().min(1).optional()})).mutation(async({ctx,input})=>{await fzcoAccess(ctx);return action(()=>assignFzcoIntake(input.id,input.tradeRef,ctx.executionCommodityCode!,actor(ctx),input.sourcePurchaseTradeRef));}),
  addDirect:roleProcedure(['EXECUTION']).input(directGateInput).mutation(async()=>{throw new TRPCError({code:'BAD_REQUEST',message:'Record the office gate entry, then assign its trade in Truck Movement'});}),
  list:roleProcedure(['EXECUTION','TRADER','FINANCE']).query(async({ctx})=>{
   const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});

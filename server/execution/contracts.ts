@@ -1,3 +1,4 @@
+import {quantityUnitToKg} from "@/lib/unit-conversion";
 import { isSesameCommodity } from "@/lib/sesame";
 import { canonicalizeInternalPakSale, closesOnPayment, paperTrade, shouldCloseOnFullPayment, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
 import { entityCounterparty } from "@/server/finance/internal-payments";
@@ -226,17 +227,19 @@ export async function closeOnFullPayment(tradeRef: string): Promise<boolean> {
     await tx.$queryRaw`SELECT "id" FROM "ExecutionContract" WHERE "tradeRef" = ${tradeRef} FOR UPDATE`;
     const row = await tx.executionContract.findUnique({
       where: { tradeRef },
-      include: { trade: { select: { tradeStatus: true } } },
+      include: { trade: { select: { tradeStatus: true, tradeParams:true } } },
     });
     if (!row || !row.closeOnPayment || row.contractStatus === "Close") return false;
-    if (row.trade.tradeStatus !== TradeStatus.LOCKED) return false;
+    if (![TradeStatus.LOCKED, TradeStatus.CONFIRMED, TradeStatus.EXECUTED].includes(row.trade.tradeStatus as typeof TradeStatus.LOCKED)) return false;
+    const paymentSide=row.direction;
+    const fzco=tradeEntity(row.trade.tradeParams)==="FZCO";
     const [debits, credits] = await Promise.all([
       tx.counterpartyLedgerEntry.aggregate({
-        where: { tradeRef, side: "SELL", entryType: "DEBIT", sourceType: "INVOICE", exportShipmentId: { not: null } },
+        where: { tradeRef, side: paymentSide, entryType: "DEBIT", ...(fzco?{sourceType:{in:["INVOICE","ADJUSTMENT"] as const}}:{sourceType:"INVOICE" as const,exportShipmentId:{not:null}}) },
         _sum: { amountPkr: true },
       }),
       tx.counterpartyLedgerEntry.aggregate({
-        where: { tradeRef, side: "SELL", entryType: "CREDIT" },
+        where: { tradeRef, side: paymentSide, entryType: "CREDIT" },
         _sum: { amountPkr: true },
       }),
     ]);
@@ -244,7 +247,8 @@ export async function closeOnFullPayment(tradeRef: string): Promise<boolean> {
     const received = num(credits._sum.amountPkr);
     const contractualQtyMt = num(row.contractualQtyMt);
     const fulfilled = await computeFulfilledQty(tx, tradeRef, row.direction, row.quantityUnit);
-    if (!shouldCloseOnFullPayment({
+    const target=fzco?(invoiced > 0 && fulfilled + 0.000001 >= contractualQtyMt ? invoiced : Math.max(invoiced,quantityUnitToKg(contractualQtyMt,row.quantityUnit)*num(row.ratePerKg))):invoiced;
+    if (fzco ? !(target>0 && received+0.005>=target) : !shouldCloseOnFullPayment({
       invoicedPkr: invoiced,
       receivedPkr: received,
       contractualQtyMt,

@@ -55,14 +55,13 @@ export function internalPakSale(code: string, direction: string, params: unknown
   return isSesameCommodity(code) && direction === "SELL" && tradeEntity(params) === "PAK" && internalEntity(params) === "FZCO";
 }
 /**
- * Sesame international sales settle by payment, not by shipped quantity: the
- * PAK → FZCO internal sale and every FZCO sale stay open until vouchers cover
- * the invoiced (BL) amount. Everything else closes on quantity.
+ * FZCO external purchases and sales settle independently through payment.
+ * Pakistan → FZCO retains its existing payment-and-shipment closing rule.
  */
 export function closesOnPayment(code: string, direction: string, tradeScope: string | null | undefined, params: unknown): boolean {
-  if (!isSesameCommodity(code) || direction !== "SELL") return false;
+  if (!isSesameCommodity(code)) return false;
   if (internalPakSale(code, direction, params)) return true;
-  return tradeEntity(params) === "FZCO" && internalEntity(params) === null && tradeScope === "INTERNATIONAL";
+  return tradeEntity(params) === "FZCO" && internalEntity(params) === null;
 }
 /** Receipts must cover every BL invoice and shipped qty must be within tolerance. */
 export function shouldCloseOnFullPayment(input: {
@@ -93,7 +92,9 @@ export function sesameBookQty(input: {
   contractStatus?: string | null;
   asEntity: SesameEntity;
 }): number {
-  if (!input.internal || !input.closeOnPayment || input.contractStatus === "Close") return input.openMt;
+  if(input.closeOnPayment && input.contractStatus === "Close")return 0;
+  if(!input.internal && input.asEntity === "FZCO" && input.closeOnPayment)return input.quantityMt;
+  if (!input.internal || !input.closeOnPayment) return input.openMt;
   if (input.asEntity === "FZCO") return input.receivedMt > 0.000001 ? input.quantityMt : 0;
   return input.quantityMt;
 }
