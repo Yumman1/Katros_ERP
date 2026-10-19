@@ -87,7 +87,7 @@ export async function addExportContainers(raw:z.infer<typeof exportGateInput>, d
   if(!direct&&entity==='PAK'&&c.warehouseAllocations.length){const a=c.warehouseAllocations.find(a=>a.warehouseName===input.warehouseName);if(!a)throw new Error('Warehouse is not allocated to this trade');const used=await db.outboundDispatch.aggregate({where:{tradeRef:trade.tradeRef,warehouseName:input.warehouseName},_sum:{allocatedQtyMt:true}});if(n(used._sum.allocatedQtyMt)*1000+total>quantityUnitToKg(n(a.qtyMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds the trade warehouse allocation');}
   if(direct){await db.counterparty.findUniqueOrThrow({where:{id:direct.holderId}});if(trade.direction==='SELL')await assertCustody(db,code,grade,total/1000,{holderId:direct.holderId,location:direct.dispatchLocation});}
   if(!direct&&entity==='PAK'){
-   const available=await processingAvailability(db,code,input.warehouseName,grade,trade.tradeRef);if(total>available.availableKg+.001)throw new Error('Insufficient unreserved Pakistan-owned stock');
+   const available=await processingAvailability(db,code,input.warehouseName,grade,trade.tradeRef);if(total>available.availableKg+.001)throw new Error(`Insufficient unreserved Pakistan-owned ${grade} at ${input.warehouseName} (${(available.availableKg/1000).toFixed(3)} MT free)`);
   }else if(!direct){
    const entries=await db.sesameOwnershipEntry.findMany({where:{commodityCode:code,warehouseName:input.warehouseName},include:{trade:{select:{tradeParams:true}}}});
    const custody=entries.filter(e=>sesameGrade(e.trade.tradeParams)===grade).reduce((a,e)=>a+(e.toEntity==='FZCO'?n(e.quantityMt)*1000:0)-(e.fromEntity==='FZCO'?n(e.quantityMt)*1000:0),0);

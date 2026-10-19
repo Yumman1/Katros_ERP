@@ -8,7 +8,7 @@ import { isBaleCommodity } from "@/lib/warehouse-utilization";
 import { filterDeskRows } from "@/server/execution/desk-scope";
 import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
 import { isSesameCommodity, normalizeSesameParams, sesameNetPrice, sesameTradingEntity } from "@/lib/sesame";
-import { internalPakSale } from "@/lib/sesame-entity";
+import { canonicalizeInternalPakSale, internalEntity } from "@/lib/sesame-entity";
 import { entityCounterparty } from "@/server/finance/internal-payments";
 import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
 import { z } from "zod";
@@ -920,9 +920,21 @@ export const traderRouter = router({
         catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invalid commission" }); }
       }
       const bookingEntity = sesame && sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "FZCO" : "PAK";
-      const internalSale = sesame && internalPakSale(c.code, input.direction, tradeParams);
-      let tradeScope = internalSale ? "INTERNATIONAL" as const : input.tradeScope;
+      if (bookingEntity === "FZCO" && input.tradeScope === "LOCAL") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Dubai FZCO can book international trades only" });
+      }
+      if (sesame && bookingEntity === "FZCO" && internalEntity(tradeParams) === "PAK" && input.direction === "SELL") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Book this as a purchase from Kastros Pakistan. Pakistan execution locks the warehouse sale and ships triparty." });
+      }
+      if (sesame && bookingEntity === "PAK" && internalEntity(tradeParams) === "FZCO" && input.direction === "BUY") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Pakistan books the internal as a sale to Dubai FZCO" });
+      }
       let cp = await getCounterpartyById(input.counterpartyId);
+      const canonical = canonicalizeInternalPakSale(c.code, input.direction, tradeParams, cp?.code);
+      tradeParams = canonical.params as typeof tradeParams;
+      const direction = canonical.direction as TradeDirection;
+      const internalSale = sesame && canonical.internalPakSale;
+      let tradeScope = internalSale || bookingEntity === "FZCO" ? "INTERNATIONAL" as const : input.tradeScope;
       if (internalSale) {
         const interco = await entityCounterparty(prisma, "FZCO", ctx.session.user.id);
         cp = await getCounterpartyById(interco.id);
@@ -986,7 +998,7 @@ export const traderRouter = router({
           counterpartyId: cp.id,
           counterpartyName: cp.name,
           counterpartyCode: cp.code,
-          direction: input.direction,
+          direction,
           quantity: toMt(qtyEntered, qtyEnteredUnit),
           quantityUnit: "MT",
           quantityEntered: qtyEntered,
@@ -1022,7 +1034,7 @@ export const traderRouter = router({
           counterpartyAddress: cp.address,
           counterpartyBankDetails: cp.bankDetails,
           notes: input.notes,
-          buyingCategory: buyingCategoryFromIncoterms(input.incoterms, input.direction) ?? undefined,
+          buyingCategory: buyingCategoryFromIncoterms(input.incoterms, direction) ?? undefined,
           tradeScope,
           season: input.season,
           ratePerMaund: input.ratePerMaund,

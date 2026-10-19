@@ -1,5 +1,6 @@
 import { isSesameCommodity } from "@/lib/sesame";
-import { closesOnPayment, paperTrade, shouldCloseOnFullPayment, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
+import { canonicalizeInternalPakSale, closesOnPayment, paperTrade, shouldCloseOnFullPayment, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
+import { entityCounterparty } from "@/server/finance/internal-payments";
 import { sesameSettlementFx } from "@/lib/execution-settlement";
 import { executionDeskTradeRefs } from "./desk-scope";
 import type { Prisma, PrismaClient } from "@prisma/client";
@@ -676,6 +677,28 @@ export async function lockTradeInStore(
       "Trader must enter the contract price from My Trades before this trade can be locked",
     );
   }
+  const canonical = canonicalizeInternalPakSale(
+    trade.commodity.code,
+    trade.direction,
+    (trade.tradeParams ?? {}) as Record<string, unknown>,
+    trade.counterparty.code,
+  );
+  if (canonical.internalPakSale) {
+    const createdById = (await prisma.trade.findUnique({ where: { tradeRef }, select: { createdById: true } }))?.createdById;
+    if (!createdById) throw new Error("Trade is missing a creator");
+    const interco = await entityCounterparty(prisma, "FZCO", createdById);
+    trade.direction = TradeDirection.SELL;
+    trade.tradeParams = canonical.params as typeof trade.tradeParams;
+    trade.buyingCategory = null;
+    trade.tradeScope = "INTERNATIONAL";
+    trade.counterparty = {
+      ...trade.counterparty,
+      id: interco.id,
+      name: interco.name,
+      code: interco.code,
+      ntn: interco.ntn,
+    };
+  }
   // Internal routing only — derived from the trade's incoterm (only "Spot" uses
   // the spot pipeline). Trades stay categorized by their incoterm everywhere.
   const buyingCategory =
@@ -764,8 +787,11 @@ export async function lockTradeInStore(
         tradeStatus: TradeStatus.LOCKED,
         lockedAt: trade.lockedAt,
         lockedBy: trade.lockedBy,
+        direction: trade.direction,
+        counterpartyId: trade.counterparty.id,
         buyingCategory,
         executionProfile: profile,
+        ...(trade.tradeScope ? { tradeScope: trade.tradeScope } : {}),
         ratePerMaund,
         ratePerKg,
         ...(trade.tradeParams ? { tradeParams: trade.tradeParams as Prisma.InputJsonValue } : {}),
@@ -971,7 +997,10 @@ export async function getLockedContracts(filter?: {
   warehouseUnallocated?: boolean;
 }): Promise<ExecutionContractView[]> {
   const where: Prisma.ExecutionContractWhereInput = filter?.commodityCode ? { commodityCode: filter.commodityCode } : {};
-  if (filter?.executionEntity && isSesameCommodity(filter.commodityCode)) where.executionEntity = filter.executionEntity;
+  if (filter?.executionEntity && isSesameCommodity(filter.commodityCode)) {
+    const refs = await executionDeskTradeRefs(filter.commodityCode, prisma, filter.executionEntity);
+    where.tradeRef = { in: refs ?? [] };
+  }
   if (filter?.profile) where.executionProfile = filter.profile;
   if (filter?.incoterms) where.incoterms = filter.incoterms;
   if (filter?.tradeScope) where.tradeScope = filter.tradeScope;
@@ -1060,7 +1089,8 @@ export async function getPendingTradesForExecution() {
 export async function getDeskSummary(commodityCode?: string, executionEntity?: SesameEntity) {
   const refs = await executionDeskTradeRefs(commodityCode, prisma, executionEntity);
   const tradeWhere = refs ? { tradeRef: { in: refs } } : {};
-  const commodityWhere = commodityCode ? { commodityCode, ...(executionEntity && isSesameCommodity(commodityCode) ? { executionEntity } : {}) } : {};
+  const contractWhere = commodityCode ? { commodityCode, ...(refs ? { tradeRef: { in: refs } } : {}) } : {};
+  const truckWhere = commodityCode ? { commodityCode, ...(executionEntity && isSesameCommodity(commodityCode) ? { executionEntity } : {}) } : {};
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const [
@@ -1072,7 +1102,7 @@ export async function getDeskSummary(commodityCode?: string, executionEntity?: S
     pendingFinance,
     pendingTrucksUnassigned,
   ] = await Promise.all([
-    prisma.executionContract.findMany({ where: commodityWhere, include: CONTRACT_INCLUDE }),
+    prisma.executionContract.findMany({ where: contractWhere, include: CONTRACT_INCLUDE }),
     getPendingTradesForExecution().then(rows => refs ? rows.filter(r => refs.includes(r.tradeRef)) : rows),
     prisma.trade.count({
       where: { ...tradeWhere, tradeStatus: TradeStatus.PENDING, submittedToExecution: true },
@@ -1080,7 +1110,7 @@ export async function getDeskSummary(commodityCode?: string, executionEntity?: S
     prisma.inboundReceipt.count({ where: { ...tradeWhere, receiveDate: { gte: today } } }),
     prisma.outboundDispatch.count({ where: { ...tradeWhere, dispatchDate: { gte: today } } }),
     prisma.paymentRequest.count({ where: { ...tradeWhere, status: "PENDING" } }),
-    prisma.pendingTruck.count({ where: { ...commodityWhere, status: { in: ["PENDING", "PARTIAL"] } } }),
+    prisma.pendingTruck.count({ where: { ...truckWhere, status: { in: ["PENDING", "PARTIAL"] } } }),
   ]);
   const locked = contractRows.map((r) => normalizeContract(contractRowToRuntime(r)));
   const open = locked.filter((c) => c.contractStatus === "Open");

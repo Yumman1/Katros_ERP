@@ -9,6 +9,7 @@ import {tradeEntity} from '@/lib/sesame-entity';
 import {warehouseAllowedForCommodity} from '@/lib/warehouse-eligibility';
 import {quantityUnitToKg} from '@/lib/unit-conversion';
 import {getCompanyWarehouses} from '@/server/trader-master-data';
+import {bookedPakistanSaleKgAtWarehouse} from './sesame-sale-reservation';
 const n=(v:unknown)=>Number(v??0);
 const kg=z.number().finite().positive().multipleOf(0.001);
 export const processingPlanInput=z.object({warehouseName:z.string().trim().min(1),unitName:z.string().trim().min(1),fromType:z.enum(['Raw','Machine Cleaned']),toType:z.enum(['Machine Cleaned','Sortex']),reservedKg:kg,dailyCapacityKg:kg,expectedYieldRatio:z.number().finite().min(0).max(1),requestKey:z.string().uuid()});
@@ -18,7 +19,7 @@ export const editProcessingInput=z.object({id:z.string().min(1),revision:z.numbe
 async function settleDailyDefaults(db:Prisma.TransactionClient,code:string) {
  await db.$queryRaw`SELECT public.run_sesame_daily_processing(${code})`;
 }
-/** Conservative allocation: unsplit sale commitments reserve across every candidate warehouse. */
+/** Stock a warehouse can still ship: physical grade minus FZCO custody, allocated sales, processing and trucks at gate. Unallocated sales are not pinned to every warehouse. */
 export async function processingAvailability(db:Prisma.TransactionClient,code:string,warehouse:string,grade:string,excludeTradeRef?:string) {
  const [rows,sales,custody,pending,atGate]=await Promise.all([
   sesameGrades(db,code),
@@ -30,15 +31,7 @@ export async function processingAvailability(db:Prisma.TransactionClient,code:st
  const same=(v:string)=>v.trim().toLowerCase()===warehouse.trim().toLowerCase();
  const physicalKg=(rows.find(r=>same(r.name))?.grades[sesameGrade({sesameType:grade})]??0)*1000;
  const custodyKg=custody.filter(e=>sesameGrade(e.trade.tradeParams)===grade).reduce((s,e)=>s+(e.toEntity==='FZCO'?n(e.quantityMt)*1000:0)-(e.fromEntity==='FZCO'?n(e.quantityMt)*1000:0),0);
- let bookedKg=0;
- for(const t of sales){
-  const entity=tradeEntity(t.tradeParams), internal=(t.tradeParams as Record<string,unknown>|null)?.internalCounterpartyEntity;
-  const pakSale=(entity==='PAK'&&t.direction==='SELL')||(entity==='FZCO'&&t.direction==='BUY'&&internal==='PAK');
-  if(!pakSale||sesameGrade(t.tradeParams)!==grade||t.contract?.contractStatus==='Close')continue;
-  const c=t.contract;
-  if(c?.warehouseAllocations.length)bookedKg+=c.warehouseAllocations.filter(a=>same(a.warehouseName)).reduce((s,a)=>s+quantityUnitToKg(Math.max(0,n(a.qtyMt)-n(a.fulfilledQtyMt)),c.quantityUnit),0);
-  else { const selections=String((t.tradeParams as Record<string,unknown>|null)?.warehouseSelections??'').split(/[,;|]/).map(x=>x.trim()).filter(Boolean);if(!selections.length||selections.some(same))bookedKg+=quantityUnitToKg(c?n(c.openQtyMt):n(t.quantity),c?.quantityUnit??t.quantityUnit); }
- }
+ const bookedKg=sales.reduce((s,t)=>s+bookedPakistanSaleKgAtWarehouse(t,warehouse,grade,excludeTradeRef),0);
  // Open allocations may already include trucks at gate; use the larger reservation.
  const gateKg=atGate.filter(r=>tradeEntity(r.trade.tradeParams)==='PAK'&&sesameGrade(r.trade.tradeParams)===grade).reduce((s,r)=>s+n(r.allocatedQtyMt)*1000,0);
  const processingKg=await processingReservedKg(db,code,warehouse,grade);
