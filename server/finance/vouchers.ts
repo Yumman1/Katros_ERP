@@ -428,10 +428,10 @@ export async function approveVoucher(
       const cap=current.side==="SELL"&&shipment.triparty?num(shipment.fzcoAmountPkr??shipment.amountPkr):num(shipment.amountPkr);
       const paid=shipment.vouchers.filter(v=>v.status==='APPROVED'&&v.side===current.side).reduce((a,v)=>a+num(v.amountPkr),0);
       if(paid+num(current.amountPkr)>cap+.005)throw new Error("Receipt exceeds outstanding BL balance");
-      if(current.voucherKind==="INTL_PURCHASE"&&shipment.triparty){
-        const salePaid=shipment.vouchers.filter(v=>v.status==='APPROVED'&&v.side==='SELL').reduce((a,v)=>a+num(v.amountPkr),0);
-        if(salePaid+.005<num(shipment.fzcoAmountPkr||shipment.amountPkr))throw new Error("FZCO can pay Pakistan only after the buyer has paid this BL in full");
-      }
+    }
+    if((current.voucherKind==="INTL_PURCHASE"||current.internalPaymentRef)&&current.tradeRef&&current.side==="BUY"){
+      const {assertTripartyPakistanPayment}=await import("./triparty-pakistan-payment");
+      await assertTripartyPakistanPayment(tx,{tradeRef:current.tradeRef,amountPkr:num(current.amountPkr),excludeVoucherId:voucherId});
     }
     const reference = paymentReference?.trim() || current.reference?.trim();
     if (!reference) throw new Error("Enter the payment reference after payment before approving this voucher");

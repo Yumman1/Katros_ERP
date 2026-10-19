@@ -30,18 +30,20 @@ export function InternationalPurchaseVoucher() {
   const currency = trade?.currency === "USD" || entity === "FZCO" ? "USD" : "PKR";
   const fx = trade?.fxRate ?? 1;
   const scale = currency === "USD" ? (fx || 1) : 1;
-  const outstanding = (bl ? bl.outstandingPkr : trade?.amountPkr ?? 0) / scale;
+  const outstanding = (bl ? (bl.triparty ? bl.payablePkr : bl.outstandingPkr) : trade?.amountPkr ?? 0) / scale;
+  const blocked = Boolean(trade?.internal && (!bl || !bl.buyerPaid));
   return (
     <section className="space-y-4 mt-4">
       <h3 className="font-semibold">International purchase</h3>
       <p className="text-sm text-subtle">
         Pay a supplier (or Kastros Pakistan on an internal sale) after the BL. Finance prints the voucher, then enters method, bank and reference on approval.
-        {entity === "FZCO" ? " FZCO pays Pakistan only after the buyer has paid the linked BL in full." : ""}
+        {entity === "FZCO" ? " On a triparty sale the buyer pays Dubai FZCO first; FZCO can pay Kastros Pakistan only after that receipt is approved, and only up to the amount received." : ""}
       </p>
       <form
         className="grid gap-3 md:grid-cols-3"
         onSubmit={(e) => {
           e.preventDefault();
+          if (blocked) return;
           if (!window.confirm(`Generate purchase voucher for ${tradeRef}${bl ? `, BL ${bl.blNo}` : ""}?`)) return;
           save.mutate({
             counterpartyId,
@@ -65,10 +67,10 @@ export function InternationalPurchaseVoucher() {
             {(trades.data ?? []).map((t) => <option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.openMt.toFixed(3)} MT open</option>)}
           </select>
         </label>
-        <label>BL number (optional)
-          <select className="kastros-select w-full" value={blId} onChange={(e) => setBl(e.target.value)}>
-            <option value="">No BL — pay against the trade</option>
-            {(bls.data ?? []).map((b) => <option key={b.id} value={b.id}>BL {b.blNo}{b.triparty && !b.buyerPaid ? " · awaiting buyer payment" : ""} · {b.outstandingPkr.toLocaleString()} PKR open</option>)}
+        <label>BL number {trade?.internal ? "(required)" : "(optional)"}
+          <select required={!!trade?.internal} className="kastros-select w-full" value={blId} onChange={(e) => setBl(e.target.value)}>
+            <option value="">{trade?.internal ? "Select BL after the buyer pays FZCO" : "No BL — pay against the trade"}</option>
+            {(bls.data ?? []).map((b) => <option key={b.id} value={b.id} disabled={b.triparty && !b.buyerPaid}>BL {b.blNo}{b.triparty && !b.buyerPaid ? " · awaiting buyer payment" : ""} · {(b.triparty ? b.payablePkr : b.outstandingPkr).toLocaleString()} PKR open</option>)}
           </select>
         </label>
         <label>Voucher date
@@ -80,8 +82,9 @@ export function InternationalPurchaseVoucher() {
         <label>Note (optional)
           <input maxLength={1000} className="kastros-input w-full" value={note} onChange={(e) => setNote(e.target.value)} />
         </label>
-        {trade && <p className="text-sm md:col-span-3">Agreed value: {(trade.amountPkr / scale).toLocaleString()} {currency}{currency === "USD" ? ` · FX ${fx} PKR/USD` : ""}{bl ? ` · BL outstanding ${(bl.outstandingPkr / scale).toLocaleString()}` : ""}</p>}
-        <button className="kastros-btn-primary" disabled={save.isPending || !tradeRef || Number(amount) <= 0 || (currency === "USD" && fx <= 0)}>Generate purchase voucher</button>
+        {trade && <p className="text-sm md:col-span-3">Agreed value: {(trade.amountPkr / scale).toLocaleString()} {currency}{currency === "USD" ? ` · FX ${fx} PKR/USD` : ""}{bl ? ` · BL outstanding ${(bl.outstandingPkr / scale).toLocaleString()}` : ""}{bl?.triparty ? ` · Buyer paid FZCO ${(bl.buyerPaidPkr / scale).toLocaleString()}` : ""}</p>}
+        {blocked && <p className="text-sm text-destructive md:col-span-3">The buyer must pay Dubai FZCO first. FZCO cannot pay Kastros Pakistan until that receipt is approved.</p>}
+        <button className="kastros-btn-primary" disabled={save.isPending || !tradeRef || Number(amount) <= 0 || (currency === "USD" && fx <= 0) || blocked}>Generate purchase voucher</button>
       </form>
       {message && <p role="status">{message}</p>}
       {(counterparties.error || trades.error || bls.error || save.error) && <p role="alert" className="text-destructive">{counterparties.error?.message || trades.error?.message || bls.error?.message || save.error?.message}</p>}

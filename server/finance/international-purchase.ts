@@ -3,6 +3,7 @@ import { nextSerial, SERIALS } from "@/server/db/serials";
 import { isSesameCommodity } from "@/lib/sesame";
 import { ENTITY_NAMES, internalPakSale, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
 import { entityCounterparty } from "./internal-payments";
+import { assertTripartyPakistanPayment } from "./triparty-pakistan-payment";
 
 const n = (v: unknown) => Number(v ?? 0);
 const money = (v: number) => Math.round(v * 100) / 100;
@@ -32,6 +33,7 @@ export async function internationalPurchaseTrades(code: string, entity: SesameEn
         fxRate: fx,
         openMt: n(t.contract?.openQtyMt ?? t.quantity),
         amountPkr,
+        internal: true,
       }];
     }
     if (!internal && own === entity && t.direction === "BUY" && t.counterpartyId === counterpartyId && t.tradeScope === "INTERNATIONAL") {
@@ -43,6 +45,7 @@ export async function internationalPurchaseTrades(code: string, entity: SesameEn
         fxRate: fx,
         openMt: n(t.contract?.openQtyMt ?? t.quantity),
         amountPkr,
+        internal: false,
       }];
     }
     return [];
@@ -68,7 +71,9 @@ export async function internationalPurchaseBls(tradeRef: string) {
       fzcoAmountPkr: n(s.fzcoAmountPkr),
       fxRate: n(s.fxRate),
       outstandingPkr: money(Math.max(0, n(s.amountPkr) - purchasePaid)),
-      buyerPaid: salePaid + 0.005 >= (n(s.fzcoAmountPkr) || n(s.amountPkr)),
+      buyerPaidPkr: money(salePaid),
+      buyerPaid: salePaid > 0.005,
+      payablePkr: money(Math.max(0, Math.min(n(s.amountPkr) - purchasePaid, salePaid - purchasePaid))),
     };
   });
 }
@@ -90,6 +95,7 @@ export async function createInternationalPurchase(input: {
     if (!isSesameCommodity(t.commodity.code) || t.commodity.code !== input.code) throw new Error("Select a Sesame trade on this desk");
     const internal = internalPakSale(t.commodity.code, t.direction, t.tradeParams);
     if (internal && input.entity !== "FZCO") throw new Error("Dubai FZCO pays Kastros Pakistan on the internal sale");
+    if (internal && !input.exportShipmentId) throw new Error("Select the BL. FZCO can pay Kastros Pakistan only after the buyer has paid Dubai FZCO");
     if (!internal && (tradeEntity(t.tradeParams) !== input.entity || t.direction !== "BUY")) throw new Error("Select an open international purchase");
     const fx = n((t.tradeParams as Record<string, unknown> | null)?.executionFxPkrPerUsd);
     const amountPkr = t.currency === "USD" ? money(input.amount * (fx > 0 ? fx : 0)) : money(input.amount);
@@ -114,15 +120,10 @@ export async function createInternationalPurchase(input: {
     if (shipment) {
       if (shipment.status !== "BL_RECORDED" || !shipment.blNo) throw new Error("Record the BL before paying against it");
       if (shipment.tradeRef !== t.tradeRef && shipment.fzcoSaleTradeRef !== t.tradeRef) throw new Error("BL does not belong to this trade");
-      if (shipment.triparty) {
-        const salePaid = shipment.vouchers.filter((v) => v.side === "SELL" && v.status === "APPROVED").reduce((a, v) => a + n(v.amountPkr), 0);
-        if (salePaid + 0.005 < n(shipment.fzcoAmountPkr || shipment.amountPkr)) {
-          throw new Error("FZCO can pay Pakistan only after the buyer has paid this BL in full");
-        }
-      }
       const committed = shipment.vouchers.filter((v) => v.side === "BUY" && v.status !== "REJECTED").reduce((a, v) => a + n(v.amountPkr), 0);
       if (amountPkr > n(shipment.amountPkr) - committed + 0.005) throw new Error("Payment exceeds the remaining BL balance including pending vouchers");
     }
+    if (internal) await assertTripartyPakistanPayment(db, { tradeRef: t.tradeRef, amountPkr });
 
     const voucherNo = await nextSerial(SERIALS.VOUCHER, db);
     await db.voucher.create({
