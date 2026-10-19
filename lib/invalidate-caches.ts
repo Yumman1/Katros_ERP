@@ -52,6 +52,7 @@ export function invalidateGateOpsCaches(utils: Utils) {
   void utils.execution.pendingTrucks.invalidate();
   void utils.execution.inboundReceipts.invalidate();
   void utils.execution.outboundDispatches.invalidate();
+  void utils.sesameExport.invalidate();
   void utils.execution.lockedContracts.invalidate();
   void utils.execution.deskSummary.invalidate();
   void utils.execution.spotPipeline.invalidate();

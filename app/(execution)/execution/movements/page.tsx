@@ -29,7 +29,7 @@ import {
   GateRegisterActions,
   type GateRegisterEntry,
 } from "@/components/execution/gate-register-actions";
-import { GateTruckWorkflow } from "@/components/execution/gate-truck-workflow";
+import { GateTruckWorkflow, type WorkflowContract } from "@/components/execution/gate-truck-workflow";
 import { PageHeader } from "@/components/ui/page-header";
 import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
 import { ListPagination } from "@/components/ui/list-pagination";
@@ -135,6 +135,12 @@ function ExternalTruckMovements() {
     {},
     { refetchInterval: REFETCH_MS },
   );
+  const { data: pendingExportGates } = trpc.sesameExport.pendingGates.useQuery(undefined, {
+    refetchInterval: REFETCH_MS,
+  });
+  const { data: exportShipments } = trpc.sesameExport.list.useQuery(undefined, {
+    refetchInterval: REFETCH_MS,
+  });
   const movementsLoading = loadingContracts || loadingInbound || loadingOutbound || loadingPending;
 
   const [warehouseFilter, setWarehouseFilter] = useState("ALL");
@@ -211,6 +217,7 @@ function ExternalTruckMovements() {
     const outboundRows: Movement[] = (outbound ?? [])
       .filter((d) => {
         const truck = d.gatepassNo ? truckByGatepass.get(d.gatepassNo) : undefined;
+        if (truck?.exportShipmentId && !truck.saleReleasedAt) return false;
         return !(truck && truck.saleStage != null && truck.saleReleasedAt == null);
       })
       .map((d) => {
@@ -382,7 +389,11 @@ function ExternalTruckMovements() {
   const pendingOutbound = (pendingTrucks ?? []).filter(
     (t) => t.movementType === "OUTBOUND" && t.status !== "ASSIGNED",
   ).length;
-  const unassignedGatepassCount = unassignedTrucks.length;
+  const openExportGroups = (exportShipments ?? []).filter(
+    (s) => s.status !== "BL_RECORDED" && !s.movementReadOnly,
+  ).length;
+  const unassignedGatepassCount = unassignedTrucks.length + (pendingExportGates?.length ?? 0);
+  const workflowCount = unassignedTrucks.length + (pendingExportGates?.length ?? 0) + openExportGroups;
 
   if (movementsLoading && !contracts && !inbound && !outbound && !pendingTrucks) {
     return (
@@ -405,7 +416,7 @@ function ExternalTruckMovements() {
           </>
         }
         title="Truck Movements"
-        subtitle="Inbound and outbound trucks — gate register, gatepass, and trade assignment."
+        subtitle="Inbound and outbound trucks — one workflow for local, international, and triparty, then the gate register."
         actions={
           <Link
             href="/warehouse/gatepass"
@@ -429,92 +440,12 @@ function ExternalTruckMovements() {
           <Kpi icon={<Truck className="h-5 w-5" />} label="Awaiting Assignment" value={unassignedGatepassCount} variant="accent" />
         </div>
 
-        <ExportGateAssignment/><SesameExportShipments mode="movement"/>
-        {/* ── Truck Workflow: unassigned / incomplete gatepass trucks ── */}
-        {unassignedGatepassCount > 0 && (
-          <section className="flex min-w-0 flex-col gap-3">
-            <SectionHeader
-              icon={<Truck className="h-4 w-4 text-accent-secondary" />}
-              title="Truck Workflow"
-              count={unassignedGatepassCount}
-              description="Assign each truck to a trade and follow its payment workflow — inbound cards leave this list once their receipts are paid, outbound once released."
-            />
-            {truckFilters.controls}
-            <div className="flex flex-col gap-3">
-              {unassignedPagination.items.map((t) => (
-              <div
-                key={t.id}
-                className="rounded-xl border border-kastros-border bg-kastros-card p-3.5 shadow-sm"
-              >
-                {/* ── Header: gatepass identity · weight · actions ── */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-bold text-accent-secondary">
-                      {t.gatepassNo}
-                    </span>
-                    <span
-                      className={cn(
-                        "rounded-full px-1.5 py-0.5 text-[9px] font-bold",
-                        t.movementType === "INBOUND" ? "exec-badge-local" : "exec-badge-intl",
-                      )}
-                    >
-                      {t.movementType === "INBOUND" ? "IN" : "OUT"}
-                    </span>
-                    <span className="whitespace-nowrap text-[10px] text-subtle">
-                      {fmtGatepassGenerated(t.arrivalDate)}
-                    </span>
-                  </div>
-                  <div className="ml-auto flex items-center gap-3">
-                    <div className="text-right">
-                      <div className="font-mono text-sm font-bold text-accent-secondary">
-                        {new Intl.NumberFormat("en-PK").format(displayWeightKg(t))} kg
-                      </div>
-                      {(t.quantityBagsBales ?? t.bags) != null && (
-                        <div className="text-[10px] text-subtle">
-                          {t.quantityBagsBales ?? t.bags} bags/bales
-                        </div>
-                      )}
-                    </div>
-                    <GateRegisterActions entry={pendingTruckToRegisterEntry(t)} compact />
-                  </div>
-                </div>
-
-                {/* ── Meta grid ── */}
-                <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-kastros-border/60 pt-2.5 text-xs sm:grid-cols-4">
-                  {(
-                    [
-                      ["Truck", t.truckNo],
-                      ["Counterparty", t.counterpartyName],
-                      ["Commodity", t.commodityName ?? "—"],
-                      ["Warehouse", t.warehouseName],
-                    ] as const
-                  ).map(([label, value]) => (
-                    <div key={label} className="min-w-0">
-                      <div className="text-[9px] font-semibold uppercase tracking-wider text-subtle">
-                        {label}
-                      </div>
-                      <div className="truncate text-foreground">{value}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* ── Two-step workflow ── */}
-                <div className="mt-3">
-                  <GateTruckWorkflow truck={t} contracts={contracts ?? []} />
-                </div>
-              </div>
-            ))}
-            </div>
-            <ListPagination
-              page={unassignedPagination.page}
-              totalPages={unassignedPagination.totalPages}
-              totalItems={unassignedPagination.totalItems}
-              startIndex={unassignedPagination.startIndex}
-              endIndex={unassignedPagination.endIndex}
-              onPageChange={unassignedPagination.setPage}
-            />
-          </section>
-        )}
+        <OpenTruckWorkflow
+          workflowCount={workflowCount}
+          unassignedPagination={unassignedPagination}
+          truckFilters={truckFilters}
+          contracts={contracts ?? []}
+        />
 
         {/* ── Gate Register: filters + table ── */}
         <section className="flex min-w-0 flex-col gap-3">
@@ -522,7 +453,7 @@ function ExternalTruckMovements() {
             icon={<ClipboardList className="h-4 w-4 text-brand" />}
             title="Gate Register"
             count={filteredMovements.length}
-            description="All gate in/out slips — including unassigned gatepasses waiting for trade linkage."
+            description="Completed gate in/out records — local trucks after payment or release, international and triparty groups after the shipment is released."
           />
 
           {/* Toolbar — wraps gracefully, never forces page width. */}
@@ -842,6 +773,101 @@ function movementToRegisterEntry(
     remarks: d.remarks,
     generatedAt: d.dispatchDate,
   };
+}
+
+function OpenTruckWorkflow({
+  workflowCount,
+  unassignedPagination,
+  truckFilters,
+  contracts,
+}: {
+  workflowCount: number;
+  unassignedPagination: ReturnType<typeof useListPagination<PendingTruck>>;
+  truckFilters: { controls: ReactNode };
+  contracts: WorkflowContract[];
+}) {
+  if (workflowCount === 0) return null;
+  return (
+    <section className="flex min-w-0 flex-col gap-3">
+      <SectionHeader
+        icon={<Truck className="h-4 w-4 text-accent-secondary" />}
+        title="Truck Workflow"
+        count={workflowCount}
+        description="Assign each gate entry to a trade and follow it through — local trucks leave once paid or released; international and triparty groups leave once the BL is recorded and then appear in the gate register."
+      />
+      {unassignedPagination.totalItems > 0 && truckFilters.controls}
+      <div className="flex flex-col gap-3">
+        {unassignedPagination.items.map((t) => (
+          <div
+            key={t.id}
+            className="rounded-xl border border-kastros-border bg-kastros-card p-3.5 shadow-sm"
+          >
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-bold text-accent-secondary">{t.gatepassNo}</span>
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[9px] font-bold",
+                    t.movementType === "INBOUND" ? "exec-badge-local" : "exec-badge-intl",
+                  )}
+                >
+                  {t.movementType === "INBOUND" ? "IN" : "OUT"}
+                </span>
+                <span className="whitespace-nowrap text-[10px] text-subtle">
+                  {fmtGatepassGenerated(t.arrivalDate)}
+                </span>
+              </div>
+              <div className="ml-auto flex items-center gap-3">
+                <div className="text-right">
+                  <div className="font-mono text-sm font-bold text-accent-secondary">
+                    {new Intl.NumberFormat("en-PK").format(displayWeightKg(t))} kg
+                  </div>
+                  {(t.quantityBagsBales ?? t.bags) != null && (
+                    <div className="text-[10px] text-subtle">
+                      {t.quantityBagsBales ?? t.bags} bags/bales
+                    </div>
+                  )}
+                </div>
+                <GateRegisterActions entry={pendingTruckToRegisterEntry(t)} compact />
+              </div>
+            </div>
+            <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-kastros-border/60 pt-2.5 text-xs sm:grid-cols-4">
+              {(
+                [
+                  ["Truck", t.truckNo],
+                  ["Counterparty", t.counterpartyName],
+                  ["Commodity", t.commodityName ?? "—"],
+                  ["Warehouse", t.warehouseName],
+                ] as const
+              ).map(([label, value]) => (
+                <div key={label} className="min-w-0">
+                  <div className="text-[9px] font-semibold uppercase tracking-wider text-subtle">{label}</div>
+                  <div className="truncate text-foreground">{value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3">
+              <GateTruckWorkflow truck={t} contracts={contracts} />
+            </div>
+          </div>
+        ))}
+      </div>
+      {unassignedPagination.totalItems > 0 && (
+        <ListPagination
+          page={unassignedPagination.page}
+          totalPages={unassignedPagination.totalPages}
+          totalItems={unassignedPagination.totalItems}
+          startIndex={unassignedPagination.startIndex}
+          endIndex={unassignedPagination.endIndex}
+          onPageChange={unassignedPagination.setPage}
+        />
+      )}
+      <div className="flex flex-col gap-3">
+        <ExportGateAssignment />
+        <SesameExportShipments mode="movement" embedded />
+      </div>
+    </section>
+  );
 }
 
 function SectionHeader({

@@ -3,6 +3,12 @@ import {useState} from 'react';
 import {trpc} from '@/lib/trpc/client';
 import {useTeam} from '@/lib/use-team';
 import {downloadSesameExport} from '@/lib/sesame-export-pdf';
+import {invalidateGateOpsCaches} from '@/lib/invalidate-caches';
+import {cn} from '@/lib/utils';
+import {ErrorLine, StepPanel, WorkflowCard} from '@/components/execution/workflow-step';
+import type {inferRouterOutputs} from '@trpc/server';
+import type {AppRouter} from '@/server/routers/_app';
+type Shipment=inferRouterOutputs<AppRouter>['sesameExport']['list'][number];
 const currency=(s:{entity:string;triparty?:boolean})=>s.triparty||s.entity==='FZCO'?'USD':'PKR';
 const scale=(s:{entity:string;fxRate:number;fzcoFxRate?:number;triparty?:boolean})=>s.triparty||s.entity==='FZCO'?(s.fzcoFxRate||s.fxRate||1):1;
 const fmt=(n:number)=>n.toLocaleString('en-PK',{maximumFractionDigits:2});
@@ -12,13 +18,14 @@ export function SesameExportShipments({mode,embedded=false,sideFilter}:{mode:Mod
  const [error,setError]=useState('');const [message,setMessage]=useState('');
  const [bl,setBl]=useState<Record<string,string>>({});const [reason,setReason]=useState<Record<string,string>>({});const [amount,setAmount]=useState<Record<string,string>>({});
  const [receiptId,setReceiptId]=useState('');const [receiptAmount,setReceiptAmount]=useState('');const [method,setMethod]=useState<'Bank transfer'|'Cheque'|'Cash'|'Other'>('Bank transfer');const [reference,setReference]=useState('');const [bank,setBank]=useState('');const [requestKey,setRequestKey]=useState(()=>crypto.randomUUID());
- const options={onSuccess:()=>{setError('');setMessage('Shipment updated.');void utils.invalidate();},onError:(e:{message:string})=>setError(e.message)};
+ const options={onSuccess:()=>{setError('');setMessage('Shipment updated.');invalidateGateOpsCaches(utils);void utils.sesameExport.invalidate();void utils.invalidate();},onError:(e:{message:string})=>setError(e.message)};
  const generate=trpc.sesameExport.generate.useMutation(options),trader=trpc.sesameExport.traderApprove.useMutation(options),execution=trpc.sesameExport.executionApprove.useMutation(options),finance=trpc.sesameExport.financeApprove.useMutation(options),reject=trpc.sesameExport.reject.useMutation(options),release=trpc.sesameExport.release.useMutation(options),recordBl=trpc.sesameExport.recordBl.useMutation(options),adjust=trpc.sesameExport.adjustBl.useMutation(options);
  const receipt=trpc.sesameExport.receipt.useMutation({...options,onSuccess:r=>{setMessage(`Voucher ${r.voucherNo} sent to Finance.`);setReceiptAmount('');setReference('');setRequestKey(crypto.randomUUID());void utils.invalidate();}});
  const busy=[generate,trader,execution,finance,reject,release,recordBl,adjust,receipt].some(m=>m.isPending);
  const eligible=query.data?.filter(s=>(!sideFilter||s.side===sideFilter)&&s.blNo&&s.outstandingPkr>0&&!s.paymentReadOnly)??[];const selected=eligible.find(s=>s.id===receiptId);
- const rows=(query.data??[]).filter(s=>!sideFilter||s.side===sideFilter).filter(s=>mode==='trader'?s.status==='TRADER_PENDING':mode==='execution'?s.status==='EXECUTION_PENDING':mode==='finance'?['FINANCE_PENDING','BL_RECORDED'].includes(s.status):mode==='voucher'?!!s.blNo:true);
+ const rows=(query.data??[]).filter(s=>!sideFilter||s.side===sideFilter).filter(s=>mode==='trader'?s.status==='TRADER_PENDING':mode==='execution'?s.status==='EXECUTION_PENDING':mode==='finance'?['FINANCE_PENDING','BL_RECORDED'].includes(s.status):mode==='voucher'?!!s.blNo:mode==='movement'&&embedded?s.status!=='BL_RECORDED'&&!s.movementReadOnly:true);
  if(mode!=='voucher'&&!query.isLoading&&!rows.length&&!query.error)return null;
+ if(mode==='movement'&&embedded)return <MovementShipmentCards rows={rows} error={error||query.error?.message||''} message={message} busy={busy} bl={bl} setBl={setBl} generate={generate} release={release} recordBl={recordBl} setError={setError}/>;
  return <section className={embedded?"space-y-4 mt-4":"kastros-card p-5 my-4 space-y-4"}>{!embedded&&<h2 className="text-lg font-semibold">Sesame shipment groups {['trader','execution','finance'].includes(mode)?'— approvals':''}</h2>}
  {!embedded&&<p className="text-sm text-subtle">One DO and collective gate-out slip per shipment group. Release follows approvals; collection follows the BL.</p>}
  {(error||query.error)&&<p role="alert" className="text-destructive">{error||query.error?.message}</p>}{message&&<p role="status">{message}</p>}{query.isLoading&&<p>Loading shipments…</p>}
@@ -40,4 +47,155 @@ export function SesameExportShipments({mode,embedded=false,sideFilter}:{mode:Mod
  </div>{s.vouchers.length>0&&<ul className="text-sm mt-3">{s.vouchers.map(v=><li key={v.id}>{v.voucherNo} · {fmt(v.amountPkr/scale(s))} {currency(s)} · {v.status} · Reference: {v.reference??'—'}</li>)}</ul>}
  </details>;})}
  </section>;
+}
+
+type MovementRow = Shipment;
+
+function MovementShipmentCards({
+  rows,
+  error,
+  message,
+  busy,
+  bl,
+  setBl,
+  generate,
+  release,
+  recordBl,
+  setError,
+}: {
+  rows: MovementRow[];
+  error: string;
+  message: string;
+  busy: boolean;
+  bl: Record<string, string>;
+  setBl: (next: Record<string, string>) => void;
+  generate: { mutate: (input: { id: string; revision: number }) => void; error: { message: string } | null };
+  release: { mutate: (input: { id: string; revision: number }) => void; error: { message: string } | null };
+  recordBl: { mutate: (input: { id: string; revision: number; blNo: string }) => void; error: { message: string } | null };
+  setError: (message: string) => void;
+}) {
+  return (
+    <>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {message && <p role="status" className="text-sm text-success">{message}</p>}
+      {rows.map((s) => {
+        const key = { id: s.id, revision: s.revision };
+        const tradeLabel = s.fzcoSaleTradeRef ? `${s.tradeRef} → ${s.fzcoSaleTradeRef}` : s.tradeRef;
+        const step =
+          s.status === "DRAFT" || s.status === "REJECTED"
+            ? { state: "active" as const, headline: s.status === "REJECTED" ? "DO rejected" : "Generate DO" }
+            : s.status === "TRADER_PENDING"
+              ? { state: "active" as const, headline: "Awaiting trader" }
+              : s.status === "EXECUTION_PENDING"
+                ? { state: "active" as const, headline: "Awaiting execution" }
+                : s.status === "FINANCE_PENDING"
+                  ? { state: "active" as const, headline: "Awaiting finance" }
+                  : s.status === "APPROVED"
+                    ? { state: "active" as const, headline: "Ready to release" }
+                    : s.status === "RELEASED"
+                      ? { state: "active" as const, headline: "Record BL" }
+                      : { state: "waiting" as const, headline: s.status.replaceAll("_", " ") };
+        return (
+          <WorkflowCard key={s.id}>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-sm font-bold text-accent-secondary">{tradeLabel}</span>
+                <span className="rounded-full exec-badge-intl px-1.5 py-0.5 text-[9px] font-bold">OUT</span>
+                <span className={cn("rounded-full px-1.5 py-0.5 text-[9px] font-bold", s.triparty ? "bg-amber-500/15 text-amber-600" : "exec-badge-intl")}>
+                  {s.triparty ? "Triparty" : "International"}
+                </span>
+              </div>
+              <div className="ml-auto font-mono text-sm font-bold text-accent-secondary">{fmt(s.totalWeightKg)} kg</div>
+            </div>
+            <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-kastros-border/60 pt-2.5 text-xs sm:grid-cols-4">
+              {(
+                [
+                  ["Buyer", s.buyer ?? s.counterparty],
+                  ["Warehouse", s.dispatchLocation || s.warehouseName],
+                  ["Documents", s.deliveryOrderNo ?? "DO pending"],
+                  ["Containers", String(s.trucks.length)],
+                ] as const
+              ).map(([label, value]) => (
+                <div key={label} className="min-w-0">
+                  <div className="text-[9px] font-semibold uppercase tracking-wider text-subtle">{label}</div>
+                  <div className="truncate text-foreground">{value}</div>
+                </div>
+              ))}
+            </div>
+            <ul className="mt-2 space-y-0.5 text-[11px] text-muted-foreground">
+              {s.trucks.map((t) => (
+                <li key={t.id}>
+                  {t.gatepassNo} · {t.truckNo} · {t.containerNo ?? "—"} · CRO {t.croNo ?? "—"} · {fmt(t.weightKg)} kg
+                </li>
+              ))}
+            </ul>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <StepPanel step={1} title="Trade" state="done" headline="Assigned">
+                <span className="font-mono text-xs font-semibold text-foreground">{tradeLabel}</span>
+              </StepPanel>
+              <StepPanel step={2} title="Shipment" state={step.state} headline={step.headline}>
+                <div className="flex flex-wrap gap-2">
+                  {s.deliveryOrderNo && (
+                    <button type="button" className="kastros-btn-secondary px-3 py-1.5 text-[11px]" onClick={() => void downloadSesameExport(s, "DO").catch((e) => setError(String(e)))}>
+                      Download DO
+                    </button>
+                  )}
+                  {s.gateOutSlipNo && (
+                    <button type="button" className="kastros-btn-secondary px-3 py-1.5 text-[11px]" onClick={() => void downloadSesameExport(s, "GATE_OUT").catch((e) => setError(String(e)))}>
+                      Gate-out slip
+                    </button>
+                  )}
+                  {["DRAFT", "REJECTED"].includes(s.status) && (
+                    <button type="button" className="kastros-btn-primary px-3 py-1.5 text-[11px] disabled:opacity-50" disabled={busy} onClick={() => generate.mutate(key)}>
+                      Generate delivery order
+                    </button>
+                  )}
+                  {s.status === "APPROVED" && (
+                    <button
+                      type="button"
+                      className="kastros-btn-primary px-3 py-1.5 text-[11px] disabled:opacity-50"
+                      disabled={busy}
+                      onClick={() => {
+                        if (window.confirm(`Confirm all ${s.trucks.length} containers dispatched from ${s.dispatchLocation || s.warehouseName}?`)) release.mutate(key);
+                      }}
+                    >
+                      Mark released
+                    </button>
+                  )}
+                </div>
+                {["TRADER_PENDING", "EXECUTION_PENDING", "FINANCE_PENDING"].includes(s.status) && (
+                  <span className="text-[10px] text-subtle">Approvals run on the trader, execution, and finance desks — same as a local delivery order.</span>
+                )}
+                {s.status === "RELEASED" && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      aria-label="BL number"
+                      className="kastros-input kastros-input-sm min-w-0 flex-1 py-1.5 text-[11px]"
+                      placeholder="BL number after vessel loading"
+                      value={bl[s.id] ?? ""}
+                      onChange={(e) => setBl({ ...bl, [s.id]: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className="kastros-btn-primary px-3 py-1.5 text-[11px] disabled:opacity-50"
+                      disabled={busy || !bl[s.id]?.trim()}
+                      onClick={() => recordBl.mutate({ ...key, blNo: bl[s.id] })}
+                    >
+                      Record BL
+                    </button>
+                  </div>
+                )}
+                {s.status === "RELEASED" && (
+                  <span className="text-[10px] text-subtle">After the BL is recorded this group moves to the gate register.</span>
+                )}
+                {generate.error && <ErrorLine message={generate.error.message} />}
+                {release.error && <ErrorLine message={release.error.message} />}
+                {recordBl.error && <ErrorLine message={recordBl.error.message} />}
+              </StepPanel>
+            </div>
+          </WorkflowCard>
+        );
+      })}
+    </>
+  );
 }
