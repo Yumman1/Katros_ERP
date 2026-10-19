@@ -647,7 +647,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
   }
 
   const exportPaid = new Map<string,number>();
-  for(const v of await prisma.voucher.groupBy({by:['exportShipmentId'],where:{exportShipmentId:{not:null},status:'APPROVED'},_sum:{amountPkr:true}}))if(v.exportShipmentId)exportPaid.set(v.exportShipmentId,num(v._sum.amountPkr));
+  for(const v of await prisma.counterpartyLedgerEntry.groupBy({by:['exportShipmentId','side','executionEntity'],where:{exportShipmentId:{not:null},entryType:'CREDIT'},_sum:{amountPkr:true}}))if(v.exportShipmentId)exportPaid.set(`${v.exportShipmentId}:${v.side}:${v.executionEntity??''}`,num(v._sum.amountPkr));
   const byAccount = new Map<string, LedgerEntryView[]>();
   for (const e of entries) {
     const stage = (e.truckId ? truckStage.get(e.truckId) : null) ?? null;
@@ -664,7 +664,8 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
         : 0;
     // A cancellation note answers to its own status, not to a gatepass or a
     // truck stage — it is settled the moment a voucher pays it.
-    const settled = e.exportShipmentId ? (exportPaid.get(e.exportShipmentId)??0)+.005>=billedPkr :
+    const exportPaidKey = e.exportShipmentId ? `${e.exportShipmentId}:${e.side}:${e.executionEntity??''}` : '';
+    const settled = e.exportShipmentId ? (exportPaid.get(exportPaidKey)??0)+.005>=billedPkr :
       e.noteStatus != null
         ? e.noteStatus === "PAID"
         : e.entryType === "DEBIT" &&
@@ -678,7 +679,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
     // shows its paid share rather than all-or-nothing. Open notes track partial
     // vouchers against the same noteRef sub-ledger.
     const isBuyGateInvoice = e.side === "BUY" && e.sourceType === "GATEPASS";
-    const paidPkr = e.exportShipmentId ? Math.min(billedPkr,exportPaid.get(e.exportShipmentId)??0) : isOpenNote
+    const paidPkr = e.exportShipmentId ? Math.min(billedPkr,exportPaid.get(exportPaidKey)??0) : isOpenNote
       ? notePaid
       : e.entryType !== "DEBIT"
         ? 0

@@ -242,11 +242,13 @@ function BookTradeForm() {
     ntn: string;
     contactPerson: string;
     contactPhone: string;
+    tradingEntities: Array<"PAK" | "FZCO">;
   }>({
     name: "",
     ntn: "",
     contactPerson: "",
     contactPhone: "",
+    tradingEntities: ["PAK"],
   });
 
   // Autosaved booking draft — id is kept in a ref so debounced saves never go stale.
@@ -376,16 +378,15 @@ function BookTradeForm() {
   const priceCurrencyOptions = refData.data?.priceCurrencies ?? [...PRICE_CURRENCIES];
   const selectedCommodity = commodities.find((c) => c.id === commodityId);
 
-  // Single counterparty register (CP-xxxxx) — the same list serves both directions.
-  const counterpartyOptions = refData.data?.counterparties ?? [];
-  const selectedCounterparty = counterpartyOptions.find((cp) => cp.id === counterpartyId);
+  // Single counterparty register (CP-xxxxx) — filtered by Kastros entity after
+  // the sesame/trading-entity flags below are known.
+  const allCounterparties = refData.data?.counterparties ?? [];
 
   // Filer / non-filer toggle — optimistic override until referenceData refetches.
   const [filerOverride, setFilerOverride] = useState<"FILER" | "NON_FILER" | null>(null);
   useEffect(() => {
     setFilerOverride(null);
   }, [counterpartyId]);
-  const filerStatus = filerOverride ?? selectedCounterparty?.taxFilerStatus ?? "FILER";
 
   const sellInflow = trpc.policy.sellInflowStatus.useQuery(undefined, {
     enabled: direction === TradeDirection.SELL,
@@ -407,8 +408,32 @@ function BookTradeForm() {
   const isCorn = isCornCommodity(selectedCommodity?.code);
   const isSesame = isSesameCommodity(selectedCommodity?.code, selectedCommodity?.name);
   const fzcoBooking = isSesame && sesameTradingEntity(tradeParams) === "Kastros FZCO";
-  useEffect(() => { if(fzcoBooking && priceCurrency!=="USD") setValue("priceCurrency","USD",{shouldValidate:true}); },[fzcoBooking,priceCurrency,setValue]);
-  const paperOwnership = isSesame && (sesameTradingEntity(tradeParams) === "Kastros FZCO" || Boolean(tradeParams.internalCounterpartyEntity));
+  const bookingEntity = fzcoBooking ? "FZCO" : "PAK";
+  const internalPakSale = isSesame && !fzcoBooking && tradeParams.internalCounterpartyEntity === "FZCO" && direction === "SELL";
+  const sesameInternational = isSesame && (tradeScope === "INTERNATIONAL" || internalPakSale);
+  useEffect(() => {
+    if (internalPakSale && tradeScope !== "INTERNATIONAL") setValue("tradeScope", "INTERNATIONAL", { shouldValidate: true });
+  }, [internalPakSale, tradeScope, setValue]);
+  useEffect(() => {
+    if (!sesameInternational) return;
+    if (priceCurrency !== "USD") setValue("priceCurrency", "USD", { shouldValidate: true });
+    if (quantityUnit !== "MT") setValue("quantityUnit", "MT", { shouldValidate: true });
+    if (watch("priceWeightUnit") !== "MT") {
+      setValue("priceWeightUnit", "MT", { shouldValidate: true });
+      setValue("priceKgPerUnit", 1000, { shouldValidate: true });
+    }
+  }, [sesameInternational, priceCurrency, quantityUnit, setValue, watch]);
+  const paperOwnership = isSesame && fzcoBooking && !tradeParams.internalCounterpartyEntity;
+  const counterpartyOptions = allCounterparties.filter((cp) =>
+    (cp.tradingEntities ?? ["PAK"]).includes(isSesame ? bookingEntity : "PAK"),
+  );
+  const selectedCounterparty = counterpartyOptions.find((cp) => cp.id === counterpartyId);
+  const filerStatus = filerOverride ?? selectedCounterparty?.taxFilerStatus ?? "FILER";
+  useEffect(() => {
+    if (!internalPakSale) return;
+    const interco = allCounterparties.find((cp) => cp.code === "INTERCO-FZCO");
+    setValue("counterpartyId", interco?.id ?? "pending-interco");
+  }, [internalPakSale, allCounterparties, setValue]);
   useEffect(() => {
     if (isSesame) setTradeParams(current => ({ ...SESAME_DEFAULTS, ...current, tradingEntity: sesameTradingEntity(current) }));
   }, [isSesame, selectedCommodity?.id]);
@@ -876,17 +901,25 @@ function BookTradeForm() {
 
             {isSesame && (
                 <Field label="Internal trade (optional)">
-                  <SearchableSelect value={String(tradeParams.internalCounterpartyEntity ?? "")} onChange={e => setTradeParams(p => ({ ...p, internalCounterpartyEntity: e.target.value }))} className="kastros-select w-full">
+                  <SearchableSelect value={String(tradeParams.internalCounterpartyEntity ?? "")} onChange={e => {
+                    const value = e.target.value;
+                    setTradeParams(p => ({ ...p, internalCounterpartyEntity: value }));
+                    if (value === "FZCO" && sesameTradingEntity(tradeParams) !== "Kastros FZCO") {
+                      setValue("tradeScope", "INTERNATIONAL", { shouldValidate: true });
+                    }
+                  }} className="kastros-select w-full">
                     <option value="">External counterparty</option>
                     <option value={sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "PAK" : "FZCO"}>{sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "Buy / sell with Kastros Pakistan" : "Buy / sell with Dubai FZCO"}</option>
                   </SearchableSelect>
+                  {internalPakSale && <p className="mt-1 text-[11px] text-subtle">Booked as an international Pakistan sale to Dubai FZCO. Stock leaves a Pakistan warehouse through Triparty gate-out.</p>}
                 </Field>
             )}
 
-            <Field label="Counterparty" error={errors.counterpartyId?.message}>
+            <Field label={internalPakSale ? "Counterparty (Dubai FZCO)" : "Counterparty"} error={errors.counterpartyId?.message}>
               <SearchableSelect
                 searchable
                 {...register("counterpartyId")}
+                disabled={internalPakSale}
                 className="kastros-select w-full"
               >
                 <option value="">Select…</option>
@@ -931,14 +964,14 @@ function BookTradeForm() {
                   finance before selling more.
                 </p>
               )}
-              <button
+              {!internalPakSale && <button
                 type="button"
                 onClick={() => setShowAddCp((v) => !v)}
                 className="mt-1 text-xs text-success hover:underline"
               >
                 {showAddCp ? "Cancel" : "+ Add counterparty"}
-              </button>
-              {showAddCp && (
+              </button>}
+              {showAddCp && !internalPakSale && (
                 <div className="mt-2 space-y-2 rounded-md border border-kastros-border/80 bg-kastros-bg/40 p-3">
                   <input
                     placeholder="Trading display name *"
@@ -964,6 +997,30 @@ function BookTradeForm() {
                     onChange={(e) => setNewCp((s) => ({ ...s, contactPhone: e.target.value }))}
                     className="rounded-md border border-kastros-border bg-kastros-bg px-2 py-1.5 text-sm text-foreground"
                   />
+                  <fieldset className="text-[11px] text-subtle">
+                    <legend>Registered with</legend>
+                    <div className="mt-1 flex flex-wrap gap-3 text-sm text-foreground">
+                      {(["PAK", "FZCO"] as const).map((entity) => {
+                        const checked = newCp.tradingEntities.includes(entity) || entity === bookingEntity;
+                        return (
+                          <label key={entity} className="flex items-center gap-1.5">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={entity === bookingEntity}
+                              onChange={() => setNewCp((s) => ({
+                                ...s,
+                                tradingEntities: s.tradingEntities.includes(entity)
+                                  ? s.tradingEntities.filter((e) => e !== entity)
+                                  : [...s.tradingEntities, entity],
+                              }))}
+                            />
+                            {entity === "FZCO" ? "Dubai FZCO" : "Kastros Pakistan"}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
                   <p className="text-[11px] text-subtle">
                     A unique counterparty code (CP-xxxxx) is assigned automatically when you save.
                   </p>
@@ -973,14 +1030,15 @@ function BookTradeForm() {
                     onClick={async () => {
                       const row = await addCounterparty.mutateAsync({
                         name: newCp.name.trim(),
-                        country: "PK",
+                        country: bookingEntity === "FZCO" ? "AE" : "PK",
+                        tradingEntities: Array.from(new Set([...newCp.tradingEntities, bookingEntity])),
                         ntn: newCp.ntn.trim() || undefined,
                         contactPerson: newCp.contactPerson.trim() || undefined,
                         contactPhone: newCp.contactPhone.trim() || undefined,
                       });
                       setValue("counterpartyId", row.id);
                       setShowAddCp(false);
-                      setNewCp({ name: "", ntn: "", contactPerson: "", contactPhone: "" });
+                      setNewCp({ name: "", ntn: "", contactPerson: "", contactPhone: "", tradingEntities: ["PAK"] });
                     }}
                     className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-kastros-bg disabled:opacity-50"
                   >
@@ -1010,6 +1068,7 @@ function BookTradeForm() {
             <Field label="Market" error={errors.tradeScope?.message}>
               <SearchableSelect
                 {...register("tradeScope")}
+                disabled={internalPakSale}
                 className="kastros-select w-full"
               >
                 {TRADE_SCOPES.map((s) => (
@@ -1109,6 +1168,7 @@ function BookTradeForm() {
             </Field>
             <Field label="Unit" error={errors.quantityUnit?.message}>
               <SearchableSelect
+                disabled={sesameInternational}
                 {...register("quantityUnit")}
                 className="kastros-select w-full"
               >
@@ -1170,7 +1230,7 @@ function BookTradeForm() {
                 {...register("priceCurrency")}
                 className="kastros-select w-full"
               >
-                {(fzcoBooking?["USD"]:priceCurrencyOptions).map((c) => (
+                {(sesameInternational?["USD"]:priceCurrencyOptions).map((c) => (
                   <option key={c} value={c}>
                     {PRICE_CURRENCY_LABELS[c as PriceCurrency] ?? c}
                   </option>
@@ -1178,7 +1238,7 @@ function BookTradeForm() {
               </SearchableSelect>
             </Field>
             <Field label="Price per unit" error={errors.priceWeightUnit?.message}>
-              {isSesame ? <select {...register("priceWeightUnit")} onChange={e=>{setValue("priceWeightUnit",e.target.value,{shouldValidate:true});setValue("priceKgPerUnit",defaultKgPerUnit(e.target.value),{shouldValidate:true});}} className="kastros-select w-full">{["MT","KG","MAUND_40","MAUND_37"].map(u=><option key={u} value={u}>{unitOptionLabel(u,unitRegistry)}</option>)}</select> : (() => {
+              {isSesame ? <select {...register("priceWeightUnit")} disabled={sesameInternational} onChange={e=>{setValue("priceWeightUnit",e.target.value,{shouldValidate:true});setValue("priceKgPerUnit",defaultKgPerUnit(e.target.value),{shouldValidate:true});}} className="kastros-select w-full">{(sesameInternational?["MT"]:["MT","KG","MAUND_40","MAUND_37"]).map(u=><option key={u} value={u}>{unitOptionLabel(u,unitRegistry)}</option>)}</select> : (() => {
                 const wu = register("priceWeightUnit");
                 return (
                   <input

@@ -5,7 +5,12 @@ import {isSesameCommodity} from '@/lib/sesame';
 import {nextSerial,SERIALS} from '@/server/db/serials';
 const n=(v:unknown)=>Number(v??0);
 export async function entityCounterparty(db:Prisma.TransactionClient,entity:SesameEntity,userId:string){
- return db.counterparty.upsert({where:{code:`INTERCO-${entity}`},update:{},create:{code:`INTERCO-${entity}`,name:ENTITY_NAMES[entity],country:entity==='PAK'?'Pakistan':'United Arab Emirates',type:'TRADING_PARTNER',createdById:userId}});
+ const tradingEntities = entity === "PAK" ? ["FZCO"] : ["PAK"];
+ return db.counterparty.upsert({
+  where:{code:`INTERCO-${entity}`},
+  update:{tradingEntities},
+  create:{code:`INTERCO-${entity}`,name:ENTITY_NAMES[entity],country:entity==='PAK'?'Pakistan':'United Arab Emirates',type:'TRADING_PARTNER',createdById:userId,tradingEntities},
+ });
 }
 export async function internalPaymentRows(code:string,entity:SesameEntity){
  const trades=(await prisma.trade.findMany({where:{commodity:{code},tradeStatus:{notIn:['CANCELLED']}},include:{contract:true}})).filter(t=>internalEntity(t.tradeParams)&&isSesameCommodity(code));

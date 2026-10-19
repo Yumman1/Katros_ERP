@@ -1096,13 +1096,15 @@ export const executionRouter = router({
     getCounterpartyLedgers(ctx.executionCommodityCode, input?.entity),
   ),
 
-  /** Counterparties for the voucher entry dropdown (single unified register). */
-  sellCounterparties: roleProcedure([...execRoles, Role.FINANCE]).query(async () =>
-    (await getMergedCounterparties()).map((cp) => ({
-      id: cp.id,
-      name: cp.name,
-      code: cp.code,
-    })),
+  /** Counterparties for the voucher entry dropdown, limited to this desk's entity. */
+  sellCounterparties: roleProcedure([...execRoles, Role.FINANCE]).query(async ({ ctx }) =>
+    (await getMergedCounterparties())
+      .filter((cp) => (cp.tradingEntities ?? ["PAK"]).includes(ctx.executionEntity ?? "PAK"))
+      .map((cp) => ({
+        id: cp.id,
+        name: cp.name,
+        code: cp.code,
+      })),
   ),
 
   /**

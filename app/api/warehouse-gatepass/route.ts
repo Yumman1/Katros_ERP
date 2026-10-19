@@ -1,4 +1,4 @@
-import {exportGateTrades} from "@/server/execution/sesame-export";
+import {exportGateTrades,tripartyGateTrades} from "@/server/execution/sesame-export";
 import { approvedAdvanceBuiltys } from "@/server/finance/purchase-advances";
 import { NextResponse } from "next/server";
 import { gatepassSchema } from "@/lib/gatepass-schema";
@@ -72,8 +72,19 @@ export async function GET(request: Request) {
     if(cp){if(!cp.commodities.some(c=>c.code===t.commodityCode))cp.commodities.push({code:t.commodityCode,name:t.commodityName});if(!cp.trades.some(r=>r.tradeRef===t.tradeRef)){cp.trades.push({tradeRef:t.tradeRef,commodityCode:t.commodityCode,profile:'SALE_EX_WAREHOUSE'});cp.openTradeCount++;}}
     else outboundCounterparties.push({name:t.counterpartyName,code:t.counterpartyCode,openTradeCount:1,commodities:[{code:t.commodityCode,name:t.commodityName}],trades:[{tradeRef:t.tradeRef,commodityCode:t.commodityCode,profile:'SALE_EX_WAREHOUSE'}]});
   }
+  // Triparty gate-out: Pakistan ships an internal PAK → FZCO sale straight to
+  // FZCO's buyer. The gate records the buyer; execution assigns both trades.
+  const triparty=await tripartyGateTrades(warehouse);
+  const tripartyCounterparties:typeof outboundCounterparties=[];
+  for(const t of triparty.fzco){
+    const cp=tripartyCounterparties.find(c=>c.name===t.counterpartyName);
+    if(cp){if(!cp.commodities.some(c=>c.code===t.commodityCode))cp.commodities.push({code:t.commodityCode,name:t.commodityName});if(!cp.trades.some(r=>r.tradeRef===t.tradeRef)){cp.trades.push({tradeRef:t.tradeRef,commodityCode:t.commodityCode,profile:'SALE_EX_WAREHOUSE'});cp.openTradeCount++;}}
+    else tripartyCounterparties.push({name:t.counterpartyName,code:t.counterpartyCode,openTradeCount:1,commodities:[{code:t.commodityCode,name:t.commodityName}],trades:[{tradeRef:t.tradeRef,commodityCode:t.commodityCode,profile:'SALE_EX_WAREHOUSE'}]});
+  }
   return NextResponse.json({
     exportTrades,
+    tripartyCounterparties,
+    tripartyInternalTrades:triparty.internal,
     warehouses: Array.from(warehouseSet).sort((a, b) => a.localeCompare(b)),
     advances: await approvedAdvanceBuiltys(),
     inboundCounterparties,

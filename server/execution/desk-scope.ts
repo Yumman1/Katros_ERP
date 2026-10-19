@@ -6,7 +6,7 @@ import { isSesameCommodity } from "@/lib/sesame";
 
 export async function executionDeskTradeRefs(code?: string, db = prisma, entity?: SesameEntity): Promise<string[] | undefined> {
   if (!code) return undefined;
-  return (await db.trade.findMany({ where: { commodity: { code } }, select: { tradeRef: true, tradeParams: true } })).filter(t => !entity || !isSesameCommodity(code) || tradeEntity(t.tradeParams) === entity).map(t => t.tradeRef);
+  return (await db.trade.findMany({ where: { commodity: { code } }, select: { tradeRef: true, tradeParams: true } })).filter(t => !entity || !isSesameCommodity(code) || tradeEntity(t.tradeParams) === entity || internalEntity(t.tradeParams) === entity).map(t => t.tradeRef);
 }
 
 export function filterDeskRows<T>(rows: T[], code: string | undefined, codeOf: (row: T) => string | null | undefined): T[] {
@@ -76,7 +76,7 @@ export async function assertDeskTarget(code: string | undefined, path: string, r
 /** Only explicitly attributed advances can contribute to a commodity ledger. */
 export async function deskLedgerWhere(code?: string, db: Prisma.TransactionClient = prisma, entity?: SesameEntity): Promise<Prisma.CounterpartyLedgerEntryWhereInput> {
   if (!code) return {};
-  const refs = (await db.trade.findMany({ where: { commodity: { code } }, select: { tradeRef: true, tradeParams: true } })).filter(t => !entity || !isSesameCommodity(code) || tradeEntity(t.tradeParams) === entity).map(t => t.tradeRef);
+  const refs = (await db.trade.findMany({ where: { commodity: { code } }, select: { tradeRef: true, tradeParams: true } })).filter(t => !entity || !isSesameCommodity(code) || tradeEntity(t.tradeParams) === entity || internalEntity(t.tradeParams) === entity).map(t => t.tradeRef);
   return { OR: [...(entity?[{executionEntity:entity,tradeRef:{in:(await db.trade.findMany({where:{commodity:{code}},select:{tradeRef:true}})).map(t=>t.tradeRef)}}]:[]),{ executionEntity:null, tradeRef: { in: refs } }, { tradeRef: null, voucher: { commodityCode: code, ...(entity ? { executionEntity: entity } : {}) } }] };
 }
 

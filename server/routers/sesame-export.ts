@@ -9,6 +9,7 @@ import {isSesameCommodity} from '@/lib/sesame';
 import {internalEntity} from '@/lib/sesame-entity';
 import {tradeEntity} from '@/lib/sesame-entity';
 import {exportRows,exportView,exportAction,exportReceipt,addExportContainers,directGateInput} from '@/server/execution/sesame-export';
+import {createInternationalPurchase,internationalPurchaseBls,internationalPurchaseTrades} from '@/server/finance/international-purchase';
 import type {Context} from '@/server/trpc/context';
 const identity=z.object({id:z.string(),revision:z.number().int().nonnegative()});
 async function access(ctx:Context,id:string,financial=false){
@@ -16,7 +17,10 @@ async function access(ctx:Context,id:string,financial=false){
  const s=await prisma.sesameExportShipment.findUniqueOrThrow({where:{id},include:{trade:{include:{commodity:true}}}});
  if(user.role==='TRADER'&&!traderNamesMatch(s.trade.traderName,user.name??''))throw new TRPCError({code:'FORBIDDEN'});
  if(ctx.executionCommodityCode&&ctx.executionCommodityCode!==s.trade.commodity.code)throw new TRPCError({code:'FORBIDDEN'});
- if(ctx.executionEntity&&ctx.executionEntity!==(financial?tradeEntity(s.trade.tradeParams):s.directThirdParty?'FZCO':'PAK'))throw new TRPCError({code:'FORBIDDEN'});
+ if(ctx.executionEntity){
+  const expected=financial?(s.triparty?'FZCO':tradeEntity(s.trade.tradeParams)):(s.directThirdParty?'FZCO':'PAK');
+  if(ctx.executionEntity!==expected)throw new TRPCError({code:'FORBIDDEN'});
+ }
  return s;
 }
 const actor=(ctx:Context)=>ctx.session!.user.name??ctx.session!.user.id;
@@ -27,10 +31,10 @@ async function fzcoAccess(ctx:Context){
 }
 export const sesameExportRouter=router({
  pendingGates:roleProcedure(['EXECUTION']).query(async({ctx})=>{const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});return ctx.executionEntity==='FZCO'?[]:pendingExportGates(ctx.executionCommodityCode);}),
- assignGate:roleProcedure(['EXECUTION']).input(z.object({id:z.string().uuid(),tradeRef:z.string().min(1)})).mutation(async({ctx,input})=>{
+ assignGate:roleProcedure(['EXECUTION']).input(z.object({id:z.string().uuid(),tradeRef:z.string().min(1),fzcoSaleTradeRef:z.string().min(1).optional()})).mutation(async({ctx,input})=>{
   if(ctx.executionEntity==='FZCO')throw new TRPCError({code:'FORBIDDEN',message:'Assign warehouse gates in Pakistan Execution'});
   const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
-  return action(()=>assignExportGate(input.id,input.tradeRef,actor(ctx),ctx.executionCommodityCode));
+  return action(()=>assignExportGate(input.id,input.tradeRef,actor(ctx),ctx.executionCommodityCode,input.fzcoSaleTradeRef));
  }),
  usdLedger:roleProcedure(['EXECUTION','TRADER','FINANCE']).query(async({ctx})=>{
   const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
@@ -44,14 +48,14 @@ export const sesameExportRouter=router({
   }).filter(t=>t.entries.length);
  }),
  directTrades:roleProcedure(['EXECUTION']).query(async({ctx})=>{await fzcoAccess(ctx);return directChoices(ctx.executionCommodityCode);}),
- directParties:roleProcedure(['EXECUTION']).query(async({ctx})=>{await fzcoAccess(ctx);return prisma.counterparty.findMany({select:{id:true,name:true},orderBy:{name:'asc'}});}),
+ directParties:roleProcedure(['EXECUTION']).query(async({ctx})=>{await fzcoAccess(ctx);return prisma.counterparty.findMany({where:{tradingEntities:{has:'FZCO'}},select:{id:true,name:true},orderBy:{name:'asc'}});}),
  logDirect:roleProcedure(['EXECUTION']).input(fzcoIntakeInput).mutation(async({ctx,input})=>{await fzcoAccess(ctx);return action(()=>logFzcoIntake(input,actor(ctx)));}),
  pendingDirect:roleProcedure(['EXECUTION']).query(async({ctx})=>{await fzcoAccess(ctx);return pendingFzcoIntakes(ctx.executionCommodityCode);}),
  assignDirect:roleProcedure(['EXECUTION']).input(z.object({id:z.string().uuid(),tradeRef:z.string().min(1)})).mutation(async({ctx,input})=>{await fzcoAccess(ctx);return action(()=>assignFzcoIntake(input.id,input.tradeRef,ctx.executionCommodityCode!,actor(ctx)));}),
  addDirect:roleProcedure(['EXECUTION']).input(directGateInput).mutation(async()=>{throw new TRPCError({code:'BAD_REQUEST',message:'Record the office gate entry, then assign its trade in Truck Movement'});}),
  list:roleProcedure(['EXECUTION','TRADER','FINANCE']).query(async({ctx})=>{
   const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
-  return (await exportRows()).filter(s=>(ctx.session.user.role!=='TRADER'||traderNamesMatch(s.trade.traderName,ctx.session.user.name??''))&&(!ctx.executionCommodityCode||s.trade.commodity.code===ctx.executionCommodityCode)&&(!ctx.executionEntity||tradeEntity(s.trade.tradeParams)===ctx.executionEntity||(ctx.executionEntity==='PAK'&&!s.directThirdParty))).map(s=>({...exportView(s),paymentReadOnly:!!ctx.executionEntity&&ctx.executionEntity!==tradeEntity(s.trade.tradeParams),movementReadOnly:ctx.executionEntity==='FZCO'&&!s.directThirdParty}));
+  return (await exportRows()).filter(s=>(ctx.session.user.role!=='TRADER'||traderNamesMatch(s.trade.traderName,ctx.session.user.name??''))&&(!ctx.executionCommodityCode||s.trade.commodity.code===ctx.executionCommodityCode)&&(!ctx.executionEntity||tradeEntity(s.trade.tradeParams)===ctx.executionEntity||(ctx.executionEntity==='PAK'&&!s.directThirdParty)||(ctx.executionEntity==='FZCO'&&s.triparty))).map(s=>({...exportView(s),paymentReadOnly:!!ctx.executionEntity&&ctx.executionEntity!==(s.triparty?'FZCO':tradeEntity(s.trade.tradeParams)),movementReadOnly:ctx.executionEntity==='FZCO'&&!s.directThirdParty}));
  }),
  generate:roleProcedure(['EXECUTION']).input(identity).mutation(async({ctx,input})=>{await access(ctx,input.id);return action(()=>exportAction(input.id,input.revision,actor(ctx),'generate'));}),
  traderApprove:roleProcedure(['TRADER']).input(identity).mutation(async({ctx,input})=>{await access(ctx,input.id);return action(()=>exportAction(input.id,input.revision,actor(ctx),'trader'));}),
@@ -66,4 +70,25 @@ export const sesameExportRouter=router({
  recordBl:roleProcedure(['EXECUTION']).input(identity.extend({blNo:z.string().trim().min(1).max(120)})).mutation(async({ctx,input})=>{await access(ctx,input.id);return action(()=>exportAction(input.id,input.revision,actor(ctx),'bl',{blNo:input.blNo}));}),
  adjustBl:roleProcedure(['FINANCE']).input(identity.extend({amountPkr:z.number().finite().positive().multipleOf(.01),reason:z.string().trim().min(1).max(1000)})).mutation(async({ctx,input})=>{await access(ctx,input.id);return action(()=>exportAction(input.id,input.revision,actor(ctx),'adjust',input));}),
  receipt:roleProcedure(['EXECUTION']).input(z.object({id:z.string(),amountPkr:z.number().finite().positive().multipleOf(.01),method:z.enum(['Bank transfer','Cheque','Cash','Other']),reference:z.string().trim().max(120),bankName:z.string().trim().max(120).optional(),requestKey:z.string().uuid()})).mutation(async({ctx,input})=>{await access(ctx,input.id,true);return action(()=>exportReceipt(input.id,actor(ctx),input));}),
+ purchaseTrades:roleProcedure(['EXECUTION']).input(z.object({counterpartyId:z.string().min(1)})).query(async({ctx,input})=>{
+  const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
+  if(!ctx.executionCommodityCode||!isSesameCommodity(ctx.executionCommodityCode))throw new TRPCError({code:'BAD_REQUEST',message:'Open the Sesame desk'});
+  return internationalPurchaseTrades(ctx.executionCommodityCode,ctx.executionEntity??'PAK',input.counterpartyId);
+ }),
+ purchaseBls:roleProcedure(['EXECUTION']).input(z.object({tradeRef:z.string().min(1)})).query(async({ctx,input})=>{
+  const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
+  return internationalPurchaseBls(input.tradeRef);
+ }),
+ createPurchase:roleProcedure(['EXECUTION']).input(z.object({
+  counterpartyId:z.string().min(1),
+  tradeRef:z.string().min(1),
+  exportShipmentId:z.string().optional(),
+  amount:z.number().finite().positive().multipleOf(.01),
+  voucherDate:z.coerce.date(),
+  note:z.string().trim().max(1000).optional(),
+ })).mutation(async({ctx,input})=>{
+  const code=ctx.executionCommodityCode;
+  if(!code||!isSesameCommodity(code))throw new TRPCError({code:'BAD_REQUEST',message:'Open the Sesame desk'});
+  return action(()=>createInternationalPurchase({...input,entity:ctx.executionEntity??'PAK',actor:actor(ctx),userId:ctx.session.user.id,code}));
+ }),
 });

@@ -193,6 +193,8 @@ model Counterparty {
   /// 236G rate selector for sales to this counterparty.
   taxFilerStatus TaxFilerStatus @default(FILER)
   country     String
+  /// Kastros entities this party is registered with ("PAK" / "FZCO").
+  tradingEntities String[] @default(["PAK"])
   creditLimit Decimal?         @db.Decimal(20, 4)
   kycStatus   KycStatus        @default(NOT_ON_FILE)
   kycRef      String?
@@ -316,6 +318,7 @@ enum TradeSeason {
 
 model Trade {
   exportShipments SesameExportShipment[]
+  fzcoSaleShipments SesameExportShipment[] @relation("FzcoSaleShipments")
   sesameOwnershipEntries SesameOwnershipEntry[]
   id        String         @id @default(cuid())
   tradeRef  String         @unique
@@ -700,6 +703,9 @@ enum ContractStatus {
 model ExecutionContract {
   executionEntity String @default("PAK")
   paperOwnership Boolean @default(false)
+  /// Sesame international sales (PAK → FZCO internal, FZCO external) close when
+  /// approved receipts cover the invoiced BL amount, not when quantity ships.
+  closeOnPayment Boolean @default(false)
   id       String @id @default(cuid())
   tradeRef String @unique
   tradeId  String @unique
@@ -1525,7 +1531,7 @@ enum SettlementNoteStatus {
 model CounterpartyLedgerEntry {
   executionEntity String?
   paymentFxRate Decimal? @db.Decimal(20,8)
-  exportShipmentId String? @unique
+  exportShipmentId String?
   exportShipment SesameExportShipment? @relation(fields: [exportShipmentId], references: [id], onDelete: Restrict)
 
   purchaseAdvanceFlow Boolean @default(false)
@@ -1568,6 +1574,7 @@ model CounterpartyLedgerEntry {
   @@index([counterpartyId, side, entryDate])
   @@index([counterpartyId, noteStatus])
   @@index([entryType])
+  @@index([exportShipmentId])
 }
 
 /// Rejected requests (sell-truck clearances, vouchers, payments) — every
@@ -1621,6 +1628,8 @@ model Voucher {
   @@unique([tradeRef, executionEntity, internalPaymentRef])
   exportShipmentId String?
   exportShipment SesameExportShipment? @relation(fields: [exportShipmentId], references: [id], onDelete: Restrict)
+  /// INTL_SALE = BL receipt from a buyer; INTL_PURCHASE = payment to a supplier / PAK.
+  voucherKind String?
 
   agreedAdvancePercentage Decimal? @db.Decimal(8, 4)
   agreedTradeAmountPkr Decimal? @db.Decimal(20, 2)
@@ -1794,6 +1803,11 @@ model SesameExportShipment {
  id String @id @default(cuid())
  tradeRef String
  trade Trade @relation(fields: [tradeRef], references: [tradeRef], onDelete: Restrict)
+ triparty Boolean @default(false)
+ fzcoSaleTradeRef String?
+ fzcoSaleTrade Trade? @relation("FzcoSaleShipments", fields: [fzcoSaleTradeRef], references: [tradeRef], onDelete: Restrict)
+ fzcoAmountPkr Decimal? @db.Decimal(20, 2)
+ fzcoFxRate Decimal? @db.Decimal(20, 8)
  warehouseName String
  status String @default("DRAFT")
  revision Int @default(0)
@@ -1817,9 +1831,10 @@ model SesameExportShipment {
  updatedAt DateTime @updatedAt
  trucks PendingTruck[]
  vouchers Voucher[]
- ledgerEntry CounterpartyLedgerEntry?
+ ledgerEntries CounterpartyLedgerEntry[]
  submissions SesameExportSubmission[]
  @@index([tradeRef,status])
+ @@index([fzcoSaleTradeRef])
 }
 model SesameExportSubmission {
  id String @id
@@ -1831,6 +1846,7 @@ model SesameExportSubmission {
 
 model SesameExportGateIntake {
  directThirdParty Boolean @default(false)
+ triparty Boolean @default(false)
  id String @id
  warehouseName String
  counterpartyName String

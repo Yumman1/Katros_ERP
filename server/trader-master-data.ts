@@ -61,6 +61,8 @@ export type MockCounterpartyOption = {
   /** 236G rate selector (filer vs non-filer) for sales to this counterparty. */
   taxFilerStatus: TaxFilerStatus;
   country: string;
+  /** Kastros entities this party is registered with ("PAK" / "FZCO"). */
+  tradingEntities: string[];
   creditLimit?: number | null;
   kycStatus: KycStatus;
   kycRef: string | null;
@@ -118,6 +120,12 @@ export function commodityRowToOption(row: Commodity): MockCommodityOption {
   };
 }
 
+/** Keep only known Kastros entities; a party must be registered with at least one. */
+export function normalizeTradingEntities(values?: string[] | null): Array<"PAK" | "FZCO"> {
+  const set = new Set((values ?? []).map((v) => v.trim().toUpperCase()).filter((v): v is "PAK" | "FZCO" => v === "PAK" || v === "FZCO"));
+  return set.size ? (["PAK", "FZCO"] as const).filter((e) => set.has(e)) : ["PAK"];
+}
+
 export function counterpartyRowToOption(row: Counterparty): MockCounterpartyOption {
   return {
     id: row.id,
@@ -127,6 +135,7 @@ export function counterpartyRowToOption(row: Counterparty): MockCounterpartyOpti
     side: row.side,
     taxFilerStatus: row.taxFilerStatus,
     country: row.country,
+    tradingEntities: row.tradingEntities?.length ? row.tradingEntities : ["PAK"],
     creditLimit: numOrNull(row.creditLimit),
     kycStatus: row.kycStatus,
     kycRef: row.kycRef,
@@ -399,6 +408,7 @@ export async function addCustomCounterparty(input: {
   side?: CounterpartySide;
   taxFilerStatus?: TaxFilerStatus;
   country: string;
+  tradingEntities?: string[];
   kycStatus?: KycStatus;
   kycRef?: string | null;
   kycExpires?: Date | null;
@@ -437,6 +447,7 @@ export async function addCustomCounterparty(input: {
       type: input.type ?? CounterpartyType.TRADING_PARTNER,
       taxFilerStatus: input.taxFilerStatus ?? "FILER",
       country: input.country.trim(),
+      tradingEntities: normalizeTradingEntities(input.tradingEntities),
       kycStatus: input.kycStatus ?? "PENDING",
       kycRef: input.kycRef?.trim() || null,
       kycExpires: input.kycExpires ?? null,
@@ -471,12 +482,14 @@ export async function updateCustomCounterparty(
       | "address"
       | "bankDetails"
       | "taxFilerStatus"
+      | "tradingEntities"
     >
   >,
 ): Promise<MockCounterpartyOption> {
   const existing = await prisma.counterparty.findUnique({ where: { id } });
   if (!existing) throw new Error("Counterparty not found or cannot be edited");
   const data: Prisma.CounterpartyUpdateInput = {};
+  if (patch.tradingEntities != null) data.tradingEntities = normalizeTradingEntities(patch.tradingEntities);
   if (patch.name != null) {
     const name = patch.name.trim();
     if (!name) throw new Error("Counterparty name is required");

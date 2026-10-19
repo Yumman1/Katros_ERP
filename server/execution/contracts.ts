@@ -1,5 +1,5 @@
 import { isSesameCommodity } from "@/lib/sesame";
-import { paperTrade, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
+import { closesOnPayment, paperTrade, shouldCloseOnFullPayment, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
 import { sesameSettlementFx } from "@/lib/execution-settlement";
 import { executionDeskTradeRefs } from "./desk-scope";
 import type { Prisma, PrismaClient } from "@prisma/client";
@@ -85,7 +85,10 @@ async function computeFulfilledQty(
       where: { tradeRef, status: { not: "AT_GATE" } },
       _sum: { allocatedQtyMt: true },
     });
-    return num(agg._sum.allocatedQtyMt) + paperQty;
+    // FZCO's sale to the final buyer is fulfilled by the BL of a triparty
+    // shipment that physically left a Pakistan warehouse on the internal trade.
+    const triparty = await db.sesameExportShipment.aggregate({ where: { fzcoSaleTradeRef: tradeRef, triparty: true, status: "BL_RECORDED" }, _sum: { totalWeightKg: true } });
+    return num(agg._sum.allocatedQtyMt) + paperQty + kgToQuantityUnit(num(triparty._sum.totalWeightKg), quantityUnit);
   }
   const agg = await db.inboundReceipt.aggregate({
     where: { tradeRef, status: { not: "DRAFT" } },
@@ -175,7 +178,9 @@ export async function refreshContract(tradeRef: string): Promise<void> {
     const contractualQtyMt = num(row.contractualQtyMt);
     const fulfilled = await computeFulfilledQty(tx, tradeRef, row.direction, row.quantityUnit);
     const open = Math.max(0, contractualQtyMt - fulfilled);
-    const autoClose = row.paperOwnership ? fulfilled >= contractualQtyMt - 0.000001 : shouldAutoCloseContract({
+    // Payment-settled sales (sesame international) never close on quantity;
+    // closeOnFullPayment() closes them once approved receipts cover the BLs.
+    const autoClose = row.closeOnPayment ? false : row.paperOwnership ? fulfilled >= contractualQtyMt - 0.000001 : shouldAutoCloseContract({
       contractualQtyMt,
       receivedQtyMt: fulfilled,
       toleranceMt: num(row.quantityToleranceMt),
@@ -207,6 +212,50 @@ export async function refreshContract(tradeRef: string): Promise<void> {
         data: { tradeStatus: TradeStatus.EXECUTED },
       });
     }
+  });
+}
+
+/**
+ * Payment-settled sales (Pakistan → FZCO internal sale, FZCO international
+ * sales) close once approved receipts cover every BL invoice and the shipped
+ * quantity is within the contract tolerance. Called after voucher approval.
+ */
+export async function closeOnFullPayment(tradeRef: string): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "ExecutionContract" WHERE "tradeRef" = ${tradeRef} FOR UPDATE`;
+    const row = await tx.executionContract.findUnique({
+      where: { tradeRef },
+      include: { trade: { select: { tradeStatus: true } } },
+    });
+    if (!row || !row.closeOnPayment || row.contractStatus === "Close") return false;
+    if (row.trade.tradeStatus !== TradeStatus.LOCKED) return false;
+    const [debits, credits] = await Promise.all([
+      tx.counterpartyLedgerEntry.aggregate({
+        where: { tradeRef, side: "SELL", entryType: "DEBIT", sourceType: "INVOICE", exportShipmentId: { not: null } },
+        _sum: { amountPkr: true },
+      }),
+      tx.counterpartyLedgerEntry.aggregate({
+        where: { tradeRef, side: "SELL", entryType: "CREDIT" },
+        _sum: { amountPkr: true },
+      }),
+    ]);
+    const invoiced = num(debits._sum.amountPkr);
+    const received = num(credits._sum.amountPkr);
+    const contractualQtyMt = num(row.contractualQtyMt);
+    const fulfilled = await computeFulfilledQty(tx, tradeRef, row.direction, row.quantityUnit);
+    if (!shouldCloseOnFullPayment({
+      invoicedPkr: invoiced,
+      receivedPkr: received,
+      contractualQtyMt,
+      fulfilledQtyMt: fulfilled,
+      toleranceMt: num(row.quantityToleranceMt),
+    })) return false;
+    await tx.executionContract.update({
+      where: { id: row.id },
+      data: { receivedQtyMt: fulfilled, openQtyMt: Math.max(0, contractualQtyMt - fulfilled), contractStatus: "Close" },
+    });
+    await tx.trade.update({ where: { tradeRef }, data: { tradeStatus: TradeStatus.EXECUTED } });
+    return true;
   });
 }
 
@@ -690,6 +739,7 @@ export async function lockTradeInStore(
     return match?.name ?? null;
   };
   const paperOwnership = paperTrade(trade.commodity.code, trade.tradeParams);
+  const closeOnPayment = closesOnPayment(trade.commodity.code, trade.direction, trade.tradeScope, trade.tradeParams);
   const requiresWarehouse = !paperOwnership && (profile === "PURCHASE_DELIVERED" || profile === "SALE_EX_WAREHOUSE");
   const allocationLines: WarehouseAllocationLine[] =
     requiresWarehouse && splitPlan.length > 0 && trade.warehouseSplitApproved !== false
@@ -732,6 +782,7 @@ export async function lockTradeInStore(
         tradeRef: trade.tradeRef,
         executionEntity: isSesameCommodity(trade.commodity.code) ? tradeEntity(trade.tradeParams) : "PAK",
         paperOwnership,
+        closeOnPayment,
         tradeId: trade.id,
         contractDate: trade.tradeDate,
         direction: trade.direction,

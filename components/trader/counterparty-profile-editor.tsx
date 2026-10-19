@@ -14,8 +14,11 @@ function formValues(cp: MockCounterpartyOption) {
     taxFilerStatus: cp.taxFilerStatus, kycStatus: cp.kycStatus, kycRef: cp.kycRef ?? "",
     kycExpires: cp.kycExpires ? new Date(cp.kycExpires).toISOString().slice(0, 10) : "",
     creditLimit: cp.creditLimit == null ? "" : String(cp.creditLimit),
+    // Stored as a sorted comma list so the dirty check stays a string comparison.
+    tradingEntities: ["PAK", "FZCO"].filter((e) => (cp.tradingEntities ?? ["PAK"]).includes(e)).join(","),
   };
 }
+const ENTITY_LABELS = { PAK: "Kastros Pakistan", FZCO: "Dubai FZCO" } as const;
 
 type FormValues = ReturnType<typeof formValues>;
 const textFields = [
@@ -66,7 +69,8 @@ export function CounterpartyProfileEditor({ counterparty, onClose, onSaved }: {
       if (values[key] === initial[key]) continue;
       const value = values[key].trim();
       patch[key] = key === "creditLimit" ? (value ? Number(value) : null)
-        : key === "kycExpires" ? (value || null) : value;
+        : key === "kycExpires" ? (value || null)
+        : key === "tradingEntities" ? value.split(",").filter(Boolean) : value;
     }
     const parsed = updateCounterpartyProfileSchema.safeParse({ id: counterparty.id, patch });
     if (!parsed.success) {
@@ -120,6 +124,21 @@ export function CounterpartyProfileEditor({ counterparty, onClose, onSaved }: {
             <input type="number" min="0" max="999999999999" step="0.0001" value={values.creditLimit}
               onChange={(event) => change("creditLimit", event.target.value)} className="kastros-input mt-1 w-full" />
           </label>
+          <fieldset className="text-xs text-muted-foreground sm:col-span-2">
+            <legend>Registered with</legend>
+            <div className="mt-1 flex flex-wrap gap-4">
+              {(["PAK", "FZCO"] as const).map((entity) => {
+                const selected = values.tradingEntities.split(",").filter(Boolean);
+                const checked = selected.includes(entity);
+                return <label key={entity} className="flex items-center gap-2 text-sm text-foreground">
+                  <input type="checkbox" checked={checked}
+                    onChange={() => change("tradingEntities", ["PAK", "FZCO"].filter((e) => e === entity ? !checked : selected.includes(e)).join(","))} />
+                  {ENTITY_LABELS[entity]}
+                </label>;
+              })}
+            </div>
+            <p className="mt-1 text-[11px] text-subtle">Dubai FZCO bookings and vouchers only list parties registered with Dubai FZCO.</p>
+          </fieldset>
           {([ ["address", "Address"], ["bankDetails", "Bank details"] ] as const).map(([key, label]) => (
             <label key={key} className="text-xs text-muted-foreground sm:col-span-2">{label}
               <textarea rows={3} maxLength={2000} value={values[key]} onChange={(event) => change(key, event.target.value)} className="kastros-input mt-1 w-full" />

@@ -7,7 +7,9 @@ import { sesameGrades } from "@/server/execution/sesame-processing";
 import { isBaleCommodity } from "@/lib/warehouse-utilization";
 import { filterDeskRows } from "@/server/execution/desk-scope";
 import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
-import { isSesameCommodity, normalizeSesameParams, sesameNetPrice } from "@/lib/sesame";
+import { isSesameCommodity, normalizeSesameParams, sesameNetPrice, sesameTradingEntity } from "@/lib/sesame";
+import { internalPakSale } from "@/lib/sesame-entity";
+import { entityCounterparty } from "@/server/finance/internal-payments";
 import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -832,6 +834,7 @@ export const traderRouter = router({
         side: z.enum(["BUY", "SELL"]).optional(),
         taxFilerStatus: z.enum(["FILER", "NON_FILER"]).optional(),
         country: z.string().min(1),
+        tradingEntities: z.array(z.enum(["PAK", "FZCO"])).min(1).optional(),
         kycStatus: z.enum(["VERIFIED", "PENDING", "EXPIRED", "NOT_ON_FILE"]).optional(),
         kycRef: z.string().optional(),
         kycExpires: z.coerce.date().optional(),
@@ -850,6 +853,7 @@ export const traderRouter = router({
           type: input.type,
           taxFilerStatus: input.taxFilerStatus,
           country: input.country,
+          tradingEntities: input.tradingEntities,
           kycStatus: input.kycStatus,
           kycRef: input.kycRef ?? null,
           kycExpires: input.kycExpires ?? null,
@@ -915,9 +919,19 @@ export const traderRouter = router({
         try { bookingPrice = sesameNetPrice(input.price, input.commissionPerUnit); }
         catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invalid commission" }); }
       }
-      const cp = await getCounterpartyById(input.counterpartyId);
+      const bookingEntity = sesame && sesameTradingEntity(tradeParams) === "Kastros FZCO" ? "FZCO" : "PAK";
+      const internalSale = sesame && internalPakSale(c.code, input.direction, tradeParams);
+      let tradeScope = internalSale ? "INTERNATIONAL" as const : input.tradeScope;
+      let cp = await getCounterpartyById(input.counterpartyId);
+      if (internalSale) {
+        const interco = await entityCounterparty(prisma, "FZCO", ctx.session.user.id);
+        cp = await getCounterpartyById(interco.id);
+      }
       if (!cp) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid counterparty" });
+      }
+      if (!internalSale && !(cp.tradingEntities ?? ["PAK"]).includes(bookingEntity)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "This counterparty is not registered with the selected trading entity" });
       }
 
       // Booking-form contact person/number are optional and stored with the
@@ -940,9 +954,9 @@ export const traderRouter = router({
       {
         // Resolve the quoted price metric: use what the form sent, else the commodity's
         // configured per-scope basis. The price is then mapped to the canonical qty unit.
-        const configuredBasis = await getCommodityPriceBasis(c.id, input.tradeScope);
-        const priceCurrency = input.priceCurrency ?? configuredBasis.currency;
-        const priceWeightUnit = input.priceWeightUnit ?? configuredBasis.weightUnit;
+        const configuredBasis = await getCommodityPriceBasis(c.id, tradeScope);
+        const priceCurrency = sesame && tradeScope === "INTERNATIONAL" ? "USD" : input.priceCurrency ?? configuredBasis.currency;
+        const priceWeightUnit = sesame && tradeScope === "INTERNATIONAL" ? "MT" : input.priceWeightUnit ?? configuredBasis.weightUnit;
         const priceKgPerUnit = sesame && ["MT","KG","MAUND","MAUND_40","MAUND_37"].includes(priceWeightUnit.toUpperCase()) ? defaultKgPerUnit(priceWeightUnit) : input.priceKgPerUnit ?? configuredBasis.kgPerUnit;
         const canonicalKgPerUnit = canonicalKgPerUnitOf(c);
         const qualityTolerances =
@@ -978,7 +992,7 @@ export const traderRouter = router({
           quantityEntered: qtyEntered,
           quantityEnteredUnit: qtyEnteredUnit,
           price: bookingPrice,
-          currency: input.currency,
+          currency: sesame && tradeScope === "INTERNATIONAL" ? "USD" : input.currency,
           priceCurrency,
           priceWeightUnit,
           priceKgPerUnit,
@@ -1009,7 +1023,7 @@ export const traderRouter = router({
           counterpartyBankDetails: cp.bankDetails,
           notes: input.notes,
           buyingCategory: buyingCategoryFromIncoterms(input.incoterms, input.direction) ?? undefined,
-          tradeScope: input.tradeScope,
+          tradeScope,
           season: input.season,
           ratePerMaund: input.ratePerMaund,
           submitToExecution: input.submitToExecution === true || input.lockNow === true,

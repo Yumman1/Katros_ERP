@@ -17,6 +17,8 @@ export const counterpartyProfilePatchSchema = z.object({
   kycRef: optionalText(250),
   kycExpires: z.iso.date().nullable().optional(),
   creditLimit: z.number().finite().min(0).max(999_999_999_999).nullable().optional(),
+  /** Kastros entities the party is registered with; at least one is required. */
+  tradingEntities: z.array(z.enum(["PAK", "FZCO"])).min(1, "Register the counterparty with at least one Kastros entity").optional(),
 }).strict().refine((patch) => Object.values(patch).some((value) => value !== undefined), {
   message: "Change at least one field before saving",
 });

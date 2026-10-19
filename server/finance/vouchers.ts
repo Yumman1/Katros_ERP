@@ -226,7 +226,7 @@ export async function createVoucher(input: {
   note?: string | null;
   enteredByName: string;
 }): Promise<VoucherView> {
-  if(input.tradeRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef}});if(t&&(await import("@/lib/sesame-entity")).internalEntity(t.tradeParams))throw new Error("Use Internal trade payments in Vouchers");}
+  if(input.tradeRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef}});if(t&&(await import("@/lib/sesame-entity")).internalEntity(t.tradeParams))throw new Error("Use International Purchase in Vouchers for the Pakistan → Dubai FZCO sale");}
   if(input.tradeRef&&(input.side??'SELL')==='SELL'&&!input.noteRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef},include:{commodity:true}});if(t&&t.tradeScope==='INTERNATIONAL'&&(await import('@/lib/sesame')).isSesameCommodity(t.commodity.code))throw new Error('Select the shipment BL in Receive payment against a BL');}
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Voucher amount must be positive");
@@ -425,8 +425,13 @@ export async function approveVoucher(
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`export-receipt:${current.exportShipmentId}`}))::text`;
       const shipment=await tx.sesameExportShipment.findUniqueOrThrow({where:{id:current.exportShipmentId},include:{vouchers:true}});
       if(shipment.status!=="BL_RECORDED")throw new Error("Record BL before approving collection");
-      const paid=shipment.vouchers.filter(v=>v.status==='APPROVED').reduce((a,v)=>a+num(v.amountPkr),0);
-      if(paid+num(current.amountPkr)>num(shipment.amountPkr)+.005)throw new Error("Receipt exceeds outstanding BL balance");
+      const cap=current.side==="SELL"&&shipment.triparty?num(shipment.fzcoAmountPkr??shipment.amountPkr):num(shipment.amountPkr);
+      const paid=shipment.vouchers.filter(v=>v.status==='APPROVED'&&v.side===current.side).reduce((a,v)=>a+num(v.amountPkr),0);
+      if(paid+num(current.amountPkr)>cap+.005)throw new Error("Receipt exceeds outstanding BL balance");
+      if(current.voucherKind==="INTL_PURCHASE"&&shipment.triparty){
+        const salePaid=shipment.vouchers.filter(v=>v.status==='APPROVED'&&v.side==='SELL').reduce((a,v)=>a+num(v.amountPkr),0);
+        if(salePaid+.005<num(shipment.fzcoAmountPkr||shipment.amountPkr))throw new Error("FZCO can pay Pakistan only after the buyer has paid this BL in full");
+      }
     }
     const reference = paymentReference?.trim() || current.reference?.trim();
     if (!reference) throw new Error("Enter the payment reference after payment before approving this voucher");
@@ -467,7 +472,29 @@ export async function approveVoucher(
       },
       tx,
     );
-    if(row?.internalPaymentRef)await tx.counterpartyLedgerEntry.updateMany({where:{voucherId},data:{executionEntity:row.executionEntity,paymentFxRate:row.paymentFxRate}});
+    if(row?.internalPaymentRef||row?.exportShipmentId||row?.voucherKind)await tx.counterpartyLedgerEntry.updateMany({where:{voucherId},data:{executionEntity:row.executionEntity,paymentFxRate:row.paymentFxRate,exportShipmentId:row.exportShipmentId}});
+    if(row?.voucherKind==="INTL_PURCHASE"&&row.tradeRef){
+      const trade=await tx.trade.findUnique({where:{tradeRef:row.tradeRef},include:{commodity:true}});
+      if(trade&&(await import("@/lib/sesame-entity")).internalPakSale(trade.commodity.code,trade.direction,trade.tradeParams)){
+        const {entityCounterparty}=await import("@/server/finance/internal-payments");
+        const fzco=await entityCounterparty(tx,"FZCO",trade.createdById);
+        await tx.counterpartyLedgerEntry.create({
+          data:{
+            executionEntity:"PAK",
+            paymentFxRate:row.paymentFxRate,
+            exportShipmentId:row.exportShipmentId,
+            counterpartyId:fzco.id,
+            side:"SELL",
+            entryType:"CREDIT",
+            amountPkr:num(row.amountPkr),
+            sourceType:"VOUCHER",
+            sourceRef:row.voucherNo,
+            tradeRef:row.tradeRef,
+            note:row.note??`Internal receipt mirrored from ${row.voucherNo}`,
+          },
+        });
+      }
+    }
     if (row?.builtyNumber) await tx.counterpartyLedgerEntry.updateMany({ where: { voucherId }, data: { purchaseAdvanceFlow: true } });
     // Close the note only once the internal sub-ledger is within tolerance.
     if (row!.noteRef) {
@@ -494,6 +521,8 @@ export async function approveVoucher(
   if (fresh?.tradeRef && !fresh.noteRef) {
     const { syncSettlementCollection } = await import("@/server/settlement-billing");
     await syncSettlementCollection(fresh.tradeRef, approvedByName);
+    const { closeOnFullPayment } = await import("@/server/execution/contracts");
+    await closeOnFullPayment(fresh.tradeRef);
   }
   return voucherRowToView(fresh!);
 }

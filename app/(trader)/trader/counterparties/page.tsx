@@ -35,7 +35,7 @@ export default function CounterpartiesPage() {
             <div className="overflow-x-auto rounded-xl border border-kastros-border bg-kastros-card">
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-kastros-border text-xs text-subtle">
-                  <tr>{["Counterparty", "Contact", "NTN", "Country", "Tax status", ""].map((label, i) =>
+                  <tr>{["Counterparty", "Contact", "NTN", "Country", "Registered with", "Tax status", ""].map((label, i) =>
                     <th key={i} scope="col" className="px-4 py-3">{label || "Actions"}</th>)}</tr>
                 </thead>
                 <tbody>
@@ -44,12 +44,13 @@ export default function CounterpartiesPage() {
                     <td className="px-4 py-3"><p>{cp.contactPerson || "—"}</p><p className="text-xs text-subtle">{cp.contactPhone || "—"}</p></td>
                     <td className="px-4 py-3">{cp.ntn || "—"}</td>
                     <td className="px-4 py-3">{cp.country}</td>
+                    <td className="px-4 py-3">{(cp.tradingEntities ?? ["PAK"]).map((e) => e === "FZCO" ? "Dubai FZCO" : "Kastros Pakistan").join(", ")}</td>
                     <td className="px-4 py-3">{cp.taxFilerStatus === "FILER" ? "Filer" : "Non-filer"}</td>
                     <td className="px-4 py-3 text-right">{cp.type === "INTERNAL" ? <span className="text-xs text-subtle">System record</span>
                       : <button type="button" className="kastros-btn-secondary text-xs" aria-label={`Edit ${cp.name}`}
                         onClick={() => { setSaved(""); setEditing(cp); }}>Edit</button>}</td>
                   </tr>)}
-                  {!rows.length && <tr><td colSpan={6} className="px-4 py-8 text-center text-subtle">{query.data?.length ? "No matching counterparties." : "No counterparties registered yet."}</td></tr>}
+                  {!rows.length && <tr><td colSpan={7} className="px-4 py-8 text-center text-subtle">{query.data?.length ? "No matching counterparties." : "No counterparties registered yet."}</td></tr>}
                 </tbody>
               </table>
             </div>

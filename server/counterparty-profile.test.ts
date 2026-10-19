@@ -7,7 +7,7 @@ import { updateCounterpartyProfileSchema } from "@/lib/counterparty-profile";
 
 const original = {
   id: "cp-test", name: "Unchanged Partner", code: "CP-100", type: CounterpartyType.TRADING_PARTNER,
-  country: "Pakistan", side: "BUY", taxFilerStatus: "FILER", creditLimit: null,
+  country: "Pakistan", side: "BUY", taxFilerStatus: "FILER", creditLimit: null, tradingEntities: ["PAK"],
   kycStatus: "PENDING", kycRef: null, kycExpires: null, companyNameNtn: null,
   ntn: "OLD-NTN", contactPerson: "Contact", contactPhone: "03000000000",
   address: "Address", bankDetails: "Bank", createdById: "owner", createdAt: new Date(), updatedAt: new Date(),

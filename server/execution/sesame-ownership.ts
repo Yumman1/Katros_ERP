@@ -19,8 +19,8 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
     const contract = t.contract;
     if (!isSesameCommodity(t.commodity.code) || !contract?.paperOwnership || t.tradeStatus !== "LOCKED") throw new Error("Lock this ownership trade before confirming stock");
     const sides = ownershipSides(t.direction, t.tradeParams);
-    if (!internalEntity(t.tradeParams) && !(tradeEntity(t.tradeParams) === "FZCO" && t.direction === "BUY")) throw new Error("External sales require a truck release");
-    if (internalEntity(t.tradeParams) && input.entity !== "PAK") throw new Error("Pakistan execution must confirm the stock held in custody");
+    if (internalEntity(t.tradeParams)) throw new Error("Internal Pakistan → FZCO sales move through the triparty gate-out, not ownership confirmation");
+    if (!(tradeEntity(t.tradeParams) === "FZCO" && t.direction === "BUY")) throw new Error("External sales require a truck release");
     await lockSesameOwnership(db, t.commodity.code);
     if(input.requestKey && await db.sesameOwnershipEntry.findUnique({where:{requestKey:input.requestKey}})) throw new Error("Ownership confirmation already recorded");
     if(!internalEntity(t.tradeParams)&&await db.sesameExportShipment.count({where:{tradeRef:t.tradeRef,directThirdParty:true}}))throw new Error("This purchase is fulfilled through FZCO Truck Movement");
@@ -44,15 +44,6 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
       warehouseName = null;
     }
     const entry = await db.sesameOwnershipEntry.create({ data: { tradeRef: t.tradeRef, commodityCode: t.commodity.code, ...sides, quantityMt: input.quantityMt, warehouseName, recordedBy: input.actor, requestKey:input.requestKey, holderId:warehouseName?null:input.holderId,holderLocation:warehouseName?null:input.holderLocation?.trim(),documentRef:input.documentRef,ownershipDate:input.ownershipDate } });
-    if(internalEntity(t.tradeParams)){
-      const {entityCounterparty}=await import('@/server/finance/internal-payments');
-      for(const entity of ['PAK','FZCO'] as const){
-        const cp=await entityCounterparty(db,entity==='PAK'?'FZCO':'PAK',t.createdById);
-        const side=tradeEntity(t.tradeParams)===entity?t.direction:t.direction==='BUY'?'SELL':'BUY';
-        const fx=Number((t.tradeParams as Record<string,unknown>)?.executionFxPkrPerUsd)||null;
-        await db.counterpartyLedgerEntry.create({data:{executionEntity:entity,paymentFxRate:fx,counterpartyId:cp.id,side,entryType:'DEBIT',amountPkr:Math.round(input.quantityMt*1000*n(contract.ratePerKg)*100)/100,sourceType:'INVOICE',sourceRef:`OWN-${entry.id}-${entity}`,tradeRef:t.tradeRef,note:`Internal ${side==='BUY'?'purchase':'sale'} ownership invoice · ${input.quantityMt} MT`}});
-      }
-    }
     if (!internalEntity(t.tradeParams)) {
       // A paper purchase has no gate invoice. Its payable is an open ownership
       // note, settled by the existing finance-approved note-voucher workflow.
@@ -101,10 +92,14 @@ export async function sesameBook(code: string) {
     const buys = open.filter(t => side(t) === "BUY").reduce((sum,t) => sum+t.openMt, 0);
     const sells = open.filter(t => side(t) === "SELL").reduce((sum,t) => sum+t.openMt, 0);
     const owned = entity === "FZCO" ? ownedFzco : physicalPak-heldForFzco-impurities+heldImpurities;
-    const entryRate = entity === "FZCO" ? fzcoEntry : market?.tradeEntryRatePkrPerMaund ?? null;
+    const fzcoBuys = open.filter(t => side(t) === "BUY");
+    const fzcoBuyQty = fzcoBuys.reduce((s,t) => s+t.quantityMt, 0);
+    const fzcoBuyValue = fzcoBuys.reduce((s,t) => s+t.quantityMt*n(contracts.get(t.tradeRef)?.ratePerMaund), 0);
+    const entryRate = entity === "FZCO" ? (fzcoBuyQty > 0 ? fzcoBuyValue/fzcoBuyQty : fzcoEntry) : market?.tradeEntryRatePkrPerMaund ?? null;
     const marketRate = market?.marketRatePkrPerMaund ?? null;
     const inOut = entryRate != null && marketRate != null ? marketRate-entryRate : null;
-    const valuePkr = inOut != null ? inOut*(owned+buys-sells)*25 : null;
+    const netQty = entity === "FZCO" ? buys-sells : owned+buys-sells;
+    const valuePkr = inOut != null ? inOut*netQty*25 : null;
     return { entity, ownedMt: owned, openBuyMt: buys, bookedNotLeftMt: sells, freeMt: owned-sells, netPositionMt: entity === "FZCO" ? buys-sells : owned+buys-sells, physicalInPakistanMt: entity === "PAK" ? physicalPak-impurities : heldForFzco-heldImpurities, loadingMt: entity === "FZCO" ? [...reserved.values()].reduce((a,b)=>a+b,0) : 0, entryRatePkrPerMaund: entryRate, marketRatePkrPerMaund: marketRate, inOutPkrPerMaund: inOut, inOutValuePkr: valuePkr, inOutValueUsd: valuePkr != null && market?.fxRate ? valuePkr/market.fxRate : null };
   });
   return { custody:await custodyRows(prisma,code), trades: rows, positions, warehouses: [...physical].map(([name, quantityMt]) => ({ name, quantityMt, fzcoOwnedMt: custody.get(name) ?? 0, pakistanOwnedMt: quantityMt-(custody.get(name) ?? 0) })), entries: entries.map(e => ({ ...e, quantityMt: n(e.quantityMt) })) };
