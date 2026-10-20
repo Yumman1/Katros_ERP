@@ -1,3 +1,4 @@
+import {purchaseAdvancePercentage} from "@/lib/purchase-advance";
 import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 import { claimAdvance, applyTruckAdvance } from "@/server/finance/purchase-advances";
 import { assertGradeAvailable } from "./sesame-processing";
@@ -1464,6 +1465,7 @@ const TRADER_APPROVABLE_STAGES: TraderApprovableStage[] = [
 export class TraderInvoiceOwnershipError extends Error {}
 
 export type TraderInvoiceApprovalRow = {
+  lockedRateKg:number; baseKg:number; vehicleGrossPkr:number; advanceReleasedPkr:number; unappliedAdvancePkr:number; remainingPercentage:number; canEditDeduction:boolean;
   builtyNumber:string;
   deductionKg:number;
   physicalKg:number;
@@ -1528,6 +1530,8 @@ export async function getTraderInvoiceApprovals(
     where: { tradeRef: { in: refs } },
     select: {
       tradeRef: true,
+      paymentType:true,
+      contract:true,
       traderName: true,
       quantity: true,
       price: true,
@@ -1540,6 +1544,8 @@ export async function getTraderInvoiceApprovals(
       commodity: { select: { code: true, name: true } },
     },
   });
+  const advances=await prisma.voucher.findMany({where:{advanceTruckId:{in:rows.map(r=>r.id)},status:'APPROVED'},include:{advanceAllocations:true}});
+  const advanceByTruck=new Map(advances.map(v=>[v.advanceTruckId,v]));
   const tradeByRef = new Map(trades.map((t) => [t.tradeRef, t]));
 
   // Paid / still-owed per truck, so the trader sees what is left to release.
@@ -1598,7 +1604,15 @@ export async function getTraderInvoiceApprovals(
     if (!tradeRef) continue;
     const trade = tradeByRef.get(tradeRef);
     if (!trade || !traderNamesMatch(trade.traderName, traderName)) continue;
+    const advance=advanceByTruck.get(r.id);
+    const advanceReleased=Number(advance?.amountPkr??0);
+    const unapplied=Math.max(0,advanceReleased-(advance?.advanceAllocations.reduce((sum,a)=>sum+Number(a.amountPkr),0)??0));
+    const baseKg=num(trade.contract?.executionProfile==='PURCHASE_SPOT'?r.weightAsPerBuiltyKg:r.warehouseWeightKg);
+    const lockedRateKg=num(r.gateInvoiceRatePerKg??trade.contract?.ratePerKg);
     result.push({
+      lockedRateKg,baseKg,vehicleGrossPkr:Math.round(baseKg*lockedRateKg*100)/100,advanceReleasedPkr:advanceReleased,unappliedAdvancePkr:unapplied,
+      remainingPercentage:100-purchaseAdvancePercentage(trade.paymentType,trade.tradeParams),
+      canEditDeduction:!!r.qualityReviewedAt&&trade.contract?.executionProfile!=='PURCHASE_SPOT'&&['PENDING_TRADE_APPROVAL','HOLD_OLD_DUES'].includes(r.gateInvoiceStage??''),
       truckId: r.id,
       gatepassNo: r.gatepassNo,
       truckNo: r.truckNo,
@@ -1623,7 +1637,7 @@ export async function getTraderInvoiceApprovals(
       remainingPkr: (() => {
         const m = money.get(r.gatepassNo);
         const due = m?.due ?? (numOrNull(r.gateInvoiceAmount) ?? 0);
-        return Math.round(Math.max(0, due - (m?.paid ?? 0)) * 100) / 100;
+        return Math.round(Math.max(0, due - (m?.paid ?? 0) - unapplied) * 100) / 100;
       })(),
       holdNote: r.gateInvoiceHoldNote,
       invoiceTruckCount: invoiceGroups.get(`${tradeRef}::${r.gateInvoiceNo}`)?.gatepassNos.length ?? 1,
@@ -1705,6 +1719,8 @@ export async function traderResolveGateInvoice(
   const updated = await prisma.pendingTruck.updateMany({
     where: {
       id: truckId,
+      gateInvoiceAmount:row.gateInvoiceAmount,
+      totalDeductionsKg:row.totalDeductionsKg,
       gateInvoiceNo: { not: null },
       gateInvoiceStage: { in: TRADER_APPROVABLE_STAGES },
     },

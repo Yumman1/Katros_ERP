@@ -55,7 +55,8 @@ export default function ExecutionVouchersPage() {
   const { data: counterparties } = trpc.execution.sellCounterparties.useQuery();
   const { data: vouchers, isLoading } = trpc.execution.vouchers.useQuery(undefined);
 
-  const {active}=useExecutionCommodityDesk();
+  const {active,entity}=useExecutionCommodityDesk();
+  const fzco=isSesameCommodity(active.code)&&entity==="FZCO";
   const [purchaseIntl,setPurchaseIntl]=useState(false);
   const [international,setInternational]=useState(false);
   const [side, setSide] = useState<"SELL" | "BUY">("SELL");
@@ -194,7 +195,7 @@ export default function ExecutionVouchersPage() {
           {side === "BUY" && <p className="mt-3 text-xs text-subtle">Generate this purchase request for Finance. Finance can download and print the voucher, then enter the payment method, bank and receipt/reference after making payment.</p>}
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <div className="exec-segment h-8">
-              {(["SELL", "BUY", "INTERNATIONAL"] as const).map((s) => (
+              {(fzco ? (["INTERNATIONAL"] as const) : (["SELL", "BUY", "INTERNATIONAL"] as const)).map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -205,13 +206,13 @@ export default function ExecutionVouchersPage() {
                   }}
                   className={cn(
                     "exec-segment-item px-3 py-1 text-xs",
-                    (!purchaseIntl&&(s==="INTERNATIONAL"?international:!international&&side===s)) && "exec-segment-active",
+                    (!purchaseIntl&&(s==="INTERNATIONAL"?(international||fzco):!international&&side===s)) && "exec-segment-active",
                   )}
                 >
-                  {s === "INTERNATIONAL" ? "International Sale" : s === "SELL" ? "Sale" : "Purchase"}
+                  {s === "INTERNATIONAL" ? (fzco ? "Sale" : "International Sale") : s === "SELL" ? "Sale" : "Purchase"}
                 </button>
               ))}
-              {isSesameCommodity(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",purchaseIntl&&"exec-segment-active")} onClick={()=>{setPurchaseIntl(true);setInternational(false);setSide("BUY");clearAgainst();}}>International Purchase</button>}
+              {isSesameCommodity(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",purchaseIntl&&"exec-segment-active")} onClick={()=>{setPurchaseIntl(true);setInternational(false);setSide("BUY");clearAgainst();}}>{fzco ? "Purchase" : "International Purchase"}</button>}
             </div>
             <span className="text-xs text-subtle">
               {side === "SELL"
@@ -220,7 +221,7 @@ export default function ExecutionVouchersPage() {
             </span>
           </div>
 
-          {purchaseIntl?<InternationalPurchaseVoucher/>:international?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
+          {purchaseIntl?<InternationalPurchaseVoucher/>:(international||fzco)?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Counterparty

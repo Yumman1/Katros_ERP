@@ -42,3 +42,32 @@ export async function recordTruckQuality(input: {truckId:string;tradeRef:string;
     return tx.pendingTruck.update({where:{id:truck.id},data:{qualityTradeRef:input.tradeRef,qualityReviewedAt:new Date(),qualityReviewedBy:actor,labReadings:input.readings as Prisma.InputJsonValue,qualitySpecs:specs,totalDeductionsKg:input.deductionKg,gateInvoiceNo:invoiceNo,gateInvoiceAmount:amount,gateInvoiceExpectedPkr:amount,gateInvoiceWeightKg:payableKg,gateInvoiceQtyMt:kgToQuantityUnit(payableKg,contract.quantityUnit),gateInvoiceRatePerKg:rateKg,gateInvoiceTradeRef:input.tradeRef,gateInvoiceCurrency:contract.currency,gateInvoiceStage:"PENDING_TRADE_APPROVAL"}});
   });
 }
+
+/** Trader changes the financial deduction before releasing the invoice to Finance. */
+export async function amendInvoiceDeduction(input:{truckId:string;deductionKg:number;expectedDeductionKg:number;expectedAmountPkr:number},actor:string){
+ const {traderNamesMatch}=await import('@/lib/trader-identity');
+ return prisma.$transaction(async tx=>{
+  await tx.$queryRaw`SELECT id FROM "PendingTruck" WHERE id=${input.truckId} FOR UPDATE`;
+  const truck=await tx.pendingTruck.findUniqueOrThrow({where:{id:input.truckId}});
+  const ref=truck.assignedTradeRef??truck.gateInvoiceTradeRef;
+  if(!ref)throw new Error('Invoice has no trade');
+  const trade=await tx.trade.findUniqueOrThrow({where:{tradeRef:ref},include:{contract:true}});
+  if(!traderNamesMatch(trade.traderName,actor))throw new Error('This invoice is not linked to one of your trades');
+  if(!truck.qualityReviewedAt||!truck.gateInvoiceNo||!['PENDING_TRADE_APPROVAL','HOLD_OLD_DUES'].includes(truck.gateInvoiceStage??'')||!trade.contract)throw new Error('Deductions can only be edited before payment approval');
+  if(Math.abs(Number(truck.totalDeductionsKg)-input.expectedDeductionKg)>.000001||Math.abs(Number(truck.gateInvoiceAmount)-input.expectedAmountPkr)>.005)throw new Error('Invoice changed. Refresh before editing');
+  const spot=trade.contract.executionProfile==='PURCHASE_SPOT';
+  const base=Number(spot?truck.weightAsPerBuiltyKg:truck.warehouseWeightKg);
+  if(spot&&input.deductionKg!==0)throw new Error('Ex-Works purchases cannot have deductions');
+  if(!Number.isFinite(input.deductionKg)||input.deductionKg<0||input.deductionKg>=base)throw new Error('Deduction must be zero or less than the invoice weight');
+  const receipts=await tx.inboundReceipt.findMany({where:{gatepassNo:truck.gatepassNo,tradeRef:ref}});
+  if(receipts.length!==1)throw new Error('This invoice needs reconciliation before editing');
+  if(await tx.paymentRequest.count({where:{sourceType:'INBOUND',sourceId:receipts[0].id,status:{in:['PENDING','APPROVED']}}}))throw new Error('Resolve the Finance payment before changing deductions');
+  const rate=Number(truck.gateInvoiceRatePerKg??trade.contract.ratePerKg),payable=base-input.deductionKg;
+  const amount=Math.round(payable*rate*100)/100;
+  if(!(rate>0)||amount+.005<Number(receipts[0].paidAmountPkr))throw new Error('Revised invoice cannot be below the amount already applied; reconcile the payment first');
+  await tx.inboundReceipt.update({where:{id:receipts[0].id},data:{amountDue:amount,weightDiffKg:input.deductionKg}});
+  await tx.counterpartyLedgerEntry.update({where:{truckId:truck.id},data:{amountPkr:amount,note:`Truck ${truck.truckNo} · Builty ${truck.builtyDetails} · Invoice ${truck.gateInvoiceNo} · Deduction changed by ${actor}: ${truck.totalDeductionsKg} → ${input.deductionKg} kg`}});
+  await tx.pendingTruck.update({where:{id:truck.id},data:{totalDeductionsKg:input.deductionKg,gateInvoiceAmount:amount,gateInvoiceExpectedPkr:amount,gateInvoiceWeightKg:payable,gateInvoiceQtyMt:kgToQuantityUnit(payable,trade.contract.quantityUnit)}});
+  return {amountPkr:amount};
+ });
+}

@@ -1,4 +1,20 @@
 "use client";
 import {trpc} from '@/lib/trpc/client';
-const money=(n:number)=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-export function FzcoUsdLedger({hideEmpty=false}:{hideEmpty?:boolean}){const q=trpc.sesameExport.usdLedger.useQuery(undefined,{refetchInterval:30000});if(hideEmpty&&!q.data?.length&&!q.error)return null;return <section className="kastros-card p-5 space-y-4"><h1 className="text-xl font-semibold">FZCO supplier and buyer ledgers — USD</h1><p className="text-sm text-subtle">Purchases and sales settle independently. Values use each trade or shipment’s saved exchange rate.</p>{q.isLoading&&<p>Loading ledger…</p>}{q.error&&<p role="alert">{q.error.message}</p>}{q.data?.map(t=><details key={t.tradeRef} className="border border-border rounded p-4"><summary>{t.counterparty} · {t.tradeRef} · {t.side} · {t.missingFx?'Missing historical exchange rate':`${money(Math.abs(t.balanceUsd))} USD ${t.balanceUsd>=0?(t.side==='BUY'?'we owe supplier':'buyer owes us'):(t.side==='BUY'?'supplier credit balance':'buyer credit balance')}`}</summary><div className="overflow-auto"><table className="w-full text-sm"><thead><tr>{['Date','Reference','Entry','USD','Details'].map(h=><th key={h} className="text-left p-2">{h}</th>)}</tr></thead><tbody>{t.entries.map(e=><tr key={e.id}><td className="p-2">{new Date(e.date).toLocaleDateString()}</td><td className="p-2">{e.reference}</td><td className="p-2">{e.type==='DEBIT'?'Invoice / obligation':t.side==='BUY'?'Payment':'Receipt'}</td><td className="p-2">{e.amountUsd===null?'FX unavailable':money(e.amountUsd)}</td><td className="p-2">{e.description}</td></tr>)}</tbody></table></div></details>)}{q.data?.length===0&&<p>No posted FZCO transactions yet.</p>}</section>;}
+import {CounterpartyLedgersPanel,type LedgerRow} from '@/components/ledgers/counterparty-ledgers-panel';
+import {AGING_BUCKETS} from '@/lib/finance-policy';
+export function FzcoUsdLedger({hideEmpty=false}:{hideEmpty?:boolean}){
+ const q=trpc.sesameExport.usdLedger.useQuery(undefined,{refetchInterval:30000});
+ const accounts=new Map<string,LedgerRow>();
+ for(const trade of q.data??[]){
+  const side=trade.side as 'BUY'|'SELL',key=`${trade.counterpartyId}-${side}`;
+  const row=accounts.get(key)??{counterpartyId:trade.counterpartyId,counterpartyName:trade.counterparty,counterpartyCode:trade.counterpartyCode,side,ledgerAccountId:key,totalDebitPkr:0,totalCreditPkr:0,totalBilledPkr:0,settledDebitPkr:0,outstandingDebitPkr:0,balancePkr:0,availableCreditPkr:0,aging:Object.fromEntries(AGING_BUCKETS.map(b=>[b,0])) as LedgerRow['aging'],entries:[]};
+  for(const e of trade.entries){if(e.amountUsd===null)continue;const value=e.amountUsd;
+   if(e.type==='DEBIT'){row.totalBilledPkr+=value;row.totalDebitPkr+=value;}else row.totalCreditPkr+=value;
+   row.entries.push({statusLabel:e.type==='CREDIT'?(side==='BUY'?'Paid':'Received'):trade.missingFx?'FX unavailable':trade.balanceUsd<=.005?'Paid':trade.entries.some(v=>v.type==='CREDIT')?'Trade partly paid':'Unpaid',settled:e.type==='CREDIT'||(!trade.missingFx&&trade.balanceUsd<=.005),id:e.id,entryDate:new Date(e.date),entryType:e.type,amountPkr:value,billedPkr:value,sourceType:e.sourceType,sourceRef:e.reference,tradeRef:trade.tradeRef,truckId:null,voucherNo:e.voucherNo,dueDate:null,agingBucket:null,saleStage:null,note:e.description,purchaseAdvanceFlow:side==='BUY'});
+  }
+  accounts.set(key,row);
+ }
+ for(const r of accounts.values()){r.balancePkr=r.totalCreditPkr-r.totalBilledPkr;r.outstandingDebitPkr=Math.max(0,-r.balancePkr);r.availableCreditPkr=Math.max(0,r.balancePkr);r.aging.current=r.outstandingDebitPkr;r.settledDebitPkr=Math.min(r.totalCreditPkr,r.totalBilledPkr);r.entries.sort((a,b)=>b.entryDate.getTime()-a.entryDate.getTime());}
+ if(hideEmpty&&!q.data?.length&&!q.error)return null;
+ return <section className="space-y-4"><h1 className="text-xl font-semibold">FZCO counterparty ledgers — USD</h1><p className="text-sm text-subtle">Purchases and sales settle independently. Amounts use the saved exchange rate for each entry.</p>{q.error&&<p role="alert">{q.error.message}</p>}{q.data?.some(t=>t.missingFx)&&<p role="alert">Some historical entries have no exchange rate and are excluded from USD totals until reconciled.</p>}<CounterpartyLedgersPanel currency="USD" enableFilters rows={[...accounts.values()]} isLoading={q.isLoading}/></section>;
+}

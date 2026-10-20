@@ -1,3 +1,4 @@
+import {amendInvoiceDeduction} from "@/server/execution/quality-review";
 import { excessAdvanceQueue, resolveExcessAdvance } from "@/server/finance/vouchers";
 import { defaultKgPerUnit } from "@/lib/price-units";
 import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
@@ -1280,6 +1281,7 @@ export const traderRouter = router({
   /** Gate invoices pending this trader's approval or held on old dues. */
   excessAdvances: protectedProcedure.query(({ctx})=>excessAdvanceQueue(traderNameFromSession(ctx.session.user))),
   resolveExcessAdvance: protectedProcedure.input(z.object({id:z.string(),approve:z.boolean()})).mutation(({ctx,input})=>resolveExcessAdvance(input.id,traderNameFromSession(ctx.session.user),input.approve)),
+  amendInvoiceDeduction: protectedProcedure.input(z.object({truckId:z.string(),deductionKg:z.number().finite().nonnegative(),expectedDeductionKg:z.number().finite(),expectedAmountPkr:z.number().finite()})).mutation(({ctx,input})=>amendInvoiceDeduction(input,traderNameFromSession(ctx.session.user))),
   invoiceApprovals: protectedProcedure.query(({ ctx }) => {
     const name = traderNameFromSession(ctx.session.user);
     return getTraderInvoiceApprovals(name);

@@ -3,7 +3,7 @@ import { supplierEntryType, purchasePaidTotal } from "@/lib/purchase-ledger-disp
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field, tradeFields } from "@/lib/record-filters";
 
-import { useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { AGING_BUCKETS, AGING_BUCKET_LABELS, type AgingBucket } from "@/lib/finance-policy";
@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { formatPkDate } from "@/lib/formatters/datetime";
 
 export type LedgerEntryRow = {
+  statusLabel?:string;
   purchaseAdvanceFlow?: boolean;
   id: string;
   entryDate: Date;
@@ -73,9 +74,8 @@ export type LedgerRow = {
 
 const pkrFormat = new Intl.NumberFormat("en-PK");
 
-function fmtPkr(value: number): string {
-  return `${pkrFormat.format(value)} PKR`;
-}
+const LedgerCurrency = createContext("PKR");
+function useMoneyFormat(){const currency=useContext(LedgerCurrency);return (value:number)=>`${pkrFormat.format(value)} ${currency}`;}
 
 function fmtDate(d: Date | string): string {
   return formatPkDate(d);
@@ -122,12 +122,14 @@ function agingCellTone(bucket: AgingBucket, amount: number): string {
 }
 
 export function CounterpartyLedgersPanel({
+  currency = "PKR",
   rows,
   isLoading,
   onSettle,
   settlingTruckId,
   enableFilters = false,
 }: {
+  currency?: "PKR" | "USD";
   rows: LedgerRow[] | undefined;
   isLoading?: boolean;
   onSettle?: (truckId: string) => void;
@@ -150,7 +152,7 @@ export function CounterpartyLedgersPanel({
   }
 
   return (
-    <div className="space-y-8">
+    <LedgerCurrency.Provider value={currency}><div className="space-y-8">
       {listFilters.controls}
       {listFilters.active && <p className="text-xs text-subtle">Totals below cover matching accounts. Each account balance includes its full history.</p>}
       <SideSection
@@ -175,7 +177,7 @@ export function CounterpartyLedgersPanel({
         settlingTruckId={settlingTruckId}
         enableFilters={enableFilters}
       />
-    </div>
+    </div></LedgerCurrency.Provider>
   );
 }
 
@@ -200,6 +202,7 @@ function SideSection({
   settlingTruckId?: string | null;
   enableFilters?: boolean;
 }) {
+  const fmtPkr=useMoneyFormat();
   const totals = useMemo(() => {
     const debit = accounts.reduce((s, r) => s + (r.side === "BUY" ? purchasePaidTotal(r.entries) : r.totalDebitPkr), 0);
     const credit = accounts.reduce((s, r) => s + r.totalCreditPkr, 0);
@@ -294,6 +297,7 @@ function AccountCard({
   settlingTruckId?: string | null;
   enableFilters?: boolean;
 }) {
+  const fmtPkr=useMoneyFormat();
   const displayEntries = useMemo(()=>r.entries.map(e=>({...e,displayEntryType:supplierEntryType(r.side,e)})),[r.entries,r.side]);
   const entryFilters = useRecordFilters(`ledger-${r.ledgerAccountId}`, displayEntries, { fields: [field("source", "Source type", "sourceType"), field("entry", "Debit / Credit", "displayEntryType"), field("aging", "Aging bucket", "agingBucket")], date: { label: "Entry date", paths: ["entryDate"] }, searchPaths: ["tradeRef", "sourceRef", "voucherNo", "note"] }, enableFilters && open);
   const isSell = r.side === "SELL";
@@ -417,7 +421,7 @@ function AccountCard({
                                 : "bg-destructive/15 text-destructive",
                           )}
                         >
-                          {!isSell && e.sourceType === "GATEPASS" ? "Total amount" : e.displayEntryType}
+                          {!isSell && (e.sourceType === "GATEPASS" || e.sourceType === "INVOICE") ? "Total amount" : e.displayEntryType}
                         </span>
 
                       </td>
@@ -465,7 +469,7 @@ function AccountCard({
                       <td className="whitespace-nowrap">                        {/* A note is a claim, not a delivery — it reads paid or
                             unpaid on its own status, and a paid one no longer
                             counts toward the account's balance. */}
-                        {e.noteStatus ? (
+                        {e.statusLabel ? <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold",e.settled?"bg-success/15 text-success":"bg-foreground/[0.08] text-subtle")}>{e.statusLabel}</span> : e.noteStatus ? (
                           e.noteStatus === "PAID" ? (
                             <span
                               className="ml-1.5 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase text-success"
@@ -518,7 +522,7 @@ function AccountCard({
                           <span className="ml-1.5 rounded-full bg-foreground/[0.08] px-2 py-0.5 text-[10px] font-bold uppercase text-subtle">
                             Held
                           </span>
-                        ) : e.entryType === "DEBIT" && !isSell && e.sourceType === "GATEPASS" ? (
+                        ) : e.entryType === "DEBIT" && !isSell && (e.sourceType === "GATEPASS" || e.sourceType === "INVOICE") ? (
                           <span
                             className="ml-1.5 rounded-full bg-foreground/[0.08] px-2 py-0.5 text-[10px] font-bold uppercase text-subtle"
                             title={`Invoiced ${fmtPkr(e.billedPkr)} — nothing released yet, so nothing is debited`}

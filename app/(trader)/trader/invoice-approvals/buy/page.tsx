@@ -11,6 +11,7 @@ import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
 type ApprovalRow = {
+  lockedRateKg:number; baseKg:number; vehicleGrossPkr:number; advanceReleasedPkr:number; unappliedAdvancePkr:number; remainingPercentage:number; canEditDeduction:boolean;
   builtyNumber:string; deductionKg:number; physicalKg:number; payableKg:number; quality:Record<string,string>|null;
   truckId: string;
   gatepassNo: string;
@@ -151,16 +152,24 @@ function InvoiceCard({
   row: ApprovalRow;
   resolve: ReturnType<typeof trpc.trader.resolveInvoiceApproval.useMutation>;
 }) {
+  const utils=trpc.useUtils();
+  const [deduction,setDeduction]=useState<string|null>(null);
+  const deductionKg=deduction===null?row.deductionKg:Number(deduction);
+  const dirty=deduction!==null&&deductionKg!==row.deductionKg;
+  const validDeduction=deduction!==''&&Number.isFinite(deductionKg)&&deductionKg>=0&&deductionKg<row.baseKg;
+  const previewTotal=dirty&&validDeduction?Math.round((row.baseKg-deductionKg)*row.lockedRateKg*100)/100:row.amountPkr;
+  const previewRemaining=Math.round(Math.max(0,previewTotal-row.paidPkr-row.unappliedAdvancePkr)*100)/100;
+  const edit=trpc.trader.amendInvoiceDeduction.useMutation({onSuccess:async()=>{await utils.trader.invoiceApprovals.invalidate();setDeduction(null);}});
   const isPending = row.stage === "PENDING_TRADE_APPROVAL";
   const isPartial = row.stage === "PARTIAL_PAYMENT";
   const multiTruck = row.invoiceTruckCount > 1;
-  const busy = resolve.isPending && resolve.variables?.truckId === row.truckId;
+  const busy = edit.isPending || dirty || (resolve.isPending && resolve.variables?.truckId === row.truckId);
   const errorHere = resolve.error && resolve.variables?.truckId === row.truckId;
 
   const [payAmount, setPayAmount] = useState("");
   const [note, setNote] = useState("");
   const wanted = Number(payAmount);
-  const overRemaining = wanted > row.remainingPkr + 0.005;
+  const overRemaining = wanted > previewRemaining + 0.005;
   const canPartPay = wanted > 0 && !overRemaining && !busy;
   const paidPct =
     row.amountPkr > 0 ? Math.min(100, Math.round((row.paidPkr / row.amountPkr) * 100)) : 0;
@@ -183,10 +192,10 @@ function InvoiceCard({
         </div>
         <div className="text-right">
           <div className="text-[10px] uppercase tracking-wider text-subtle">
-            {multiTruck ? "Amount due — this truck" : "Amount due"}
+            {multiTruck ? "Invoice value — this truck" : "Vehicle invoice value"}
           </div>
           <div className="tabular-nums text-lg font-bold text-foreground">
-            {formatCurrency(row.amountPkr, "PKR")}
+            {formatCurrency(previewTotal, "PKR")}
           </div>
         </div>
       </div>
@@ -211,12 +220,12 @@ function InvoiceCard({
               <span className="font-mono font-semibold text-success">
                 {formatCurrency(row.paidPkr, "PKR")}
               </span>{" "}
-              of {formatCurrency(row.amountPkr, "PKR")}
+              of {formatCurrency(previewTotal, "PKR")}
             </span>
             <span className="text-subtle">
               Held{" "}
               <span className="font-mono font-semibold text-warning">
-                {formatCurrency(row.remainingPkr, "PKR")}
+                {formatCurrency(previewRemaining, "PKR")}
               </span>
             </span>
           </div>
@@ -246,15 +255,19 @@ function InvoiceCard({
         </Detail>
         <Detail label="Truck / Builty">{row.truckNo} / {row.builtyNumber}</Detail>
         <Detail label="Physical weight">{row.physicalKg.toLocaleString()} kg</Detail>
-        <Detail label="Financial deduction">{row.deductionKg.toLocaleString()} kg</Detail>
-        <Detail label="Payable weight">{row.payableKg.toLocaleString()} kg</Detail>
+        <Detail label="Financial deduction (kg)">{row.canEditDeduction?<input aria-label="Financial deduction in kg" className="kastros-input w-full" type="number" min="0" step="0.001" max={row.baseKg} value={deduction??String(row.deductionKg)} disabled={edit.isPending||resolve.isPending} onChange={e=>setDeduction(e.target.value)}/>:`${row.deductionKg.toLocaleString()} kg`}</Detail>
+        <Detail label="Payable weight">{(dirty&&validDeduction?row.baseKg-deductionKg:row.payableKg).toLocaleString()} kg</Detail>
         <Detail label="Quality">{row.quality ? Object.entries(row.quality).map(([k,v])=>`${k}: ${v}%`).join(" · ") : "Historical invoice"}</Detail>
         <Detail label="Arrival date">
           {new Date(row.arrivalDate).toLocaleDateString("en-PK")}
         </Detail>
+        <Detail label="Locked trade rate (PKR / kg)">{formatCurrency(row.lockedRateKg,"PKR")}</Detail>
+        <Detail label="Vehicle total value before deductions">{formatCurrency(row.vehicleGrossPkr,"PKR")}</Detail>
+        <Detail label="Advance already released">{formatCurrency(row.advanceReleasedPkr,"PKR")}</Detail>
+        <Detail label={`Remaining payment (${row.remainingPercentage}% under trade terms)`}>{formatCurrency(previewRemaining,"PKR")}</Detail>
         <Detail label="Expected amount">
           <span className="tabular-nums">
-            {row.expectedPkr != null ? formatCurrency(row.expectedPkr, "PKR") : "—"}
+            {row.expectedPkr != null ? formatCurrency(previewTotal, "PKR") : "—"}
           </span>
         </Detail>
         <Detail label="Total trade price">
@@ -262,6 +275,8 @@ function InvoiceCard({
         </Detail>
       </div>
 
+      {dirty&&<div className="mt-3 space-y-2"><p className="text-xs text-subtle">Amounts above update as you edit. Save the deduction before approving payment. Physical inventory weight is unchanged.</p><button type="button" className="kastros-btn-primary" disabled={!validDeduction||edit.isPending||resolve.isPending} onClick={()=>edit.mutate({truckId:row.truckId,deductionKg,expectedDeductionKg:row.deductionKg,expectedAmountPkr:row.amountPkr})}>Save deduction</button><button type="button" className="kastros-btn-secondary ml-2" disabled={edit.isPending} onClick={()=>setDeduction(null)}>Cancel edit</button></div>}
+      {edit.error&&<p role="alert" className="text-destructive mt-2">{edit.error.message}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -273,7 +288,7 @@ function InvoiceCard({
           {busy && resolve.variables?.decision === "APPROVE"
             ? "Approving…"
             : row.paidPkr > 0
-              ? `Pay remaining ${formatCurrency(row.remainingPkr, "PKR")}`
+              ? `Pay remaining ${formatCurrency(previewRemaining, "PKR")}`
               : "Approve payment"}
         </button>
         {isPending && (
@@ -302,7 +317,7 @@ function InvoiceCard({
             <input
               type="number"
               min={0}
-              max={row.remainingPkr}
+              max={previewRemaining}
               value={payAmount}
               onChange={(e) => setPayAmount(e.target.value)}
               placeholder="0"
@@ -341,11 +356,11 @@ function InvoiceCard({
         <p className="mt-2 text-[11px] text-subtle">
           {overRemaining ? (
             <span className="text-destructive">
-              Only {formatCurrency(row.remainingPkr, "PKR")} is still unpaid on this truck.
+              Only {formatCurrency(previewRemaining, "PKR")} is still unpaid on this truck.
             </span>
           ) : (
             <>
-              {formatCurrency(row.remainingPkr, "PKR")} still unpaid. The held amount stays
+              {formatCurrency(previewRemaining, "PKR")} still unpaid. The held amount stays
               outstanding against this truck and never ages — release it here whenever you are ready.
             </>
           )}

@@ -42,9 +42,9 @@ export const sesameExportRouter=router({
   const records=await prisma.counterpartyLedgerEntry.findMany({where:{tradeRef:{in:trades.map(t=>t.tradeRef)}},include:{exportShipment:true,voucher:{include:{exportShipment:true}}},orderBy:{entryDate:'desc'}});
   return trades.map(t=>{
    const params=t.tradeParams as Record<string,unknown>|null;
-   const entries=records.filter(e=>e.tradeRef===t.tradeRef&&(!e.executionEntity||e.executionEntity==='FZCO')&&(!e.voucher||e.voucher.executionEntity==='FZCO')).map(e=>{const fx=Number(e.paymentFxRate??e.voucher?.paymentFxRate??e.exportShipment?.fxRate??e.voucher?.exportShipment?.fxRate??params?.executionFxPkrPerUsd);return {id:e.id,date:e.entryDate,reference:e.sourceRef,description:e.note,type:e.entryType,amountUsd:fx>0?Number(e.amountPkr)/fx:null};});
+   const entries=records.filter(e=>e.tradeRef===t.tradeRef&&(!e.executionEntity||e.executionEntity==='FZCO')&&(!e.voucher||e.voucher.executionEntity==='FZCO')).map(e=>{const fx=Number(e.paymentFxRate??e.voucher?.paymentFxRate??e.exportShipment?.fxRate??e.voucher?.exportShipment?.fxRate??params?.executionFxPkrPerUsd);return {sourceType:e.sourceType,voucherNo:e.voucher?.voucherNo??null,id:e.id,date:e.entryDate,reference:e.sourceRef,description:e.note,type:e.entryType,amountUsd:fx>0?Number(e.amountPkr)/fx:null};});
    const balance=entries.reduce((a,e)=>a+(e.type==='DEBIT'?1:-1)*(e.amountUsd??0),0);
-   return {tradeRef:t.tradeRef,counterparty:internalEntity(t.tradeParams)?'Kastros Pakistan':t.counterparty.name,side:tradeEntity(t.tradeParams)==='FZCO'?t.direction:t.direction==='BUY'?'SELL':'BUY',balanceUsd:balance,missingFx:entries.some(e=>e.amountUsd===null),entries};
+   return {counterpartyId:internalEntity(t.tradeParams)?"INTERCO-PAK":t.counterpartyId,counterpartyCode:internalEntity(t.tradeParams)?"INTERCO-PAK":t.counterparty.code,tradeRef:t.tradeRef,counterparty:internalEntity(t.tradeParams)?'Kastros Pakistan':t.counterparty.name,side:tradeEntity(t.tradeParams)==='FZCO'?t.direction:t.direction==='BUY'?'SELL':'BUY',balanceUsd:balance,missingFx:entries.some(e=>e.amountUsd===null),entries};
   }).filter(t=>t.entries.length);
  }),
  directTrades:roleProcedure(['EXECUTION']).query(async({ctx})=>{await fzcoAccess(ctx);return directChoices(ctx.executionCommodityCode);}),
