@@ -10,7 +10,7 @@ export async function directChoices(code?:string){
  const rows=await prisma.trade.findMany({where:{directSettled:false,tradeStatus:{in:['LOCKED','CONFIRMED','EXECUTED']},contract:{openQtyMt:{gt:0}},commodity:{code}},include:{commodity:true,counterparty:true,contract:true}});
  return rows.filter(t=>isSesameCommodity(t.commodity.code)&&tradeEntity(t.tradeParams)==='FZCO'&&!internalEntity(t.tradeParams)&&t.currency==='USD').map(t=>({tradeRef:t.tradeRef,side:t.direction,counterpartyId:t.counterpartyId,counterparty:t.counterparty.name,commodityCode:t.commodity.code,commodity:t.commodity.name,openMt:Number(t.contract?.openQtyMt??0)}));
 }
-export async function logFzcoIntake(input:z.infer<typeof fzcoIntakeInput>,actor:string){
+export async function logFzcoIntake(input:z.input<typeof fzcoIntakeInput>,actor:string){
  const parsed=fzcoIntakeInput.parse(input);if(!isSesameCommodity(parsed.commodityCode))throw new Error('Choose Sesame');
  if(parsed.triparty&&parsed.side!=='SELL')throw new Error('Triparty gate-out requires Sale movement');
  if(parsed.triparty&&parsed.containers.some(c=>!c.containerNo.trim()||!c.croNo.trim()))throw new Error('Enter container and CRO numbers for every triparty container');

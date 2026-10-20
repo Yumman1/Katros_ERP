@@ -41,7 +41,7 @@ export async function confirmOwnership(input: { tradeRef: string; quantityMt: nu
       if ((custody.get(warehouseName) ?? 0) - (reserved.get(warehouseName) ?? 0) + 0.000001 < input.quantityMt) throw new Error("Insufficient unreserved FZCO ownership at this warehouse");
     } else {
       // External FZCO purchases are paper inventory; never manufacture a warehouse receipt.
-      if(input.entity!=="FZCO" || !input.holderId || !input.holderLocation?.trim() || !input.documentRef?.trim() || !input.ownershipDate)throw new Error("Enter the stock holder, location, ownership date and supporting document");
+      if(input.entity!=="FZCO" || !input.holderId || !input.documentRef?.trim() || !input.ownershipDate)throw new Error("Enter the stock holder, ownership date and supporting document");
       await db.counterparty.findUniqueOrThrow({where:{id:input.holderId}});
       warehouseName = null;
     }
