@@ -4,6 +4,8 @@ import { claimAdvance, applyTruckAdvance } from "@/server/finance/purchase-advan
 import { assertGradeAvailable } from "./sesame-processing";
 import { sesameGrade } from "@/lib/sesame-processing";
 import { executionTradeValuePkr } from "@/lib/execution-settlement";
+import { formatLockedContractRate } from "@/lib/formatters/contract-rate";
+import { formatCurrency } from "@/lib/formatters/numbers";
 import { isSesameCommodity } from "@/lib/sesame";
 import { lockSesameOwnership, pakistanAvailable } from "./sesame-stock";
 import { assertOwnershipWrite } from "./ownership-guards";
@@ -1465,7 +1467,7 @@ const TRADER_APPROVABLE_STAGES: TraderApprovableStage[] = [
 export class TraderInvoiceOwnershipError extends Error {}
 
 export type TraderInvoiceApprovalRow = {
-  lockedRateKg:number; baseKg:number; vehicleGrossPkr:number; advanceReleasedPkr:number; unappliedAdvancePkr:number; remainingPercentage:number; canEditDeduction:boolean;
+  lockedRateKg:number; lockedRateDisplay:string; baseKg:number; vehicleGrossPkr:number; advanceReleasedPkr:number; unappliedAdvancePkr:number; remainingPercentage:number; canEditDeduction:boolean;
   builtyNumber:string;
   deductionKg:number;
   physicalKg:number;
@@ -1539,6 +1541,7 @@ export async function getTraderInvoiceApprovals(
       commissionAmount: true,
       currency: true,
       priceCurrency: true,
+      priceWeightUnit: true,
       tradeParams: true,
       counterparty: { select: { name: true } },
       commodity: { select: { code: true, name: true } },
@@ -1609,8 +1612,15 @@ export async function getTraderInvoiceApprovals(
     const unapplied=Math.max(0,advanceReleased-(advance?.advanceAllocations.reduce((sum,a)=>sum+Number(a.amountPkr),0)??0));
     const baseKg=num(trade.contract?.executionProfile==='PURCHASE_SPOT'?r.weightAsPerBuiltyKg:r.warehouseWeightKg);
     const lockedRateKg=num(r.gateInvoiceRatePerKg??trade.contract?.ratePerKg);
+    const bookedRate=formatLockedContractRate({
+      unitPrice:numOrNull(trade.contract?.unitPrice)??numOrNull(trade.price),
+      priceCurrency:trade.contract?.priceCurrency??trade.priceCurrency,
+      priceWeightUnit:trade.contract?.priceWeightUnit??trade.priceWeightUnit,
+      ratePerMaund:numOrNull(trade.contract?.ratePerMaund),
+      currency:trade.contract?.currency??trade.currency,
+    });
     result.push({
-      lockedRateKg,baseKg,vehicleGrossPkr:Math.round(baseKg*lockedRateKg*100)/100,advanceReleasedPkr:advanceReleased,unappliedAdvancePkr:unapplied,
+      lockedRateKg,lockedRateDisplay:bookedRate==="—"?`${formatCurrency(lockedRateKg,"PKR")} / kg`:bookedRate,baseKg,vehicleGrossPkr:Math.round(baseKg*lockedRateKg*100)/100,advanceReleasedPkr:advanceReleased,unappliedAdvancePkr:unapplied,
       remainingPercentage:100-purchaseAdvancePercentage(trade.paymentType,trade.tradeParams),
       canEditDeduction:!!r.qualityReviewedAt&&trade.contract?.executionProfile!=='PURCHASE_SPOT'&&['PENDING_TRADE_APPROVAL','HOLD_OLD_DUES'].includes(r.gateInvoiceStage??''),
       truckId: r.id,

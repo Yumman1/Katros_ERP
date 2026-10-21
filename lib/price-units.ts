@@ -135,7 +135,16 @@ export function toPricePerCanonicalQty(
   return price * currencyToBaseFactor(basis.currency) * (canonicalKgPerUnit / basis.kgPerUnit);
 }
 
+/** Denominator shown on booked prices — maund, not the internal MAUND_40 code. */
+export function priceWeightUnitLabel(weightUnit: string): string {
+  const key = weightUnit.trim().toUpperCase();
+  if (key === "MAUND_40" || key === "MAUND") return "maund";
+  if (key === "MAUND_37") return "maund (37.324 kg)";
+  if (key === "KG") return "kg";
+  return weightUnit;
+}
+
 /** Short label for a price basis, e.g. "¢/lb", "₨/maund", "$/MT". */
 export function priceUnitLabel(basis: { currency: PriceCurrency; weightUnit: string }): string {
-  return `${PRICE_CURRENCY_SYMBOL[basis.currency]}/${basis.weightUnit}`;
+  return `${PRICE_CURRENCY_SYMBOL[basis.currency]}/${priceWeightUnitLabel(basis.weightUnit)}`;
 }

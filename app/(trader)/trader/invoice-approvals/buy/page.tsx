@@ -11,7 +11,7 @@ import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
 type ApprovalRow = {
-  lockedRateKg:number; baseKg:number; vehicleGrossPkr:number; advanceReleasedPkr:number; unappliedAdvancePkr:number; remainingPercentage:number; canEditDeduction:boolean;
+  lockedRateKg:number; lockedRateDisplay:string; baseKg:number; vehicleGrossPkr:number; advanceReleasedPkr:number; unappliedAdvancePkr:number; remainingPercentage:number; canEditDeduction:boolean;
   builtyNumber:string; deductionKg:number; physicalKg:number; payableKg:number; quality:Record<string,string>|null;
   truckId: string;
   gatepassNo: string;
@@ -261,7 +261,7 @@ function InvoiceCard({
         <Detail label="Arrival date">
           {new Date(row.arrivalDate).toLocaleDateString("en-PK")}
         </Detail>
-        <Detail label="Locked trade rate (PKR / kg)">{formatCurrency(row.lockedRateKg,"PKR")}</Detail>
+        <Detail label="Locked trade rate">{row.lockedRateDisplay}</Detail>
         <Detail label="Vehicle total value before deductions">{formatCurrency(row.vehicleGrossPkr,"PKR")}</Detail>
         <Detail label="Advance already released">{formatCurrency(row.advanceReleasedPkr,"PKR")}</Detail>
         <Detail label={`Remaining payment (${row.remainingPercentage}% under trade terms)`}>{formatCurrency(previewRemaining,"PKR")}</Detail>
