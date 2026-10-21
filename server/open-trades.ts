@@ -852,7 +852,7 @@ export async function getLockedTradesForExecution(): Promise<OpenTradeSummary[]>
   return (await mockAllTraderTrades())
     .filter((t) => t.tradeStatus === TradeStatus.LOCKED)
     .sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime())
-    .map(toSummary);
+    .map((t) => toSummary(t));
 }
 
 export async function updateLockedTradeDirect(
