@@ -192,10 +192,10 @@ function InvoiceCard({
         </div>
         <div className="text-right">
           <div className="text-[10px] uppercase tracking-wider text-subtle">
-            {multiTruck ? "Invoice value — this truck" : "Vehicle invoice value"}
+            Remaining payment ({row.remainingPercentage}% under trade terms)
           </div>
           <div className="tabular-nums text-lg font-bold text-foreground">
-            {formatCurrency(previewTotal, "PKR")}
+            {formatCurrency(previewRemaining, "PKR")}
           </div>
         </div>
       </div>
@@ -268,8 +268,8 @@ function InvoiceCard({
           {new Date(row.arrivalDate).toLocaleDateString("en-PK")}
         </Detail>
         <Detail label="Locked trade rate">{row.lockedRateDisplay}</Detail>
+        <Detail label="Vehicle invoice value">{formatCurrency(previewTotal, "PKR")}</Detail>
         <Detail label="Advance already released">{formatCurrency(row.advanceReleasedPkr,"PKR")}</Detail>
-        <Detail label={`Remaining payment (${row.remainingPercentage}% under trade terms)`}>{formatCurrency(previewRemaining,"PKR")}</Detail>
         <Detail label="Total trade price">
           <span className="tabular-nums">{formatCurrency(row.totalTradePricePkr, "PKR")}</span>
         </Detail>
