@@ -1284,9 +1284,10 @@ export const traderRouter = router({
       })
       .map((c) => {
         const t = bookByRef.get(c.tradeRef);
-        const direction = entity && t ? deskSide(c.commodityCode, c.direction, t.tradeParams, entity) : c.direction;
-        const counterpartyName = entity && t
-          ? deskCounterpartyLabel(c.commodityCode, t.tradeParams, c.counterpartyName, entity)
+        const shownEntity = entity ?? (t && internalPakSale(c.commodityCode,c.direction,t.tradeParams) ? "FZCO" : undefined);
+        const direction = shownEntity && t ? deskSide(c.commodityCode, c.direction, t.tradeParams, shownEntity) : c.direction;
+        const counterpartyName = shownEntity && t
+          ? deskCounterpartyLabel(c.commodityCode, t.tradeParams, c.counterpartyName, shownEntity)
           : c.counterpartyName;
         return {
           tradeRef: c.tradeRef,

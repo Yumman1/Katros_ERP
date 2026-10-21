@@ -92,17 +92,19 @@ export function presentTraderBook<T extends {
   tradeParams?: unknown;
   counterparty: { name: string };
 }>(trades: T[], entity?: SesameEntity): T[] {
-  if (!entity) return trades;
   return trades
-    .filter((t) => belongsToSesameDesk(t.commodity.code, t.tradeParams, entity))
-    .map((t) => ({
-      ...t,
-      direction: deskSide(t.commodity.code, t.direction, t.tradeParams, entity) as T["direction"],
-      counterparty: {
-        ...t.counterparty,
-        name: deskCounterpartyLabel(t.commodity.code, t.tradeParams, t.counterparty.name, entity),
-      },
-    }));
+    .filter((t) => !entity || belongsToSesameDesk(t.commodity.code, t.tradeParams, entity))
+    .map((t) => {
+      const shownEntity = entity ?? (internalPakSale(t.commodity.code, t.direction, t.tradeParams) ? "FZCO" : tradeEntity(t.tradeParams));
+      return {
+        ...t,
+        direction: deskSide(t.commodity.code, t.direction, t.tradeParams, shownEntity) as T["direction"],
+        counterparty: {
+          ...t.counterparty,
+          name: deskCounterpartyLabel(t.commodity.code, t.tradeParams, t.counterparty.name, shownEntity),
+        },
+      };
+    });
 }
 /**
  * FZCO purchases and sales stay on the book until paid. Pakistan → FZCO

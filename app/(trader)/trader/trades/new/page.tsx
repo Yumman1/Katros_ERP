@@ -450,15 +450,6 @@ function BookTradeForm() {
   useEffect(() => {
     if (isSesame) setTradeParams(current => ({ ...SESAME_DEFAULTS, ...current, tradingEntity: sesameTradingEntity(current) }));
   }, [isSesame, selectedCommodity?.id]);
-  useEffect(() => {
-    if (!isSesame) return;
-    const wanted = desk.entity === "FZCO" ? "Kastros FZCO" : "Kastros PAK";
-    setTradeParams((current) => {
-      if (sesameTradingEntity(current) === wanted) return current;
-      return { ...current, tradingEntity: wanted, internalCounterpartyEntity: "" };
-    });
-    if (wanted === "Kastros FZCO") setValue("tradeScope", "INTERNATIONAL", { shouldValidate: true });
-  }, [isSesame, desk.entity, setValue]);
   const warehouseStorageDivision = useMemo(
     () =>
       selectedCommodity
