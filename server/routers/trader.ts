@@ -32,7 +32,8 @@ import {
 } from "@/lib/trade-constants";
 import { computeWarehouseAvailability } from "@/lib/warehouse-availability";
 import { normWarehouseName } from "@/lib/warehouse-allocation";
-import { buildLocationCommodityInventory } from "@/lib/inventory-stock";
+import { buildLocationCommodityInventory, countsAsReleasedOutbound, inboundStockDelta } from "@/lib/inventory-stock";
+import { buildRatePkrPerMtByRef, computeWeightedPurchasePrice } from "@/server/inventory-valuation";
 import { autoCloseThresholdQty } from "@/lib/contract-closure";
 import {
   getInboundReceipts,
@@ -651,7 +652,7 @@ export const traderRouter = router({
 
   warehouseAvailability: protectedProcedure
     .input(z.object({ commodityId: z.string().optional() }).optional())
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
     const locations = await getCompanyWarehouses();
     const lockedContracts = await getLockedContracts({ openOnly: false });
     const contracts = lockedContracts.map((c) => ({
@@ -660,6 +661,7 @@ export const traderRouter = router({
       quantityUnit: c.quantityUnit,
     }));
     const commodity = input?.commodityId ? await getCommodityById(input.commodityId) : null;
+    if (ctx.session.user.role === "TRADER" && commodity) await requireTraderCommodity(ctx.session.user.id, commodity.id);
 
     const [inbound, outbound, pendingTrucks, transfers] = await Promise.all([
       getInboundReceipts(),
@@ -775,7 +777,40 @@ export const traderRouter = router({
       };
     });
 
-    return { warehouses, unassignedBookedMt };
+    const scopedRows = commodity ? inventoryRows.filter((r) => r.commodityCode === commodity.code) : inventoryRows;
+    let valuation: {
+      weightedPurchasePricePkrPerMaund: number;
+      weightedPurchasePricePkrPerMt: number;
+      totalPurchasedMt: number;
+      totalSoldMt: number;
+    } | null = null;
+    if (commodity) {
+      const inboundQtyByTradeRef = new Map<string, number>();
+      for (const r of inbound) {
+        const c = contractByRef.get(r.tradeRef);
+        if (!c || c.commodityCode !== commodity.code) continue;
+        const qty = inboundStockDelta(r.status, c.executionProfile === "PURCHASE_SPOT" && r.weightWarehouseKg > 0 ? r.weightWarehouseKg / 1000 : r.allocatedQtyMt);
+        if (qty > 0) inboundQtyByTradeRef.set(r.tradeRef, (inboundQtyByTradeRef.get(r.tradeRef) ?? 0) + qty);
+      }
+      let totalSoldMt = 0;
+      for (const d of outbound) {
+        const c = contractByRef.get(d.tradeRef);
+        if (!c || c.commodityCode !== commodity.code) continue;
+        if (countsAsReleasedOutbound(d.status)) totalSoldMt += d.allocatedQtyMt;
+      }
+      const priced = computeWeightedPurchasePrice({
+        inboundQtyByTradeRef,
+        ratePkrPerMtByRef: buildRatePkrPerMtByRef(lockedContracts.filter((c) => c.commodityCode === commodity.code)),
+      });
+      valuation = {
+        weightedPurchasePricePkrPerMaund: priced.weightedPurchasePricePkrPerMaund ?? 0,
+        weightedPurchasePricePkrPerMt: priced.weightedPurchasePricePkrPerMt ?? 0,
+        totalPurchasedMt: priced.totalQtyMt,
+        totalSoldMt,
+      };
+    }
+
+    return { warehouses, unassignedBookedMt, inventoryRows: scopedRows, valuation };
   }),
 
   addCommodity: roleProcedure(["CEO", "ADMIN"])

@@ -9,6 +9,7 @@ import Link from "next/link";
 import { trpc } from "@/lib/trpc/client";
 import { ENTITY_NAMES, sesameBookQty, type SesameEntity } from "@/lib/sesame-entity";
 import { useExecutionCommodityDesk } from "./commodity-desk-provider";
+import { InventoryStatistics } from "./inventory-statistics";
 import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
 
@@ -52,7 +53,98 @@ export function SesamePositionView({ commodityCode, canEdit = true }: { commodit
 
 export function SesameInventory() {
   const { active, entity } = useExecutionCommodityDesk();
-  return <SesameInventoryView commodityCode={active.code} entity={entity} />;
+  if (entity === "FZCO") return <SesameInventoryView commodityCode={active.code} entity="FZCO" />;
+  return (
+    <InventoryStatistics commodityCode={active.code}>
+      <SesamePakistanInventoryExtras commodityCode={active.code} />
+    </InventoryStatistics>
+  );
+}
+
+export function SesamePakistanInventoryExtras({
+  commodityCode,
+  onSelectEntity,
+}: {
+  commodityCode: string;
+  onSelectEntity?: (entity: SesameEntity) => void;
+}) {
+  const { data, isLoading, error } = useBook(commodityCode);
+  const p = data?.positions.find((row) => row.entity === "PAK");
+  return (
+    <div className="space-y-5">
+      {onSelectEntity && (
+        <fieldset>
+          <legend className="mb-2 text-xs text-muted-foreground">Sesame entity</legend>
+          <div className="grid max-w-xs grid-cols-2 gap-1 rounded-lg border border-border p-1">
+            {(["PAK", "FZCO"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={value === "PAK"}
+                onClick={() => onSelectEntity(value)}
+                className={`rounded-md px-3 py-2 text-xs ${value === "PAK" ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}
+              >
+                {value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      <section>
+        <h2 className="text-sm font-semibold text-foreground">Pakistan sesame book</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Physical sesame in Pakistan warehouses. Open sales are already booked (not free to sell). Triparty is a
+          Pakistan sale leaving the warehouse. FZCO does not hold warehouse stock.
+        </p>
+      </section>
+      {isLoading && <p className="text-sm text-muted-foreground">Loading sesame book…</p>}
+      {error && <p role="alert">{error.message}</p>}
+      <div className="grid gap-4 md:grid-cols-4">
+        {([
+          ["Physical", p?.ownedMt],
+          ["Open purchases", p?.openBuyMt],
+          ["Open sales", p?.openSellMt],
+          ["Free to sell", p?.freeMt],
+        ] as [string, number | undefined][]).map(([label, value]) => (
+          <section key={label} className="kastros-card p-4">
+            <div className="text-sm text-muted-foreground">{label}</div>
+            <div className="mt-2 text-2xl font-semibold">{qty(value ?? 0)} MT</div>
+          </section>
+        ))}
+      </div>
+      <div className="kastros-card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              {["Pakistan warehouse", "Physical MT", "Open sale / booked MT", "Free to sell MT"].map((h) => (
+                <th key={h} className={cell}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data?.warehouses.map((w) => (
+              <tr key={w.name}>
+                <td className={cell}>{w.name}</td>
+                <td className={cell}>{qty(w.quantityMt)}</td>
+                <td className={cell}>{qty(w.bookedMt)}</td>
+                <td className={cell}>{qty(w.freeToSellMt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!data?.warehouses.length && <p className="p-5">No physical Sesame receipts yet.</p>}
+        {(data?.unassignedBookedMt ?? 0) > 0 && (
+          <p className="px-4 py-3 text-sm text-muted-foreground">
+            {qty(data!.unassignedBookedMt)} MT of open Pakistan sales is not allocated to a warehouse yet, so it is
+            not reserved against any one location.
+          </p>
+        )}
+      </div>
+      <SesameGradeStockView commodityCode={commodityCode} />
+    </div>
+  );
 }
 
 export function SesameInventoryView({

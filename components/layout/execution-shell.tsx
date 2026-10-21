@@ -30,7 +30,7 @@ import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
 import { cn } from "@/lib/utils";
 import { isSesameCommodity } from "@/lib/sesame";
-import { FzcoBook, FzcoOverview, FzcoTrucks, SesameInventory, SesamePositions } from "@/components/execution/sesame-entity-panels";
+import { FzcoBook, FzcoOverview, FzcoTrucks, SesamePositions } from "@/components/execution/sesame-entity-panels";
 
 export function ExecutionShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -155,7 +155,6 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
 
   let content = children;
   if (sesame && pathname === "/execution/positions") content = <div className="kastros-desk-page"><SesamePositions /></div>;
-  if (sesame && pathname === "/execution/inventory") content = <SesameInventory />;
   if (fzco && pathname === "/execution") content = <FzcoOverview />;
   if (fzco && pathname === "/execution/movements") content = <FzcoTrucks />;
   if (fzco && (pathname === "/execution/contracts" || /^\/execution\/(purchase-delivered|purchase-spot|sales)\//.test(pathname))) content = <div className="kastros-desk-page"><FzcoBook commodityCode={active.code} /></div>;
@@ -201,7 +200,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
       }
     >
       <WarehouseLeaseReminder />
-      {!fzco && (pathname.startsWith("/execution/warehouses") || pathname === "/execution/inventory") && <SesameGradeStock />}
+      {!fzco && pathname.startsWith("/execution/warehouses") && <SesameGradeStock />}
       {content}
     </AppShell>
   );

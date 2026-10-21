@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { BookOpen, LayoutDashboard, LineChart, ListOrdered, PenLine, Plus, Receipt, Truck, User, Users, Warehouse, XCircle } from "lucide-react";
-import { isSesameCommodity } from "@/lib/sesame";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ShellHeader } from "@/components/layout/shell-header";
@@ -62,7 +61,6 @@ export function TraderShell({ children }: { children: ReactNode }) {
 
   const groupedDos=trpc.sesameExport.list.useQuery(undefined,{refetchInterval:15000,retry:false});
   const groupedDoCount=groupedDos.data?.filter(s=>s.status==="TRADER_PENDING").length??0;
-  const sesameDesk = isSesameCommodity(desk.active?.code);
   const appNav = nav.flatMap((item) => {
     const mapped = {
       ...item,
@@ -74,7 +72,7 @@ export function TraderShell({ children }: { children: ReactNode }) {
             ? navBadge((editApprovals.data ?? 0) + (overDeliveryApprovals.data ?? 0) + groupedDoCount)
             : undefined,
     };
-    if (sesameDesk && item.href === "/trader/positions") {
+    if (item.href === "/trader/positions") {
       return [{ href: "/trader/inventory", label: "Inventory", icon: <Warehouse className="h-4 w-4" /> }, mapped];
     }
     return [mapped];
