@@ -692,7 +692,7 @@ export async function assignTruckToTrade(
       include: CONTRACT_INCLUDE,
     });
     if (!contractRow) throw new Error("Locked contract not found: " + tradeRef);
-    if (contractRow.paperOwnership || truckRow.executionEntity === "FZCO") throw new Error("Use the Sesame ownership desk or FZCO truck workflow for this trade");
+    if (contractRow.paperOwnership || truckRow.executionEntity === "FZCO") throw new Error("Use the FZCO truck workflow for this trade");
     const contract = normalizeContract(contractRowToRuntime(contractRow));
     assertWithinDeliveryWindow(contract, truck.arrivalDate ?? new Date(), allowOutsideWindow);
     if (

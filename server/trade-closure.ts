@@ -97,7 +97,7 @@ export async function buildSettlementNotePayload(
 
   const contract = await getContractByRef(tradeRef);
   if (!contract) throw new Error("Locked contract not found");
-  if (contract.paperOwnership) throw new Error("Ownership contracts must be fulfilled through the Sesame ownership workflow");
+  if (contract.paperOwnership) throw new Error("FZCO trades close when paid, not through a physical-trade settlement");
   const openQtyMt = Math.max(0, num(contract.openQtyMt));
 
   const { ratePerMaund, maundsPerMt } = ratePerMaundInclCommission(trade);
@@ -251,7 +251,7 @@ export async function applyCancellationChangeRequest(
   const ref = tradeRef.trim();
   const trade = await mockTradeByRefGlobal(ref);
   if (!trade) return false;
-  if ((await getContractByRef(ref))?.paperOwnership) throw new Error("Ownership contracts cannot be cancelled through a physical-trade settlement");
+  if ((await getContractByRef(ref))?.paperOwnership) throw new Error("FZCO trades cannot be cancelled through a physical-trade settlement");
   if (trade.tradeStatus === TradeStatus.CANCELLED) return true; // already done
 
   const priced = priceNoteFromPayload(payload);

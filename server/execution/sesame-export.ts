@@ -1,5 +1,4 @@
 import {thirdPartySource} from './third-party-contract';
-import {assertCustody} from './fzco-custody';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import type {Prisma} from '@prisma/client';
@@ -82,10 +81,9 @@ export async function addExportContainers(raw:z.infer<typeof exportGateInput>, d
   }
   const allocated=await db.outboundDispatch.aggregate({where:{tradeRef:trade.tradeRef},_sum:{allocatedQtyMt:true}});
   const directAllocated=await db.sesameExportShipment.aggregate({where:{OR:[{tradeRef:trade.tradeRef,directThirdParty:true},{fzcoSaleTradeRef:trade.tradeRef,triparty:true}]},_sum:{totalWeightKg:true}});
-  const ownership=trade.direction==='BUY'?await db.sesameOwnershipEntry.aggregate({where:{tradeRef:trade.tradeRef,truckId:null},_sum:{quantityMt:true}}):null;
-  if(n(allocated._sum.allocatedQtyMt)*1000+n(directAllocated._sum.totalWeightKg)+n(ownership?._sum.quantityMt)*1000+total>quantityUnitToKg(n(c.contractualQtyMt)+n(c.quantityToleranceMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds remaining trade quantity');
+  if(n(allocated._sum.allocatedQtyMt)*1000+n(directAllocated._sum.totalWeightKg)+total>quantityUnitToKg(n(c.contractualQtyMt)+n(c.quantityToleranceMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds remaining trade quantity');
   if(!direct&&entity==='PAK'&&c.warehouseAllocations.length){const a=c.warehouseAllocations.find(a=>a.warehouseName===input.warehouseName);if(!a)throw new Error('Warehouse is not allocated to this trade');const used=await db.outboundDispatch.aggregate({where:{tradeRef:trade.tradeRef,warehouseName:input.warehouseName},_sum:{allocatedQtyMt:true}});if(n(used._sum.allocatedQtyMt)*1000+total>quantityUnitToKg(n(a.qtyMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds the trade warehouse allocation');}
-  if(direct){await db.counterparty.findUniqueOrThrow({where:{id:direct.holderId}});if(trade.direction==='SELL')await assertCustody(db,code,grade,total/1000,{holderId:direct.holderId,location:direct.dispatchLocation});}
+  if(direct)await db.counterparty.findUniqueOrThrow({where:{id:direct.holderId}});
   if(!direct&&entity==='FZCO')throw new Error(FZCO_NO_PAKISTAN_WAREHOUSE);
   if(!direct&&entity==='PAK'){
    const available=await processingAvailability(db,code,input.warehouseName,grade,trade.tradeRef);if(total>available.availableKg+.001)throw new Error(`Insufficient ${grade} at ${input.warehouseName} (${(available.availableKg/1000).toFixed(3)} MT free after open sales and processing)`);
@@ -133,9 +131,7 @@ export async function exportAction(id:string,revision:number,actor:string,action
    if(!s.directThirdParty&&n(s.totalWeightKg)>stock*1000+.001)throw new Error('Physical grade stock no longer covers this shipment');
    if(s.directThirdParty){
     if(s.sourcePurchaseTradeRef)await thirdPartySource(db,{tradeRef:s.sourcePurchaseTradeRef,holderId:s.holderId!,location:s.dispatchLocation!,code:s.trade.commodity.code,grade,quantityKg:n(s.totalWeightKg),excludeShipmentId:s.id});
-    if(!s.holderId)throw new Error('Confirm the stock holder before releasing this legacy shipment');
-    if(s.trade.direction==='SELL')await assertCustody(db,s.trade.commodity.code,grade,n(s.totalWeightKg)/1000,{holderId:s.holderId,location:s.dispatchLocation??''},true);
-    await db.sesameOwnershipEntry.create({data:{tradeRef:s.tradeRef,commodityCode:s.trade.commodity.code,fromEntity:s.trade.direction==='SELL'?'FZCO':null,toEntity:s.trade.direction==='BUY'?'FZCO':null,holderId:s.holderId,holderLocation:s.dispatchLocation,quantityMt:n(s.totalWeightKg)/1000,truckId:s.trucks[0].id,recordedBy:actor,documentRef:s.deliveryOrderNo,ownershipDate:new Date()}});
+    if(!s.holderId)throw new Error('Record the third-party holder before releasing this shipment');
    }
    for(const t of s.trucks){if(t.saleReleasedAt)throw new Error('Container already released');if(!s.directThirdParty&&t.executionEntity==='FZCO')await releaseFzcoOwnership(db,t.id,actor);await db.pendingTruck.update({where:{id:t.id},data:{saleReleasedAt:new Date(),saleReleasedBy:actor}});await db.outboundDispatch.updateMany({where:{gatepassNo:t.gatepassNo,status:'AT_GATE'},data:{status:'RELEASED',doRef:s.deliveryOrderNo!,dispatchDate:new Date()}});}
    data.status='RELEASED';data.releasedAt=new Date();

@@ -30,7 +30,7 @@ import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
 import { cn } from "@/lib/utils";
 import { isSesameCommodity } from "@/lib/sesame";
-import { FzcoOverview, FzcoTrucks, OwnershipTrades, SesameInventory, SesamePositions } from "@/components/execution/sesame-entity-panels";
+import { FzcoBook, FzcoOverview, FzcoTrucks, SesameInventory, SesamePositions } from "@/components/execution/sesame-entity-panels";
 
 export function ExecutionShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -102,7 +102,6 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         { href: "/execution/prices", label: "Daily Prices", icon: <TrendingUp className="h-4 w-4" /> },
         { href: "/execution/inventory", label: "Inventory", icon: <Warehouse className="h-4 w-4" /> },
         { href: "/execution/positions", label: "Positions", icon: <LineChart className="h-4 w-4" /> },
-        ...(sesame ? [{ href: "/execution/ownership", label: "Ownership Transfers", icon: <BookOpen className="h-4 w-4" /> }] : []),
         { href: "/execution/movements", label: "Truck Movements", icon: <Truck className="h-4 w-4" /> },
         { href: "/execution/shifting", label: "Internal Shifting", icon: <MoveRight className="h-4 w-4" /> },
         ...(!fzco ? [{href:"/execution/quality",label:"Quality and Invoice",icon:<Warehouse className="h-4 w-4" />}]:[]),
@@ -159,7 +158,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
   if (sesame && pathname === "/execution/inventory") content = <SesameInventory />;
   if (fzco && pathname === "/execution") content = <FzcoOverview />;
   if (fzco && pathname === "/execution/movements") content = <FzcoTrucks />;
-  if (fzco && (pathname === "/execution/contracts" || /^\/execution\/(purchase-delivered|purchase-spot|sales)\//.test(pathname))) content = <div className="kastros-desk-page"><OwnershipTrades allTrades commodityCode={active.code} entity={entity} /></div>;
+  if (fzco && (pathname === "/execution/contracts" || /^\/execution\/(purchase-delivered|purchase-spot|sales)\//.test(pathname))) content = <div className="kastros-desk-page"><FzcoBook commodityCode={active.code} /></div>;
   if (fzco && ["/execution/prices", "/execution/shifting", "/execution/warehouses"].includes(pathname)) content = <div className="kastros-desk-page"><p>This page is managed in the Pakistan Sesame desk.</p><button className="kastros-btn-primary" onClick={() => selectEntity("PAK", pathname === "/execution/ledgers" ? "/execution/ledgers?entity=FZCO" : pathname)}>Open Pakistan desk</button></div>;
   return (
     <AppShell

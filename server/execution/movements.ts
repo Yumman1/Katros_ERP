@@ -102,7 +102,7 @@ export async function createInboundReceipt(
   },
 ): Promise<InboundReceipt> {
   const contract = await getContractByRef(input.tradeRef);
-  if (contract?.paperOwnership) throw new Error("Use the Sesame ownership workflow for this trade");
+  if (contract?.paperOwnership) throw new Error("Use the FZCO truck workflow for this trade");
   if (!contract) throw new Error("Locked contract not found");
   assertWithinDeliveryWindow(
     contract,

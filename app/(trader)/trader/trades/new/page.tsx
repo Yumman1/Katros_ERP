@@ -1564,7 +1564,7 @@ function BookTradeForm() {
                       : "Select a commodity to see spare storage capacity for its division."}
               </p>
             </Field>}
-            {paperOwnership && <p className="text-sm text-muted-foreground">Ownership is confirmed in Sesame execution. No warehouse allocation is required for this trade.</p>}
+            {paperOwnership && <p className="text-sm text-muted-foreground">FZCO trades have no warehouse allocation. Purchases stay open until FZCO pays the supplier or Kastros Pakistan. Sales stay open until the buyer pays FZCO.</p>}
           </div>
         </Section>
 

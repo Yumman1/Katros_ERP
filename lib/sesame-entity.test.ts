@@ -4,6 +4,7 @@ import {
   canonicalizeInternalPakSale,
   closesOnPayment,
   FZCO_NO_PAKISTAN_WAREHOUSE,
+  FZCO_NO_PAPER_OWNERSHIP,
   internalPakSale,
   isFzcoBuyFromPakistan,
   paperTrade,
@@ -19,6 +20,7 @@ const pakExternal = { tradingEntity: "Kastros PAK" };
 
 test("FZCO does not hold inventory in Pakistan warehouses", () => {
   assert.match(FZCO_NO_PAKISTAN_WAREHOUSE, /does not hold inventory in Pakistan warehouses/);
+  assert.match(FZCO_NO_PAPER_OWNERSHIP, /does not confirm paper ownership/);
 });
 
 test("internal Pakistan → FZCO sale is a physical trade, not paper ownership", () => {
@@ -46,12 +48,12 @@ test("FZCO buy from Pakistan canonicalizes to the Pakistan warehouse sale", () =
   assert.equal(already.direction, "SELL");
 });
 
-test("payment closing applies only to the internal PAK sale and FZCO international sales", () => {
+test("payment closing applies to the internal PAK sale and all FZCO books", () => {
   assert.equal(closesOnPayment(sesame, "SELL", "INTERNATIONAL", pakSellFzco), true);
   assert.equal(closesOnPayment(sesame, "SELL", "INTERNATIONAL", fzcoSell), true);
-  assert.equal(closesOnPayment(sesame, "SELL", "LOCAL", fzcoSell), false);
+  assert.equal(closesOnPayment(sesame, "SELL", "LOCAL", fzcoSell), true);
   assert.equal(closesOnPayment(sesame, "SELL", "INTERNATIONAL", pakExternal), false);
-  assert.equal(closesOnPayment(sesame, "BUY", "INTERNATIONAL", fzcoBuy), false);
+  assert.equal(closesOnPayment(sesame, "BUY", "INTERNATIONAL", fzcoBuy), true);
   assert.equal(closesOnPayment("CORN", "SELL", "INTERNATIONAL", pakSellFzco), false);
 });
 
@@ -63,7 +65,8 @@ test("internal payment-open sales stay on the book after the stock has left", ()
   assert.equal(sesameBookQty({ ...unshipped, asEntity: "PAK" }), 2);
   assert.equal(sesameBookQty({ ...unshipped, asEntity: "FZCO" }), 0);
   assert.equal(sesameBookQty({ ...shipped, contractStatus: "Close", asEntity: "PAK" }), 0);
-  assert.equal(sesameBookQty({ quantityMt: 4, openMt: 0, receivedMt: 4, internal: false, closeOnPayment: true, contractStatus: "Open", asEntity: "FZCO" }), 0);
+  assert.equal(sesameBookQty({ quantityMt: 4, openMt: 0, receivedMt: 4, internal: false, closeOnPayment: true, contractStatus: "Open", asEntity: "FZCO" }), 4);
+  assert.equal(sesameBookQty({ quantityMt: 4, openMt: 0, receivedMt: 4, internal: false, closeOnPayment: true, contractStatus: "Close", asEntity: "FZCO" }), 0);
 });
 
 test("payment-close helper waits for BL invoices and shipped quantity", () => {

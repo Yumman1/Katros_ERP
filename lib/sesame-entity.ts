@@ -4,7 +4,10 @@ export type SesameEntity = "PAK" | "FZCO";
 export const ENTITY_NAMES = { PAK: "Kastros Pakistan", FZCO: "Dubai FZCO" } as const;
 /** FZCO is a books entity. It does not own bags sitting in a Pakistan warehouse. */
 export const FZCO_NO_PAKISTAN_WAREHOUSE =
-  "FZCO does not hold inventory in Pakistan warehouses. Ship Pakistan stock on a Pakistan sale (triparty) or confirm FZCO stock with a third-party holder.";
+  "FZCO does not hold inventory in Pakistan warehouses. Ship Pakistan stock on a Pakistan sale (triparty) or record a third-party truck movement.";
+/** FZCO has no paper/off-site ownership desk. Purchases and sales stay open until paid. */
+export const FZCO_NO_PAPER_OWNERSHIP =
+  "FZCO does not confirm paper ownership. Open purchases close when FZCO pays Pakistan or the supplier. Open sales close when the buyer pays FZCO.";
 export function tradeEntity(params: unknown): SesameEntity {
   return sesameTradingEntity((params ?? {}) as Record<string, string | number | null>) === "Kastros FZCO" ? "FZCO" : "PAK";
 }
@@ -41,9 +44,9 @@ export function canonicalizeInternalPakSale(
   return { direction: direction === "BUY" ? "BUY" : "SELL", params: next, internalPakSale: false };
 }
 /**
- * Paper (ownership-only) trades are FZCO's own external purchases. An internal
- * Pakistan → FZCO sale is a normal physical Pakistan sale: stock leaves a
- * Pakistan warehouse through the triparty gate-out and is shipped to FZCO's buyer.
+ * FZCO trades skip Pakistan warehouse allocation. They are open-purchase /
+ * open-sale books that close on payment, not paper inventory confirmation.
+ * An internal Pakistan → FZCO sale is a physical Pakistan warehouse sale.
  */
 export function paperTrade(
   code: string,
@@ -58,8 +61,8 @@ export function internalPakSale(code: string, direction: string, params: unknown
   return isSesameCommodity(code) && direction === "SELL" && tradeEntity(params) === "PAK" && internalEntity(params) === "FZCO";
 }
 /**
- * FZCO external purchases and sales settle independently through payment.
- * Pakistan → FZCO retains its existing payment-and-shipment closing rule.
+ * FZCO purchases and sales stay on the book until paid. Pakistan → FZCO
+ * internals close when FZCO pays Kastros Pakistan.
  */
 export function closesOnPayment(code: string, direction: string, tradeScope: string | null | undefined, params: unknown): boolean {
   if (!isSesameCommodity(code)) return false;
@@ -84,7 +87,8 @@ export function ownershipSides(direction: string, params: unknown) {
 /**
  * Internal PAK → FZCO sales stay on the open book until payment closes them.
  * Pakistan keeps the full unpaid sale even after the stock has left. FZCO only
- * books the matching purchase once Pakistan has shipped.
+ * books the matching purchase once Pakistan has shipped. External FZCO
+ * purchases and sales stay at full quantity until the payment close.
  */
 export function sesameBookQty(input: {
   quantityMt: number;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {prisma} from '../server/db';
 import {assertCustody} from '../server/execution/fzco-custody';
-import {confirmOwnership,sesameBook} from '../server/execution/sesame-ownership';
+import {sesameBook} from '../server/execution/sesame-ownership';
 import {logFzcoIntake,assignFzcoIntake} from '../server/execution/fzco-intake';
 import {exportAction,exportReceipt} from '../server/execution/sesame-export';
 import {createInternationalPurchase} from '../server/finance/international-purchase';
@@ -19,8 +19,6 @@ async function main(){
  await prisma.executionContract.create({data:{tradeId:t.id,tradeRef:ref,contractDate:new Date(),direction:side,executionProfile:side==='BUY'?'PURCHASE_DELIVERED':'SALE_EX_WAREHOUSE',tradeScope:'INTERNATIONAL',incoterms:'FOB',commodityCode:'SES',commodityName:'Sesame',counterpartyName:side==='BUY'?supplier.name:buyer.name,counterpartyCode:side==='BUY'?supplier.code:buyer.code,quantityUnit:'MT',contractualQtyMt:20,openQtyMt:20,qualityTolerances:{},currency:'PKR',traderName:'Test',lockedAt:new Date(),lockedBy:'Test',ratePerKg:rate,paperOwnership:true,executionEntity:'FZCO',closeOnPayment:true}});return t;
  }
  const purchase=await trade('PURCHASE','BUY',280),sale=await trade('SALE','SELL',560);
- await confirmOwnership({tradeRef:purchase.tradeRef,quantityMt:10,entity:'FZCO',actor:'Test',holderId:supplier.id,holderLocation:'Supplier store',documentRef:'OWN-1',ownershipDate:new Date(),requestKey:randomUUID()});
- await confirmOwnership({tradeRef:purchase.tradeRef,quantityMt:10,entity:'FZCO',actor:'Test',holderId:supplier.id,documentRef:'OWN-2',ownershipDate:new Date(),requestKey:randomUUID()});
  const contract=(ref:string)=>prisma.executionContract.findUniqueOrThrow({where:{tradeRef:ref}});
  const pos=async()=>(await sesameBook('SES')).positions.find(p=>p.entity==='FZCO')!;
  assert.equal((await contract('PURCHASE')).contractStatus,'Open');assert.equal((await pos()).openBuyMt,20);
@@ -34,7 +32,7 @@ async function main(){
  for(const action of ['generate','trader','execution','finance','release'] as const)s=await exportAction(s.id,s.revision,'Test',action);
  assert.equal((await contract('PURCHASE')).contractStatus,'Open');assert.equal((await contract('SALE')).contractStatus,'Open');assert.equal((await pos()).openBuyMt,20);assert.equal((await pos()).openSellMt,20);
  s=await exportAction(s.id,s.revision,'Test','bl',{blNo:'BL1'});
- assert.equal(await prisma.counterpartyLedgerEntry.count({where:{tradeRef:'PURCHASE',entryType:'DEBIT'}}),2);
+ assert.equal(await prisma.counterpartyLedgerEntry.count({where:{tradeRef:'PURCHASE',entryType:'DEBIT'}}),0);
  async function pay(amount:number,shipment?:string){const v=await createInternationalPurchase({tradeRef:'PURCHASE',counterpartyId:supplier.id,exportShipmentId:shipment,amount,voucherDate:new Date(),entity:'FZCO',actor:'Test',userId:u.id,code:'SES'});const row=await prisma.voucher.findUniqueOrThrow({where:{voucherNo:v.voucherNo}});await approveVoucher(row.id,'Finance',undefined,randomUUID(),{method:'Cash'});}
  // Supplier payment is independent of the buyer's payment.
  await pay(10000,s.id);assert.equal((await contract('PURCHASE')).contractStatus,'Open');

@@ -5,7 +5,6 @@ import { prisma } from "../server/db";
 import { appRouter } from "../server/routers/_app";
 import { assignCommodityTrader } from "../server/commodity-assignments";
 import { SESAME_DEFAULTS } from "../lib/sesame";
-import { approveVoucher } from "../server/finance/vouchers";
 import { pakistanAvailable } from "../server/execution/sesame-stock";
 
 async function main() {
@@ -34,7 +33,7 @@ async function main() {
   console.log("PASS: Pakistan physical receipt, 100 MT");
   const transfer = await book("BUY", "FZCO", 40, "PAK");
   await dubai.execution.lockOpenTrade({ tradeRef: transfer.tradeRef });
-  await assert.rejects(() => head.sesameExecution.confirmOwnership({ tradeRef: transfer.tradeRef, quantityMt: 40, warehouseName: "Pakistan Store" }), /triparty|does not hold inventory|ownership confirmation/);
+  await assert.rejects(() => head.sesameExecution.confirmOwnership({ tradeRef: transfer.tradeRef, quantityMt: 40, warehouseName: "Pakistan Store" }), /paper ownership|does not hold inventory|triparty/);
   let state = await pak.sesameExecution.book();
   assert.equal(state.positions[0].ownedMt, 100);
   assert.equal(state.positions[0].physicalInPakistanMt, 100);
@@ -45,19 +44,14 @@ async function main() {
   await assert.rejects(() => dubai.sesameExecution.loadTruck({ tradeRef: sale.tradeRef, truckNo: "FZCO-OUT", transporterName: "Test Transport", weightKg: 10000 }), /does not hold inventory/);
   assert.equal((await pak.sesameExecution.book()).positions[0].ownedMt, 100);
   const external = await book("BUY", "FZCO", 2); await dubai.execution.lockOpenTrade({ tradeRef: external.tradeRef });
-  await dh.sesameExecution.confirmOwnership({ tradeRef: external.tradeRef, quantityMt: 2, holderId: cp.id, holderLocation: "Karachi store", documentRef: "OWN-DOC-1", ownershipDate: new Date() });
+  await assert.rejects(() => dh.sesameExecution.confirmOwnership({ tradeRef: external.tradeRef, quantityMt: 2, holderId: cp.id, holderLocation: "Karachi store", documentRef: "OWN-DOC-1", ownershipDate: new Date() }), /paper ownership/);
   state = await pak.sesameExecution.book();
   assert.equal(state.positions[0].physicalInPakistanMt, 100);
-  assert.equal(state.positions[1].ownedMt, 2);
-  const notes = await dubai.execution.openSettlementNotes({ counterpartyId: cp.id, side: "BUY" });
-  assert.ok(notes.some(n => n.tradeRef === external.tradeRef && n.noteRef.startsWith("OWN-")));
-  const note = notes.find(n => n.tradeRef === external.tradeRef)!;
-  const payment = await dubai.execution.createVoucher({ counterpartyId: cp.id, side: "BUY", noteRef: note.noteRef, amountPkr: note.amountPkr, method: "Cash", reference: "FZCO-PURCHASE-PAY" });
-  await approveVoucher(payment.id, "Test Finance");
-  assert.ok(!(await dubai.execution.openSettlementNotes({ counterpartyId: cp.id, side: "BUY" })).some(n => n.noteRef === note.noteRef));
+  assert.equal(state.positions[1].ownedMt, 0);
+  assert.equal(state.positions[1].openBuyMt, 2);
   const csv = (await dubai.execution.exportTradeFileCsv({})).csv;
   assert.ok(csv.includes(sale.tradeRef) && !csv.includes(purchase.tradeRef));
   assert.equal((await caller(employee, "CORN").execution.pendingTrucks()).length, 0);
-  console.log("PASS: Pakistan physical is independent of FZCO; internals cannot take warehouse stock; paper FZCO purchases stay off-site");
+  console.log("PASS: Pakistan physical is independent of FZCO; internals cannot take warehouse stock; FZCO has no paper ownership");
 }
 main().finally(() => prisma.$disconnect()).catch(error => { console.error(error); process.exitCode = 1; });

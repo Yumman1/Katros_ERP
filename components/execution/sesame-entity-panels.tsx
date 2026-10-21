@@ -7,7 +7,7 @@ import {SesameGradeStockView} from "./sesame-grade-stock";
 import { useState } from "react";
 import Link from "next/link";
 import { trpc } from "@/lib/trpc/client";
-import { ENTITY_NAMES, type SesameEntity } from "@/lib/sesame-entity";
+import { ENTITY_NAMES, sesameBookQty, type SesameEntity } from "@/lib/sesame-entity";
 import { useExecutionCommodityDesk } from "./commodity-desk-provider";
 import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
@@ -34,7 +34,7 @@ export function SesamePositionView({ commodityCode, canEdit = true }: { commodit
   if (isLoading) return <p>Loading Sesame positions…</p>;
   if (error) return <p role="alert">{error.message}</p>;
   return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">Sesame positions — Pakistan and Dubai FZCO</h2>
-    <p className="text-sm text-muted-foreground">Pakistan holds physical inventory. Dubai FZCO books open purchases and sales independently; a Pakistan → FZCO internal sale is an open purchase on FZCO and an open sale on Pakistan until paid.</p>
+    <p className="text-sm text-muted-foreground">Pakistan holds physical inventory. Dubai FZCO is a book of open purchases and sales: a sale closes when the buyer pays FZCO; a purchase closes when FZCO pays Kastros Pakistan or the supplier.</p>
     <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>Position (MT)</th>{data?.positions.map(p => <th className={cell} key={p.entity}>{ENTITY_NAMES[p.entity]}</th>)}</tr></thead><tbody>
       {([['Physical inventory (Pakistan)','ownedMt'],['Open purchases','openBuyMt'],['Open sales','openSellMt'],['Net position','netPositionMt']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{key==='ownedMt'&&p.entity==='FZCO'?'—':qty(p[key])}{key==='netPositionMt'&&p.entity==='FZCO'?(p[key]>0?' Long':p[key]<0?' Short':' Balanced'):''}</td>)}</tr>)}
       {([['Entry rate (PKR / maund)','entryRatePkrPerMaund'],['Market rate (PKR / maund)','marketRatePkrPerMaund'],['In / out (PKR / maund)','inOutPkrPerMaund'],['In / out value (PKR)','inOutValuePkr'],['In / out value (USD)','inOutValueUsd']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{p[key] == null ? "—" : qty(p[key])}</td>)}</tr>)}
@@ -66,59 +66,45 @@ export function SesameInventoryView({
 }) {
   const { data, isLoading, error } = useBook(commodityCode);
   const p = data?.positions.find(p => p.entity === entity);
-  if (isLoading) return <p>Loading ownership inventory…</p>;
+  if (isLoading) return <p>Loading inventory…</p>;
   if (error) return <p role="alert">{error.message}</p>;
   return <div className="kastros-desk-page space-y-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h1 className="text-2xl font-semibold">{ENTITY_NAMES[entity]} Sesame inventory</h1>
-        <p className="text-sm text-muted-foreground">{entity === "FZCO" ? "Open purchases and sales for Dubai FZCO. Internal Pakistan sales appear here as purchases until the BL is paid. FZCO does not hold warehouse stock in Pakistan." : "Physical sesame in Pakistan warehouses, like corn: open sales are already booked (not free to sell). Triparty is a Pakistan sale leaving the warehouse."}</p>
+        <p className="text-sm text-muted-foreground">{entity === "FZCO" ? "Open purchases stay until FZCO pays Kastros Pakistan or the supplier. Open sales stay until the buyer pays FZCO. Net is purchases minus sales. FZCO does not hold warehouse or paper stock." : "Physical sesame in Pakistan warehouses, like corn: open sales are already booked (not free to sell). Triparty is a Pakistan sale leaving the warehouse."}</p>
       </div>
       {onSelectEntity && <fieldset><legend className="mb-2 text-xs text-muted-foreground">Sesame entity</legend><div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">{(["PAK", "FZCO"] as const).map(value => <button key={value} type="button" aria-pressed={entity === value} onClick={() => onSelectEntity(value)} className={`rounded-md px-3 py-2 text-xs ${entity === value ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}>{value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}</button>)}</div></fieldset>}
     </div>
     <div className="grid gap-4 md:grid-cols-4">{((entity==="FZCO"?[['Open purchases',p?.openBuyMt],['Open sales',p?.openSellMt],['Net open position',p?.netPositionMt]]:[['Physical',p?.ownedMt],['Open purchases',p?.openBuyMt],['Open sales',p?.openSellMt],['Free to sell',p?.freeMt]]) as [string,number|undefined][]).map(([label,value]) => <section key={label} className="kastros-card p-4"><div className="text-sm text-muted-foreground">{label}</div><div className="text-2xl font-semibold mt-2">{qty(value ?? 0)} MT</div></section>)}</div>
     {entity === "PAK" && <div className="kastros-card overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Pakistan warehouse','Physical MT','Open sale / booked MT','Free to sell MT'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{data?.warehouses.map(w => <tr key={w.name}><td className={cell}>{w.name}</td><td className={cell}>{qty(w.quantityMt)}</td><td className={cell}>{qty(w.bookedMt)}</td><td className={cell}>{qty(w.freeToSellMt)}</td></tr>)}</tbody></table>{!data?.warehouses.length && <p className="p-5">No physical Sesame receipts yet.</p>}{(data?.unassignedBookedMt ?? 0) > 0 && <p className="px-4 py-3 text-sm text-muted-foreground">{qty(data!.unassignedBookedMt)} MT of open Pakistan sales is not allocated to a warehouse yet, so it is not reserved against any one location.</p>}</div>}
     {entity === "PAK" && <SesameGradeStockView commodityCode={commodityCode}/>}
-    <OwnershipTrades commodityCode={commodityCode} entity={entity} />
+    {entity === "FZCO" && <FzcoBook commodityCode={commodityCode} />}
   </div>;
 }
 
-export function OwnershipTrades({ allTrades = false, commodityCode, entity }: { allTrades?: boolean; commodityCode: string; entity: SesameEntity }) {
-  const { role, isHead } = useTeam();
-  const canConfirm = role != null && canActOnDepartment(role, isHead, "EXECUTION");
+export function FzcoBook({ commodityCode }: { commodityCode: string }) {
+  const { role } = useTeam();
   const canReview = role === "EXECUTION" || role === "CEO" || role === "ADMIN";
   const { data, error, isLoading } = useBook(commodityCode);
-  const [ref, setRef] = useState("");
-  const [amount, setAmount] = useState("");
-  const [warehouse, setWarehouse] = useState("");
-  const parties=trpc.sesameExport.directParties.useQuery(undefined,{enabled:entity==='FZCO'&&canReview});
-  const [holderId,setHolder]=useState(''),[documentRef,setDocument]=useState(''),[ownershipDate,setDate]=useState('');
-  const [requestKey,setKey]=useState(()=>crypto.randomUUID());
-  const utils = trpc.useUtils();
-  const save = trpc.sesameExecution.confirmOwnership.useMutation({ onSuccess: () => { setRef(""); setAmount(""); void utils.invalidate(); } });
-  const rows = data?.trades.filter(t => t.submitted && !t.internalEntity && t.entity === entity && (allTrades || (entity === "FZCO" && t.direction === "BUY"))) ?? [];
-  const selected = rows.find(t => t.tradeRef === ref);
-  if (isLoading) return <p>Loading ownership trades…</p>;
+  const rows = data?.trades.filter(t => t.submitted && (t.entity === "FZCO" || t.internalEntity === "FZCO")) ?? [];
+  if (isLoading) return <p>Loading FZCO trades…</p>;
   if (error) return <p role="alert">{error.message}</p>;
-  return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">{allTrades ? "FZCO trades" : "FZCO paper purchases"}</h2>
-    <p className="text-sm text-muted-foreground">External FZCO purchases can confirm off-site ownership. Internal Pakistan → FZCO sales ship through Triparty gate-out and are not confirmed here.</p>
-    <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Trade','Our side','Counterparty','Quantity MT','Ownership confirmed MT','Status','Action'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{rows.map(t => {
-      const side = t.entity === entity ? t.direction : t.direction === "BUY" ? "SELL" : "BUY";
-      const counterparty = t.internalEntity ? ENTITY_NAMES[t.entity === entity ? t.internalEntity : t.entity] : t.counterparty;
-      const canRecord = ["LOCKED", "EXECUTED"].includes(t.status) && !t.internalEntity && entity==="FZCO" && t.direction==="BUY" && t.confirmedMt < t.quantityMt && canConfirm;
-      return <tr key={t.tradeRef}><td className={cell}>{t.tradeRef}{t.entity !== entity && <span className="block text-xs text-subtle">Internal counterpart</span>}</td><td className={cell}>{side}</td><td className={cell}>{counterparty}</td><td className={cell}>{qty(t.quantityMt)}</td><td className={cell}>{qty(t.confirmedMt)}</td><td className={cell}>{t.status}</td><td className={cell}>{t.status === "PENDING" && t.entity === entity && canReview ? <Link href={`/execution/open-trades/${encodeURIComponent(t.tradeRef)}`} className="text-accent-secondary">Review</Link> : canRecord ? <button className="kastros-btn-secondary" onClick={() => { setKey(crypto.randomUUID());setRef(t.tradeRef); setAmount(String(t.quantityMt-t.confirmedMt)); setWarehouse(""); }}>Confirm ownership</button> : t.internalEntity ? "Triparty gate-out" : "—"}</td></tr>;
-    })}</tbody></table></div>{!rows.length && <p className="text-sm text-muted-foreground">No trades for this entity yet.</p>}
-    {selected && <form className="grid gap-3 md:grid-cols-3 border-t border-border pt-4" onSubmit={e => { e.preventDefault(); save.mutate({ tradeRef: ref, quantityMt: Number(amount), warehouseName: warehouse || undefined,requestKey,holderId,documentRef,ownershipDate:new Date(ownershipDate+"T12:00:00+05:00") }); }}>
-      <label className="text-sm">Quantity MT<input className={input} type="number" min="0.000001" step="0.000001" max={selected.quantityMt-selected.confirmedMt} required value={amount} onChange={e => setAmount(e.target.value)} /></label>
-      <><label>Stock holder<select required className={input} value={holderId} onChange={e=>setHolder(e.target.value)}><option value="">Select holder</option>{parties.data?.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Supporting document / reference<input required className={input} value={documentRef} onChange={e=>setDocument(e.target.value)}/></label><label>Ownership date<input required type="date" className={input} value={ownershipDate} onChange={e=>setDate(e.target.value)}/></label></>
-      <div className="flex gap-2 items-end"><button className="kastros-btn-primary" disabled={save.isPending}>Confirm {ref}</button><button type="button" className="kastros-btn-secondary" onClick={() => setRef("")}>Cancel</button></div>
-    </form>}{save.error && <p role="alert" className="text-destructive">{save.error.message}</p>}
+  return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">FZCO open book</h2>
+    <p className="text-sm text-muted-foreground">Purchases stay open until FZCO pays Kastros Pakistan or the supplier. Sales stay open until the buyer pays FZCO. There is no paper or off-site ownership confirmation.</p>
+    <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Trade','FZCO side','Counterparty','Quantity MT','On book MT','Status','Action'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{rows.map(t => {
+      const side = t.entity === "FZCO" ? t.direction : t.direction === "BUY" ? "SELL" : "BUY";
+      const counterparty = t.internalEntity ? ENTITY_NAMES[t.entity === "FZCO" ? t.internalEntity : t.entity] : t.counterparty;
+      const bookMt = sesameBookQty({ quantityMt: t.quantityMt, openMt: t.openMt, receivedMt: t.receivedMt, internal: t.internalEntity != null, closeOnPayment: t.closeOnPayment, contractStatus: t.contractStatus, asEntity: "FZCO" });
+      const paid = t.contractStatus === "Close";
+      return <tr key={t.tradeRef}><td className={cell}>{t.tradeRef}{t.internalEntity ? <span className="block text-xs text-subtle">Internal Pakistan → FZCO</span> : null}</td><td className={cell}>{side === "BUY" ? "Purchase" : "Sale"}</td><td className={cell}>{counterparty}</td><td className={cell}>{qty(t.quantityMt)}</td><td className={cell}>{qty(bookMt)}</td><td className={cell}>{paid ? "Closed (paid)" : "Open until paid"}</td><td className={cell}>{t.status === "PENDING" && t.entity === "FZCO" && canReview ? <Link href={`/execution/open-trades/${encodeURIComponent(t.tradeRef)}`} className="text-accent-secondary">Review</Link> : "—"}</td></tr>;
+    })}</tbody></table></div>{!rows.length && <p className="text-sm text-muted-foreground">No FZCO purchases or sales yet.</p>}
   </section>;
 }
 
 export function FzcoOverview() {
   const { selectEntity, active } = useExecutionCommodityDesk();
-  return <div className="kastros-desk-page space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold">Dubai FZCO — Sesame execution</h1><button className="kastros-btn-secondary" onClick={() => selectEntity("FZCO", "/execution/ledgers")}>View FZCO USD ledger</button></div><SesamePositions /><OwnershipTrades allTrades commodityCode={active.code} entity="FZCO" /><Link className="kastros-btn-primary inline-block" href="/execution/movements">Manage FZCO truck movements</Link></div>;
+  return <div className="kastros-desk-page space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold">Dubai FZCO — Sesame execution</h1><button className="kastros-btn-secondary" onClick={() => selectEntity("FZCO", "/execution/ledgers")}>View FZCO USD ledger</button></div><SesamePositions /><FzcoBook commodityCode={active.code} /><Link className="kastros-btn-primary inline-block" href="/execution/movements">Manage FZCO truck movements</Link></div>;
 }
 
 export function FzcoTrucks() {
@@ -134,13 +120,16 @@ export function FzcoTrucks() {
   const issue = order.error ?? gate.error ?? release.error ?? credit.error ?? cancel.error ?? error;
   return <div className="kastros-desk-page space-y-5"><h1 className="text-2xl font-semibold">FZCO trucks</h1><SesameExportShipments mode="movement"/><p><Link href="/execution/movements/fzco-entry" target="_blank" className="underline">Open office truck-entry link</Link></p><p className="text-sm text-muted-foreground">Third-party purchases and sales are independent. Pakistan warehouse movements are shown here for reference and managed in Pakistan Execution.</p>
     <FzcoGateAssignment/><FzcoDirectEntry/>{issue && <p className="text-destructive" role="alert">{issue.message}</p>}
-    {canCancel && rows?.some(r => r.saleStage === "AWAITING_BALANCE" && !r.deliveryOrderNo) && <section className="kastros-card p-4"><h2 className="font-semibold">Correct an unapproved load</h2><p className="text-sm text-muted-foreground mb-3">Cancel its reservation before recording the corrected truck.</p>{rows.filter(r => r.saleStage === "AWAITING_BALANCE" && !r.deliveryOrderNo).map(r => <button key={r.truckId} className="kastros-btn-secondary mr-2" disabled={cancel.isPending} onClick={() => { if (window.confirm(`Cancel load ${r.truckNo} and return its reserved quantity to FZCO availability?`)) cancel.mutate({ truckId: r.truckId }); }}>Cancel {r.truckNo}</button>)}</section>}
+    {canCancel && rows?.some(r => r.saleStage === "AWAITING_BALANCE" && !r.deliveryOrderNo) && <section className="kastros-card p-4"><h2 className="font-semibold">Correct an unapproved load</h2><p className="text-sm text-muted-foreground mb-3">Cancel its reservation before recording the corrected truck.</p>{rows.filter(r => r.saleStage === "AWAITING_BALANCE" && !r.deliveryOrderNo).map(r => <button key={r.truckId} className="kastros-btn-secondary mr-2" disabled={cancel.isPending} onClick={() => { if (window.confirm(`Cancel load ${r.truckNo}?`)) cancel.mutate({ truckId: r.truckId }); }}>Cancel {r.truckNo}</button>)}</section>}
     <div className="kastros-card overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Truck','Trade','Amount PKR','Stage','Action'].map(h => <th className={cell} key={h}>{h}</th>)}</tr></thead><tbody>{rows?.map(r => <tr key={r.truckId}><td className={cell}>{r.truckNo}</td><td className={cell}>{r.tradeRef}</td><td className={cell}>{qty(r.saleExpectedPkr ?? 0)}</td><td className={cell}>{r.saleReleasedAt ? "RELEASED" : r.saleStage}</td><td className={cell}><div className="flex flex-wrap gap-2">{!r.saleReleasedAt && r.canGenerateDo && <button className="kastros-btn-secondary" disabled={order.isPending} onClick={() => order.mutate({ truckId: r.truckId })}>Generate DO</button>}{!r.saleReleasedAt && r.canGenerateGatePass && <button className="kastros-btn-secondary" disabled={gate.isPending} onClick={() => gate.mutate({ truckId: r.truckId })}>Generate gate pass</button>}{!r.saleReleasedAt && r.gateOutSlipNo && <button className="kastros-btn-primary" disabled={release.isPending} onClick={() => release.mutate({ truckId: r.truckId })}>Release truck</button>}{r.saleStage === "AWAITING_BALANCE" && !r.canGenerateDo && <button className="kastros-btn-secondary" disabled={credit.isPending} onClick={() => credit.mutate({ truckId: r.truckId })}>Request credit clearance</button>}{r.deliveryOrderNo && <Link className="text-accent-secondary" href={`/execution/print/delivery-order/${r.truckId}`} target="_blank">Print DO</Link>}{r.gateOutSlipNo && <Link className="text-accent-secondary" href={`/execution/print/gate-out-slip/${r.truckId}`} target="_blank">Print gate pass</Link>}</div></td></tr>)}</tbody></table>{!rows?.length && <p className="p-5">No FZCO trucks yet.</p>}</div>
   </div>;
 }
 
 export function SesameInternalLedger({ entity }: { entity?: SesameEntity }) {
   const { data } = useBook();
-  const internal = data?.trades.filter(t => t.internalEntity && t.confirmedMt > 0) ?? [];
-  return <section className="kastros-card p-5 space-y-3"><h2 className="text-lg font-semibold">Internal ownership ledger</h2><p className="text-sm text-muted-foreground">Confirmed internal purchases and sales, at net trade value in the quoted currency. Payment vouchers remain in the accounts above.</p><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Trade','Entity','Side','Confirmed MT','Net trade value'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{internal.flatMap(t => (["PAK","FZCO"] as const).filter(e => !entity || e === entity).map(e => <tr key={`${t.tradeRef}-${e}`}><td className={cell}>{t.tradeRef}</td><td className={cell}>{ENTITY_NAMES[e]}</td><td className={cell}>{e === t.entity ? t.direction : t.direction === "BUY" ? "SELL" : "BUY"}</td><td className={cell}>{qty(t.confirmedMt)}</td><td className={cell}>{qty(t.confirmedValue)} {t.currency}</td></tr>))}</tbody></table></div>{!internal.length && <p className="text-sm text-muted-foreground">No confirmed internal transfers yet.</p>}</section>;
+  const internal = data?.trades.filter(t => t.internalEntity && t.submitted) ?? [];
+  return <section className="kastros-card p-5 space-y-3"><h2 className="text-lg font-semibold">Internal Pakistan → FZCO book</h2><p className="text-sm text-muted-foreground">Pakistan open sale and FZCO open purchase on the same physical trade. The book drops when FZCO pays Kastros Pakistan.</p><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Trade','Entity','Side','On book MT','Status'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{internal.flatMap(t => (["PAK","FZCO"] as const).filter(e => !entity || e === entity).map(e => {
+    const bookMt = sesameBookQty({ quantityMt: t.quantityMt, openMt: t.openMt, receivedMt: t.receivedMt, internal: true, closeOnPayment: t.closeOnPayment, contractStatus: t.contractStatus, asEntity: e });
+    return <tr key={`${t.tradeRef}-${e}`}><td className={cell}>{t.tradeRef}</td><td className={cell}>{ENTITY_NAMES[e]}</td><td className={cell}>{e === t.entity ? t.direction : t.direction === "BUY" ? "SELL" : "BUY"}</td><td className={cell}>{qty(bookMt)}</td><td className={cell}>{t.contractStatus === "Close" ? "Closed (paid)" : "Open until paid"}</td></tr>;
+  }))}</tbody></table></div>{!internal.length && <p className="text-sm text-muted-foreground">No internal Pakistan → FZCO trades yet.</p>}</section>;
 }
