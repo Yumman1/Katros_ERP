@@ -60,7 +60,7 @@ function filterInput(filter: TradeFilter) {
 
 export default function MyTradesPage() {
   const desk = useCommodityDesk();
-  const deskInput = { commodityId: desk.active?.id };
+  const deskInput = desk.query;
   const [filter, setFilter] = useState<TradeFilter>("ALL");
   const [editRef, setEditRef] = useState<string | null>(null);
   const [cancelRef, setCancelRef] = useState<string | null>(null);

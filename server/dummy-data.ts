@@ -1,4 +1,5 @@
 import { isSesameCommodity } from "@/lib/sesame";
+import { presentTraderBook, type SesameEntity } from "@/lib/sesame-entity";
 import { addDays } from "date-fns";
 import {
   getMergedCommodities,
@@ -758,18 +759,18 @@ export async function mockTradeByRefGlobal(tradeRef: string): Promise<MockTrader
   return row ? withDeskMtm(tradeRowToMock(row)) : null;
 }
 
-export async function mockTraderDeskSummary(traderName: string, commodityId?: string) {
+export async function mockTraderDeskSummary(traderName: string, commodityId?: string, entity?: "PAK" | "FZCO") {
   const { buildTraderDeskSummary } = await import("@/server/trader-book");
-  return buildTraderDeskSummary(traderName, commodityId);
+  return buildTraderDeskSummary(traderName, commodityId, entity);
 }
 
-export async function mockTraderExposure(traderName: string, commodityId?: string) {
+export async function mockTraderExposure(traderName: string, commodityId?: string, entity?: "PAK" | "FZCO") {
   const { buildTraderExposure } = await import("@/server/trader-book");
-  return buildTraderExposure(traderName, commodityId);
+  return buildTraderExposure(traderName, commodityId, entity);
 }
 
-export async function mockTraderActionItems(traderName: string, commodityId?: string) {
-  const trades = await mockTraderTrades(canonicalTraderName(traderName), { commodityId });
+export async function mockTraderActionItems(traderName: string, commodityId?: string, entity?: SesameEntity) {
+  const trades = presentTraderBook(await mockTraderTrades(canonicalTraderName(traderName), { commodityId }), entity);
   const items: { id: string; type: string; message: string; tradeRef: string; priority: "high" | "medium" | "low" }[] = [];
   for (const t of trades) {
     if (t.tradeStatus === TradeStatus.PENDING && t.pendingTraderReview) {

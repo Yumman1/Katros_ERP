@@ -1,6 +1,7 @@
 "use client";
 import { isSesameCommodity, sesameFields, isPercentagePayment, sesameTradingEntity } from "@/lib/sesame";
-import { paperTrade } from "@/lib/sesame-entity";
+import { paperTrade, tradeEntity } from "@/lib/sesame-entity";
+import { useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -57,6 +58,7 @@ export function OpenTradeDetail({
   const isLockedMode = mode === "locked";
   const router = useRouter();
   const utils = trpc.useUtils();
+  const { entity: deskEntity } = useExecutionCommodityDesk();
   const { role, isHead } = useTeam();
   const isExecutionUser = role === Role.EXECUTION || role === Role.ADMIN;
   const isExecutionHead = role != null && canActOnDepartment(role, isHead, "EXECUTION");
@@ -174,6 +176,7 @@ export function OpenTradeDetail({
     setSaved(false);
   }, [trade]);
 
+  const lockOnThisDesk = !trade || !isSesameCommodity(trade.commodity.code, trade.commodity.name) || tradeEntity(trade.tradeParams) === deskEntity;
   const canLock =
     isExecutionUser &&
     executionCanLockOpenTrade({
@@ -181,6 +184,7 @@ export function OpenTradeDetail({
       pendingTraderPrice: trade?.pendingTraderPrice,
       requiresWarehouse,
       warehouseSplitApproved: trade?.warehouseSplitApproved,
+      lockOnThisDesk,
     });
 
   const ro = !canEdit;

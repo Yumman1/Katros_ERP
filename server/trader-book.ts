@@ -9,6 +9,7 @@ import { getLockedContracts } from "@/server/execution/contracts";
 import { mockTraderTrades, type MockTraderTrade } from "@/server/dummy-data";
 import { enrichTradesMtmUsd } from "@/server/finance/mtm-usd";
 import { roundUsd, settlementBaseOf } from "@/lib/settlement-usd";
+import { presentTraderBook, type SesameEntity } from "@/lib/sesame-entity";
 
 /** Locked contracts fully fulfilled are treated as executed on the trader book. */
 export async function overlayFulfilledContracts(
@@ -27,10 +28,10 @@ export async function overlayFulfilledContracts(
   );
 }
 
-export async function getTraderBookTrades(traderName: string, commodityId?: string): Promise<MockTraderTrade[]> {
+export async function getTraderBookTrades(traderName: string, commodityId?: string, entity?: SesameEntity): Promise<MockTraderTrade[]> {
   const raw = await mockTraderTrades(canonicalTraderName(traderName), { commodityId });
   const overlaid = await overlayFulfilledContracts(raw);
-  return enrichTradesMtmUsd(overlaid);
+  return enrichTradesMtmUsd(presentTraderBook(overlaid, entity));
 }
 
 export { isActiveTraderTrade } from "@/lib/trade-lifecycle";
@@ -43,8 +44,8 @@ function deliveryOverlapsWeek(t: MockTraderTrade, weekStart: Date, weekEnd: Date
   return t.deliveryStart <= weekEnd && t.deliveryEnd >= weekStart;
 }
 
-export async function buildTraderDeskSummary(traderName: string, commodityId?: string) {
-  const trades = await getTraderBookTrades(traderName, commodityId);
+export async function buildTraderDeskSummary(traderName: string, commodityId?: string, entity?: SesameEntity) {
+  const trades = await getTraderBookTrades(traderName, commodityId, entity);
 
   const totals = committedTradeTotals(trades);
   const commodity = commodityId ? await prisma.commodity.findUnique({ where: { id: commodityId }, select: { code: true } }) : null;
@@ -124,8 +125,8 @@ const EXPOSURE_STATUSES: TradeStatus[] = [
   TradeStatus.PENDING,
 ];
 
-export async function buildTraderExposure(traderName: string, commodityId?: string): Promise<TraderExposureRow[]> {
-  const trades = await getTraderBookTrades(traderName, commodityId);
+export async function buildTraderExposure(traderName: string, commodityId?: string, entity?: SesameEntity): Promise<TraderExposureRow[]> {
+  const trades = await getTraderBookTrades(traderName, commodityId, entity);
   const exposureTrades = trades.filter((t) => EXPOSURE_STATUSES.includes(t.tradeStatus));
 
   const byCommodity = new Map<

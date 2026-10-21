@@ -1,6 +1,6 @@
 import {quantityUnitToKg} from "@/lib/unit-conversion";
 import { isSesameCommodity } from "@/lib/sesame";
-import { canonicalizeInternalPakSale, closesOnPayment, paperTrade, shouldCloseOnFullPayment, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
+import { canonicalizeInternalPakSale, closesOnPayment, deskCounterpartyLabel, deskSide, paperTrade, shouldCloseOnFullPayment, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
 import { entityCounterparty } from "@/server/finance/internal-payments";
 import { sesameSettlementFx } from "@/lib/execution-settlement";
 import { executionDeskTradeRefs } from "./desk-scope";
@@ -1063,7 +1063,7 @@ export async function getContractByRef(tradeRef: string): Promise<ExecutionContr
   return withWarehouseProgress(contractRowToRuntime(row));
 }
 
-export async function getPendingTradesForExecution() {
+export async function getPendingTradesForExecution(asEntity?: SesameEntity) {
   const rows = await prisma.trade.findMany({
     where: {
       tradeStatus: TradeStatus.PENDING,
@@ -1073,21 +1073,29 @@ export async function getPendingTradesForExecution() {
     include: { commodity: true, counterparty: true },
     orderBy: { tradeDate: "desc" },
   });
-  return rows.map((t) => ({
-    tradeRef: t.tradeRef,
-    tradeDate: t.tradeDate,
-    traderName: t.traderName,
-    direction: t.direction,
-    commodityCode: t.commodity.code,
-    commodityName: t.commodity.name,
-    quantity: num(t.quantity),
-    quantityUnit: t.quantityUnit ?? t.commodity.unit,
-    counterpartyName: t.counterparty.name,
-    buyingCategory: t.buyingCategory ?? null,
-    tradeScope: t.tradeScope ?? tradeScopeFromSeed(t.tradeRef),
-    executionProfile: t.executionProfile ?? null,
-    expectedProfile: executionProfileFromTrade(t.direction, t.buyingCategory, t.incoterms),
-  }));
+  return rows.map((t) => {
+    const direction = asEntity
+      ? (deskSide(t.commodity.code, t.direction, t.tradeParams, asEntity) as typeof t.direction)
+      : t.direction;
+    const counterpartyName = asEntity
+      ? deskCounterpartyLabel(t.commodity.code, t.tradeParams, t.counterparty.name, asEntity)
+      : t.counterparty.name;
+    return {
+      tradeRef: t.tradeRef,
+      tradeDate: t.tradeDate,
+      traderName: t.traderName,
+      direction,
+      commodityCode: t.commodity.code,
+      commodityName: t.commodity.name,
+      quantity: num(t.quantity),
+      quantityUnit: t.quantityUnit ?? t.commodity.unit,
+      counterpartyName,
+      buyingCategory: t.buyingCategory ?? null,
+      tradeScope: t.tradeScope ?? tradeScopeFromSeed(t.tradeRef),
+      executionProfile: t.executionProfile ?? null,
+      expectedProfile: executionProfileFromTrade(t.direction, t.buyingCategory, t.incoterms),
+    };
+  });
 }
 
 export async function getDeskSummary(commodityCode?: string, executionEntity?: SesameEntity) {
@@ -1107,7 +1115,7 @@ export async function getDeskSummary(commodityCode?: string, executionEntity?: S
     pendingTrucksUnassigned,
   ] = await Promise.all([
     prisma.executionContract.findMany({ where: contractWhere, include: CONTRACT_INCLUDE }),
-    getPendingTradesForExecution().then(rows => refs ? rows.filter(r => refs.includes(r.tradeRef)) : rows),
+    getPendingTradesForExecution(executionEntity).then(rows => refs ? rows.filter(r => refs.includes(r.tradeRef)) : rows),
     prisma.trade.count({
       where: { ...tradeWhere, tradeStatus: TradeStatus.PENDING, submittedToExecution: true },
     }),

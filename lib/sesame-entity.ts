@@ -60,6 +60,50 @@ export function paperTrade(
 export function internalPakSale(code: string, direction: string, params: unknown): boolean {
   return isSesameCommodity(code) && direction === "SELL" && tradeEntity(params) === "PAK" && internalEntity(params) === "FZCO";
 }
+/** One physical Pakistan sale appears on both sesame desks: SELL in Pakistan, BUY in FZCO. */
+export function belongsToSesameDesk(code: string, params: unknown, asEntity: SesameEntity): boolean {
+  if (!isSesameCommodity(code)) return true;
+  return tradeEntity(params) === asEntity || internalEntity(params) === asEntity;
+}
+export function deskSide(
+  code: string,
+  direction: string,
+  params: unknown,
+  asEntity: SesameEntity,
+): "BUY" | "SELL" {
+  const stored: "BUY" | "SELL" = direction === "BUY" ? "BUY" : "SELL";
+  if (!isSesameCommodity(code) || tradeEntity(params) === asEntity) return stored;
+  if (internalEntity(params) === asEntity) return stored === "BUY" ? "SELL" : "BUY";
+  return stored;
+}
+export function deskCounterpartyLabel(
+  code: string,
+  params: unknown,
+  storedName: string,
+  asEntity: SesameEntity,
+): string {
+  if (!isSesameCommodity(code) || !internalEntity(params)) return storedName;
+  const other = tradeEntity(params) === asEntity ? internalEntity(params) : tradeEntity(params);
+  return other ? ENTITY_NAMES[other] : storedName;
+}
+export function presentTraderBook<T extends {
+  direction: string;
+  commodity: { code: string };
+  tradeParams?: unknown;
+  counterparty: { name: string };
+}>(trades: T[], entity?: SesameEntity): T[] {
+  if (!entity) return trades;
+  return trades
+    .filter((t) => belongsToSesameDesk(t.commodity.code, t.tradeParams, entity))
+    .map((t) => ({
+      ...t,
+      direction: deskSide(t.commodity.code, t.direction, t.tradeParams, entity) as T["direction"],
+      counterparty: {
+        ...t.counterparty,
+        name: deskCounterpartyLabel(t.commodity.code, t.tradeParams, t.counterparty.name, entity),
+      },
+    }));
+}
 /**
  * FZCO purchases and sales stay on the book until paid. Pakistan → FZCO
  * internals close when FZCO pays Kastros Pakistan.
