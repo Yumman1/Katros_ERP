@@ -257,19 +257,19 @@ function InvoiceCard({
         <Detail label="Physical weight">{row.physicalKg.toLocaleString()} kg</Detail>
         <Detail label="Financial deduction (kg)">{row.canEditDeduction?<input aria-label="Financial deduction in kg" className="kastros-input w-full" type="number" min="0" step="0.001" max={row.baseKg} value={deduction??String(row.deductionKg)} disabled={edit.isPending||resolve.isPending} onChange={e=>setDeduction(e.target.value)}/>:`${row.deductionKg.toLocaleString()} kg`}</Detail>
         <Detail label="Payable weight">{(dirty&&validDeduction?row.baseKg-deductionKg:row.payableKg).toLocaleString()} kg</Detail>
-        <Detail label="Quality">{row.quality ? Object.entries(row.quality).map(([k,v])=>`${k}: ${v}%`).join(" · ") : "Historical invoice"}</Detail>
+        <Detail label="Quality" wrap>
+          {row.quality
+            ? Object.entries(row.quality)
+                .map(([k, v]) => `${k}: ${v}${/colour|color/i.test(k) || !Number.isFinite(Number(v)) ? "" : "%"}`)
+                .join(" · ")
+            : "Historical invoice"}
+        </Detail>
         <Detail label="Arrival date">
           {new Date(row.arrivalDate).toLocaleDateString("en-PK")}
         </Detail>
         <Detail label="Locked trade rate">{row.lockedRateDisplay}</Detail>
-        <Detail label="Vehicle total value before deductions">{formatCurrency(row.vehicleGrossPkr,"PKR")}</Detail>
         <Detail label="Advance already released">{formatCurrency(row.advanceReleasedPkr,"PKR")}</Detail>
         <Detail label={`Remaining payment (${row.remainingPercentage}% under trade terms)`}>{formatCurrency(previewRemaining,"PKR")}</Detail>
-        <Detail label="Expected amount">
-          <span className="tabular-nums">
-            {row.expectedPkr != null ? formatCurrency(previewTotal, "PKR") : "—"}
-          </span>
-        </Detail>
         <Detail label="Total trade price">
           <span className="tabular-nums">{formatCurrency(row.totalTradePricePkr, "PKR")}</span>
         </Detail>
@@ -371,11 +371,11 @@ function InvoiceCard({
   );
 }
 
-function Detail({ label, children }: { label: string; children: React.ReactNode }) {
+function Detail({ label, children, wrap }: { label: string; children: React.ReactNode; wrap?: boolean }) {
   return (
-    <div className="min-w-0">
+    <div className={wrap ? "min-w-0 sm:col-span-3" : "min-w-0"}>
       <div className="text-[10px] uppercase tracking-wider text-subtle">{label}</div>
-      <div className="mt-0.5 truncate text-sm font-medium text-foreground">{children}</div>
+      <div className={wrap ? "mt-0.5 whitespace-normal break-words text-sm font-medium text-foreground" : "mt-0.5 truncate text-sm font-medium text-foreground"}>{children}</div>
     </div>
   );
 }
