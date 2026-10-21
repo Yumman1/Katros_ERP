@@ -630,3 +630,15 @@ body {
     text-wrap: balance;
   }
 }
+
+/* Explicit native popup colours avoid unreadable Windows/Chrome option text. */
+.fzco-select { color-scheme: light; }
+.fzco-select option,
+.fzco-select optgroup,
+.fzco-select option:checked,
+.fzco-select option:hover,
+.fzco-select option:focus {
+  background-color: #ffffff;
+  color: #111827;
+  -webkit-text-fill-color: #111827;
+}

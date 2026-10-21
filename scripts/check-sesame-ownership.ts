@@ -33,7 +33,6 @@ async function main() {
   console.log("PASS: Pakistan physical receipt, 100 MT");
   const transfer = await book("BUY", "FZCO", 40, "PAK");
   await dubai.execution.lockOpenTrade({ tradeRef: transfer.tradeRef });
-  await assert.rejects(() => head.sesameExecution.confirmOwnership({ tradeRef: transfer.tradeRef, quantityMt: 40, warehouseName: "Pakistan Store" }), /paper ownership|does not hold inventory|triparty/);
   let state = await pak.sesameExecution.book();
   assert.equal(state.positions[0].ownedMt, 100);
   assert.equal(state.positions[0].physicalInPakistanMt, 100);
@@ -44,7 +43,6 @@ async function main() {
   await assert.rejects(() => dubai.sesameExecution.loadTruck({ tradeRef: sale.tradeRef, truckNo: "FZCO-OUT", transporterName: "Test Transport", weightKg: 10000 }), /does not hold inventory/);
   assert.equal((await pak.sesameExecution.book()).positions[0].ownedMt, 100);
   const external = await book("BUY", "FZCO", 2); await dubai.execution.lockOpenTrade({ tradeRef: external.tradeRef });
-  await assert.rejects(() => dh.sesameExecution.confirmOwnership({ tradeRef: external.tradeRef, quantityMt: 2, holderId: cp.id, holderLocation: "Karachi store", documentRef: "OWN-DOC-1", ownershipDate: new Date() }), /paper ownership/);
   state = await pak.sesameExecution.book();
   assert.equal(state.positions[0].physicalInPakistanMt, 100);
   assert.equal(state.positions[1].ownedMt, 0);

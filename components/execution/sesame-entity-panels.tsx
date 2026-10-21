@@ -164,15 +164,23 @@ export function SesameInventoryView({
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h1 className="text-2xl font-semibold">{ENTITY_NAMES[entity]} Sesame inventory</h1>
-        <p className="text-sm text-muted-foreground">{entity === "FZCO" ? "Open purchases stay until FZCO pays Kastros Pakistan or the supplier. Open sales stay until the buyer pays FZCO. Net is purchases minus sales. FZCO does not hold warehouse or paper stock." : "Physical sesame in Pakistan warehouses, like corn: open sales are already booked (not free to sell). Triparty is a Pakistan sale leaving the warehouse."}</p>
+        <p className="text-sm text-muted-foreground">{entity === "FZCO" ? "Open purchases stay until FZCO pays Kastros Pakistan or the supplier. Open sales stay until the buyer pays FZCO. Net is purchases minus sales. Supplier-held goods are shown separately below." : "Physical sesame in Pakistan warehouses, like corn: open sales are already booked (not free to sell). Triparty is a Pakistan sale leaving the warehouse."}</p>
       </div>
       {onSelectEntity && <fieldset><legend className="mb-2 text-xs text-muted-foreground">Sesame entity</legend><div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">{(["PAK", "FZCO"] as const).map(value => <button key={value} type="button" aria-pressed={entity === value} onClick={() => onSelectEntity(value)} className={`rounded-md px-3 py-2 text-xs ${entity === value ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}>{value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}</button>)}</div></fieldset>}
     </div>
     <div className="grid gap-4 md:grid-cols-4">{((entity==="FZCO"?[['Open purchases',p?.openBuyMt],['Open sales',p?.openSellMt],['Net open position',p?.netPositionMt]]:[['Physical',p?.ownedMt],['Open purchases',p?.openBuyMt],['Open sales',p?.openSellMt],['Free to sell',p?.freeMt]]) as [string,number|undefined][]).map(([label,value]) => <section key={label} className="kastros-card p-4"><div className="text-sm text-muted-foreground">{label}</div><div className="text-2xl font-semibold mt-2">{qty(value ?? 0)} MT</div></section>)}</div>
     {entity === "PAK" && <div className="kastros-card overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Pakistan warehouse','Physical MT','Open sale / booked MT','Free to sell MT'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{data?.warehouses.map(w => <tr key={w.name}><td className={cell}>{w.name}</td><td className={cell}>{qty(w.quantityMt)}</td><td className={cell}>{qty(w.bookedMt)}</td><td className={cell}>{qty(w.freeToSellMt)}</td></tr>)}</tbody></table>{!data?.warehouses.length && <p className="p-5">No physical Sesame receipts yet.</p>}{(data?.unassignedBookedMt ?? 0) > 0 && <p className="px-4 py-3 text-sm text-muted-foreground">{qty(data!.unassignedBookedMt)} MT of open Pakistan sales is not allocated to a warehouse yet, so it is not reserved against any one location.</p>}</div>}
     {entity === "PAK" && <SesameGradeStockView commodityCode={commodityCode}/>}
-    {entity === "FZCO" && <FzcoBook commodityCode={commodityCode} />}
+    {entity === "FZCO" && <><FzcoHeldStock commodityCode={commodityCode} /><FzcoBook commodityCode={commodityCode} /></>}
   </div>;
+}
+
+export function FzcoHeldStock({ commodityCode }: { commodityCode: string }) {
+ const {data,error,isLoading}=useBook(commodityCode);
+ const rows=data?.custody.filter(r=>Math.abs(r.ownedMt)>.000001||r.reservedMt>.000001)??[];
+ return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">Stock held by counterparty</h2><p className="text-sm text-muted-foreground">Locked purchases appear against the supplier automatically. Dispatch reduces stock held; payment independently closes the open purchase.</p>
+ {isLoading?<p>Loading stock…</p>:error?<p role="alert">{error.message}</p>:<><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Held by','Sesame type','Stock MT','Reserved MT','Available MT'].map(h=><th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{rows.map(r=><tr key={`${r.holderId}-${r.grade}`}><td className={cell}>{r.holder}</td><td className={cell}>{r.grade}</td><td className={cell}>{qty(r.ownedMt)}</td><td className={cell}>{qty(r.reservedMt)}</td><td className={cell}>{qty(r.availableMt)}</td></tr>)}</tbody></table></div>{!rows.length&&<p>No supplier-held stock.</p>}</>}
+ </section>;
 }
 
 export function FzcoBook({ commodityCode }: { commodityCode: string }) {
@@ -183,7 +191,7 @@ export function FzcoBook({ commodityCode }: { commodityCode: string }) {
   if (isLoading) return <p>Loading FZCO trades…</p>;
   if (error) return <p role="alert">{error.message}</p>;
   return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">FZCO open book</h2>
-    <p className="text-sm text-muted-foreground">Purchases stay open until FZCO pays Kastros Pakistan or the supplier. Sales stay open until the buyer pays FZCO. There is no paper or off-site ownership confirmation.</p>
+    <p className="text-sm text-muted-foreground">Purchases stay open until FZCO pays Kastros Pakistan or the supplier. Sales stay open until the buyer pays FZCO.</p>
     <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Trade','FZCO side','Counterparty','Quantity MT','On book MT','Status','Action'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{rows.map(t => {
       const side = t.entity === "FZCO" ? t.direction : t.direction === "BUY" ? "SELL" : "BUY";
       const counterparty = t.internalEntity ? ENTITY_NAMES[t.entity === "FZCO" ? t.internalEntity : t.entity] : t.counterparty;

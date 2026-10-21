@@ -2,7 +2,7 @@ import {custodyRows} from './fzco-custody';
 import { sesameGrade } from "@/lib/sesame-processing";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
-import { tradeEntity, internalEntity, sesameBookQty, FZCO_NO_PAKISTAN_WAREHOUSE, FZCO_NO_PAPER_OWNERSHIP, type SesameEntity } from "@/lib/sesame-entity";
+import { tradeEntity, internalEntity, sesameBookQty, FZCO_NO_PAKISTAN_WAREHOUSE, type SesameEntity } from "@/lib/sesame-entity";
 import { isSesameCommodity } from "@/lib/sesame";
 import { getSeasonNetPositions } from "@/server/net-position";
 
@@ -11,10 +11,6 @@ const n = (v: unknown) => Number(v ?? 0);
 import { lockSesameOwnership, reservedFzco, physicalStock } from "./sesame-stock";
 import { processingReservedKg } from "./processing-reservations";
 import { bookedPakistanSaleKgAtWarehouse, unassignedPakistanSaleMt } from "./sesame-sale-reservation";
-
-export async function confirmOwnership(_input: { tradeRef: string; quantityMt: number; warehouseName?: string; entity: SesameEntity; actor: string; holderId?: string; holderLocation?: string; documentRef?: string; ownershipDate?: Date; requestKey?: string }): Promise<never> {
-  throw new Error(FZCO_NO_PAPER_OWNERSHIP);
-}
 
 export async function sesameBook(code: string) {
   const [trades, entries, physical, reserved] = await Promise.all([

@@ -1,3 +1,4 @@
+import {assertCustody} from './fzco-custody';
 import {thirdPartySource} from './third-party-contract';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
@@ -84,12 +85,14 @@ export async function addExportContainers(raw:z.infer<typeof exportGateInput>, d
   if(n(allocated._sum.allocatedQtyMt)*1000+n(directAllocated._sum.totalWeightKg)+total>quantityUnitToKg(n(c.contractualQtyMt)+n(c.quantityToleranceMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds remaining trade quantity');
   if(!direct&&entity==='PAK'&&c.warehouseAllocations.length){const a=c.warehouseAllocations.find(a=>a.warehouseName===input.warehouseName);if(!a)throw new Error('Warehouse is not allocated to this trade');const used=await db.outboundDispatch.aggregate({where:{tradeRef:trade.tradeRef,warehouseName:input.warehouseName},_sum:{allocatedQtyMt:true}});if(n(used._sum.allocatedQtyMt)*1000+total>quantityUnitToKg(n(a.qtyMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds the trade warehouse allocation');}
   if(direct)await db.counterparty.findUniqueOrThrow({where:{id:direct.holderId}});
+  if(direct&&trade.direction==='SELL'){if(!direct.sourcePurchaseTradeRef)throw new Error('Select the supplier purchase for this triparty contract');}
   if(!direct&&entity==='FZCO')throw new Error(FZCO_NO_PAKISTAN_WAREHOUSE);
   if(!direct&&entity==='PAK'){
    const available=await processingAvailability(db,code,input.warehouseName,grade,trade.tradeRef);if(total>available.availableKg+.001)throw new Error(`Insufficient ${grade} at ${input.warehouseName} (${(available.availableKg/1000).toFixed(3)} MT free after open sales and processing)`);
   }
   const source=direct?.sourcePurchaseTradeRef?await thirdPartySource(db,{tradeRef:direct.sourcePurchaseTradeRef,holderId:direct.holderId,location:direct.dispatchLocation,code,grade,quantityKg:total}):null;
   if(source&&trade.direction!=='SELL')throw new Error('Triparty dispatch requires a sale to the final buyer');
+  if(direct&&trade.direction==='SELL')await assertCustody(db,code,grade,total/1000,{holderId:direct.holderId});
   let group=await db.sesameExportShipment.findFirst({where:{sourcePurchaseTradeRef:direct?.sourcePurchaseTradeRef??null,tradeRef:trade.tradeRef,warehouseName:input.warehouseName,directThirdParty:!!direct,triparty:!!triparty,fzcoSaleTradeRef:triparty?.fzcoSaleTradeRef??null,status:'DRAFT'}});
   const rate=n(c.ratePerKg);if(rate<=0)throw new Error('The locked trade needs a valid settlement rate');
   const params=trade.tradeParams as Record<string,unknown>|null;const fx=trade.currency==='PKR'?1:n(params?.executionFxPkrPerUsd);if(!['PKR','USD'].includes(trade.currency)||fx<=0)throw new Error('Lock a valid exchange rate for this trade first');
@@ -132,6 +135,7 @@ export async function exportAction(id:string,revision:number,actor:string,action
    if(s.directThirdParty){
     if(s.sourcePurchaseTradeRef)await thirdPartySource(db,{tradeRef:s.sourcePurchaseTradeRef,holderId:s.holderId!,location:s.dispatchLocation!,code:s.trade.commodity.code,grade,quantityKg:n(s.totalWeightKg),excludeShipmentId:s.id});
     if(!s.holderId)throw new Error('Record the third-party holder before releasing this shipment');
+    if(s.trade.direction==='SELL'&&s.sourcePurchaseTradeRef)await assertCustody(db,s.trade.commodity.code,grade,n(s.totalWeightKg)/1000,{holderId:s.holderId},true);
    }
    for(const t of s.trucks){if(t.saleReleasedAt)throw new Error('Container already released');if(!s.directThirdParty&&t.executionEntity==='FZCO')await releaseFzcoOwnership(db,t.id,actor);await db.pendingTruck.update({where:{id:t.id},data:{saleReleasedAt:new Date(),saleReleasedBy:actor}});await db.outboundDispatch.updateMany({where:{gatepassNo:t.gatepassNo,status:'AT_GATE'},data:{status:'RELEASED',doRef:s.deliveryOrderNo!,dispatchDate:new Date()}});}
    data.status='RELEASED';data.releasedAt=new Date();
