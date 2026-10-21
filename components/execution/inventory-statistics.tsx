@@ -34,7 +34,7 @@ export function InventoryStatistics({
 }) {
   const traderMode = Boolean(commodityId);
   const { data: contracts, isLoading: loadingContracts } = trpc.execution.lockedContracts.useQuery(
-    { warehouseAllocated: true },
+    undefined,
     { enabled: !traderMode },
   );
   const { data: sharedAvailability, isLoading: loadingAvailability, error: availabilityError } =

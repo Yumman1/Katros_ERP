@@ -39,10 +39,13 @@ import {
   contractHasWarehouseAllocation,
   contractMatchesWarehouse,
   formatTraderWarehouseSelections,
+  lockWarehouseAllocationLines,
   normWarehouseName,
   parseExecutionWarehouseSplit,
   parseTraderWarehouseSelections,
   resolveWarehouseAllocations,
+  serializeExecutionWarehouseSplit,
+  serializeTraderWarehouseSelections,
   type WarehouseAllocationLine,
 } from "@/lib/warehouse-allocation";
 import { prisma } from "@/server/db";
@@ -270,6 +273,51 @@ export async function syncAllLockedContracts(): Promise<void> {}
 export function contractRequiresWarehouse(c: ExecutionContract): boolean {
   if (c.paperOwnership) return false;
   return c.executionProfile === "PURCHASE_DELIVERED" || c.executionProfile === "SALE_EX_WAREHOUSE";
+}
+
+/** If a spot buy lands at a yard with no split, treat that yard as the selected warehouse. */
+export async function pinSpotPurchaseWarehouse(
+  tx: Prisma.TransactionClient,
+  contract: { id: string; tradeRef: string; executionProfile: string; contractualQtyMt: number },
+  warehouseName: string,
+): Promise<void> {
+  const wh = warehouseName.trim();
+  if (!wh || contract.executionProfile !== "PURCHASE_SPOT") return;
+  const existing = await tx.contractWarehouseAllocation.findFirst({
+    where: { contractId: contract.id },
+    select: { id: true },
+  });
+  if (existing) return;
+  const qtyMt = num(contract.contractualQtyMt);
+  if (!(qtyMt > 0)) return;
+  await tx.contractWarehouseAllocation.create({
+    data: { contractId: contract.id, warehouseName: wh, qtyMt, fulfilledQtyMt: 0 },
+  });
+  await tx.executionContract.update({
+    where: { id: contract.id },
+    data: {
+      allocatedWarehouse: wh,
+      warehouseDefault: wh,
+      traderWarehouseHint: wh,
+      traderWarehouseSelections: [wh],
+    },
+  });
+  const trade = await tx.trade.findUnique({
+    where: { tradeRef: contract.tradeRef },
+    select: { destName: true, tradeParams: true },
+  });
+  if (!trade) return;
+  const params = { ...((trade.tradeParams as Record<string, unknown> | null) ?? {}) };
+  params.executionWarehouseSplit = serializeExecutionWarehouseSplit([{ warehouseName: wh, openQtyMt: qtyMt }]);
+  params.warehouseSelections = serializeTraderWarehouseSelections([wh]);
+  await tx.trade.update({
+    where: { tradeRef: contract.tradeRef },
+    data: {
+      destName: trade.destName?.trim() || wh,
+      warehouseSplitApproved: true,
+      tradeParams: params as Prisma.InputJsonValue,
+    },
+  });
 }
 
 export function counterpartyMatchesTruck(truck: PendingTruck, contract: ExecutionContract): boolean {
@@ -768,13 +816,17 @@ export async function lockTradeInStore(
   const paperOwnership = paperTrade(trade.commodity.code, trade.tradeParams);
   const closeOnPayment = closesOnPayment(trade.commodity.code, trade.direction, trade.tradeScope, trade.tradeParams);
   const requiresWarehouse = !paperOwnership && (profile === "PURCHASE_DELIVERED" || profile === "SALE_EX_WAREHOUSE");
-  const allocationLines: WarehouseAllocationLine[] =
-    requiresWarehouse && splitPlan.length > 0 && trade.warehouseSplitApproved !== false
-      ? splitPlan.map((line) => ({
-          warehouseName: resolveCompanyWarehouseName(line.warehouseName) ?? line.warehouseName,
-          qtyMt: line.openQtyMt,
-        }))
-      : [];
+  const allocationLines = lockWarehouseAllocationLines({
+    paperOwnership,
+    requiresWarehouse,
+    warehouseSplitApproved: trade.warehouseSplitApproved,
+    profile,
+    splitPlan,
+    traderSelections,
+    destName: trade.destName,
+    qtyMt: trade.quantity,
+    resolveName: (hint) => resolveCompanyWarehouseName(hint) ?? hint.trim() || null,
+  });
 
   await prisma.$transaction(async (tx) => {
     const existing = await tx.executionContract.findUnique({
@@ -785,6 +837,19 @@ export async function lockTradeInStore(
       throw new Error(`Trade ${tradeRef} is already locked — contract exists`);
     }
     // Guarded lock — a concurrent lock of the same trade loses here.
+    const lockedParams = {
+      ...(trade.tradeParams ?? {}),
+      ...(allocationLines.length
+        ? {
+            executionWarehouseSplit: serializeExecutionWarehouseSplit(
+              allocationLines.map((line) => ({ warehouseName: line.warehouseName, openQtyMt: line.qtyMt })),
+            ),
+            warehouseSelections: serializeTraderWarehouseSelections(
+              allocationLines.map((line) => line.warehouseName),
+            ),
+          }
+        : {}),
+    };
     const locked = await tx.trade.updateMany({
       where: { tradeRef, tradeStatus: TradeStatus.PENDING },
       data: {
@@ -798,9 +863,13 @@ export async function lockTradeInStore(
         ...(trade.tradeScope ? { tradeScope: trade.tradeScope } : {}),
         ratePerMaund,
         ratePerKg,
-        ...(trade.tradeParams ? { tradeParams: trade.tradeParams as Prisma.InputJsonValue } : {}),
+        tradeParams: lockedParams as Prisma.InputJsonValue,
         commissionPerMaund: trade.commissionPerMaund,
         qualityTolerancesDetail: trade.qualityTolerancesDetail as unknown as Prisma.InputJsonValue,
+        ...(allocationLines.length === 1 && !trade.destName?.trim()
+          ? { destName: allocationLines[0]!.warehouseName }
+          : {}),
+        ...(allocationLines.length && profile === "PURCHASE_SPOT" ? { warehouseSplitApproved: true } : {}),
       },
     });
     if (locked.count === 0) {

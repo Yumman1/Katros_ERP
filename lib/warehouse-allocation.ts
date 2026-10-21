@@ -167,3 +167,40 @@ export function serializeExecutionWarehouseSplit(lines: WarehouseOpenAllocationL
     .map((l) => `${l.warehouseName.trim()}:${l.openQtyMt}`)
     .join("|");
 }
+
+/**
+ * Warehouse lines written when a trade is locked.
+ * Delivered / ex-warehouse still need an approved split. Spot / Moqa / Ex-Works
+ * is only a delivery term — if a yard was picked (split, trader selection, or
+ * dest), persist it so inbound stock stays on that trade.
+ */
+export function lockWarehouseAllocationLines(input: {
+  paperOwnership: boolean;
+  requiresWarehouse: boolean;
+  warehouseSplitApproved?: boolean;
+  profile: string;
+  splitPlan: WarehouseOpenAllocationLine[];
+  traderSelections: string[];
+  destName?: string | null;
+  qtyMt: number;
+  resolveName: (hint: string) => string | null;
+}): WarehouseAllocationLine[] {
+  if (input.paperOwnership || !(input.qtyMt > 0)) return [];
+  const fromSplit =
+    input.splitPlan.length > 0 &&
+    (!input.requiresWarehouse || input.warehouseSplitApproved !== false);
+  if (fromSplit) {
+    return input.splitPlan
+      .map((line) => ({
+        warehouseName: input.resolveName(line.warehouseName) ?? line.warehouseName.trim(),
+        qtyMt: line.openQtyMt,
+      }))
+      .filter((line) => line.warehouseName && line.qtyMt > 0);
+  }
+  if (input.profile !== "PURCHASE_SPOT") return [];
+  const hint = input.traderSelections.find((n) => n.trim()) ?? input.destName?.trim();
+  if (!hint) return [];
+  const warehouseName = input.resolveName(hint) ?? hint;
+  if (!warehouseName.trim()) return [];
+  return [{ warehouseName, qtyMt: input.qtyMt }];
+}

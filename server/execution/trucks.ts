@@ -59,6 +59,7 @@ import {
   fulfilledQtyForTradeAtWarehouseDb,
   getLockedContracts,
   normalizeContract,
+  pinSpotPurchaseWarehouse,
   refreshContract,
   syncAllLockedContracts,
   type ExecutionContractView,
@@ -119,8 +120,8 @@ export async function getLiveCounterpartiesForGatepass(
   warehouseName?: string,
 ): Promise<GatepassCounterpartyOption[]> {
   await syncAllLockedContracts();
-  // Spot purchases don't use warehouse allocation, so fetch without the
-  // allocation filter and apply it only where the profile requires it.
+  // Spot purchases may not have a split yet; fetch without the allocation
+  // filter and apply it only where the profile requires it.
   let contracts = (await getLockedContracts({ openOnly: true })).filter((c) => {
     if (movementType === "INBOUND") {
       return (
@@ -696,6 +697,14 @@ export async function assignTruckToTrade(
     if (!contractRow) throw new Error("Locked contract not found: " + tradeRef);
     if (contractRow.paperOwnership || truckRow.executionEntity === "FZCO") throw new Error("Use the FZCO truck workflow for this trade");
     const contract = normalizeContract(contractRowToRuntime(contractRow));
+    if (truck.movementType === "INBOUND") {
+      await pinSpotPurchaseWarehouse(tx, {
+        id: contractRow.id,
+        tradeRef,
+        executionProfile: contract.executionProfile,
+        contractualQtyMt: contract.contractualQtyMt,
+      }, truck.warehouseName);
+    }
     assertWithinDeliveryWindow(contract, truck.arrivalDate ?? new Date(), allowOutsideWindow);
     if (
       truck.movementType === "INBOUND" &&
