@@ -221,6 +221,9 @@ export function InventoryStatistics({
         <div className="border-b px-5 py-4" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
           <h2 className="text-sm font-semibold text-foreground">Inventory by Location & Commodity</h2>
           {locationFilters.controls}
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Quantities by warehouse and commodity — unallocated vs allocated only.
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">

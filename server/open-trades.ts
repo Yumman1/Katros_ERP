@@ -1,4 +1,4 @@
-import { deskCounterpartyLabel, deskSide, internalEntity, paperTrade, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
+import { internalEntity, paperTrade, tradeEntity } from "@/lib/sesame-entity";
 import { isSesameCommodity, normalizeSesameParams, SESAME_FIELDS } from "@/lib/sesame";
 import { qualitySummaryFromParams } from "@/lib/trade-parameters";
 import { TradeDirection, TradeStatus } from "@prisma/client";
@@ -66,7 +66,6 @@ export type OpenTradeSummary = {
   requiresWarehouse: boolean;
   warehouseSplitApproved: boolean;
   pendingWarehouseApproval: boolean;
-  lockOnThisDesk: boolean;
 };
 
 export type OpenTradeCounterpartyPatch = {
@@ -155,25 +154,18 @@ function assertOpenTrade(t: MockTraderTrade, tradeRef: string): void {
   }
 }
 
-function toSummary(t: MockTraderTrade, asEntity?: SesameEntity): OpenTradeSummary {
-  const lockOnThisDesk = !asEntity || !isSesameCommodity(t.commodity.code) || tradeEntity(t.tradeParams) === asEntity;
-  const direction = asEntity
-    ? (deskSide(t.commodity.code, t.direction, t.tradeParams, asEntity) as typeof t.direction)
-    : t.direction;
-  const counterpartyName = asEntity
-    ? deskCounterpartyLabel(t.commodity.code, t.tradeParams, t.counterparty.name, asEntity)
-    : t.counterparty.name;
+function toSummary(t: MockTraderTrade): OpenTradeSummary {
   return {
     tradeRef: t.tradeRef,
     tradeDate: t.tradeDate,
     deliveryStart: t.deliveryStart,
     traderName: t.traderName,
-    direction,
+    direction: t.direction,
     commodityCode: t.commodity.code,
     commodityName: t.commodity.name,
     quantity: t.quantity,
     quantityUnit: t.quantityUnit ?? t.commodity.unit,
-    counterpartyName,
+    counterpartyName: t.counterparty.name,
     counterpartyCode: t.counterparty.code,
     counterpartyKycStatus: t.counterpartyKycStatus,
     counterpartyNtn: t.counterparty.ntn ?? null,
@@ -186,18 +178,17 @@ function toSummary(t: MockTraderTrade, asEntity?: SesameEntity): OpenTradeSummar
     submittedToExecutionAt: t.submittedToExecutionAt ?? null,
     executionLastEditedBy: t.executionLastEditedBy ?? null,
     executionLastEditedAt: t.executionLastEditedAt ?? null,
-    requiresWarehouse: lockOnThisDesk && openTradeRequiresWarehouse(t),
+    requiresWarehouse: openTradeRequiresWarehouse(t),
     warehouseSplitApproved: t.warehouseSplitApproved === true,
     pendingWarehouseApproval: t.pendingWarehouseApproval === true,
-    lockOnThisDesk,
   };
 }
 
-export async function getOpenTradesForExecution(asEntity?: SesameEntity): Promise<OpenTradeSummary[]> {
+export async function getOpenTradesForExecution(): Promise<OpenTradeSummary[]> {
   return (await mockAllTraderTrades())
     .filter(isOpenTrade)
     .sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime())
-    .map((t) => toSummary(t, asEntity));
+    .map(toSummary);
 }
 
 export async function getOpenTradeByRef(
@@ -852,7 +843,7 @@ export async function getLockedTradesForExecution(): Promise<OpenTradeSummary[]>
   return (await mockAllTraderTrades())
     .filter((t) => t.tradeStatus === TradeStatus.LOCKED)
     .sort((a, b) => b.tradeDate.getTime() - a.tradeDate.getTime())
-    .map((t) => toSummary(t));
+    .map(toSummary);
 }
 
 export async function updateLockedTradeDirect(

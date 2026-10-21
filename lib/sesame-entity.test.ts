@@ -1,17 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  belongsToSesameDesk,
   canonicalizeInternalPakSale,
   closesOnPayment,
-  deskCounterpartyLabel,
-  deskSide,
   FZCO_NO_PAKISTAN_WAREHOUSE,
   FZCO_NO_PAPER_OWNERSHIP,
   internalPakSale,
   isFzcoBuyFromPakistan,
   paperTrade,
-  presentTraderBook,
   sesameBookQty,
   shouldCloseOnFullPayment,
 } from "./sesame-entity";
@@ -50,23 +46,6 @@ test("FZCO buy from Pakistan canonicalizes to the Pakistan warehouse sale", () =
   const already = canonicalizeInternalPakSale(sesame, "SELL", pakSellFzco);
   assert.equal(already.internalPakSale, true);
   assert.equal(already.direction, "SELL");
-});
-
-test("the same internal sale is a BUY on FZCO desks and a SELL on Pakistan desks", () => {
-  assert.equal(belongsToSesameDesk(sesame, pakSellFzco, "PAK"), true);
-  assert.equal(belongsToSesameDesk(sesame, pakSellFzco, "FZCO"), true);
-  assert.equal(belongsToSesameDesk(sesame, fzcoBuy, "FZCO"), true);
-  assert.equal(belongsToSesameDesk(sesame, fzcoBuy, "PAK"), false);
-  assert.equal(deskSide(sesame, "SELL", pakSellFzco, "PAK"), "SELL");
-  assert.equal(deskSide(sesame, "SELL", pakSellFzco, "FZCO"), "BUY");
-  assert.equal(deskCounterpartyLabel(sesame, pakSellFzco, "Dubai FZCO", "PAK"), "Dubai FZCO");
-  assert.equal(deskCounterpartyLabel(sesame, pakSellFzco, "Dubai FZCO", "FZCO"), "Kastros Pakistan");
-  const [fzcoView] = presentTraderBook(
-    [{ direction: "SELL", commodity: { code: sesame }, tradeParams: pakSellFzco, counterparty: { name: "Dubai FZCO" } }],
-    "FZCO",
-  );
-  assert.equal(fzcoView.direction, "BUY");
-  assert.equal(fzcoView.counterparty.name, "Kastros Pakistan");
 });
 
 test("payment closing applies to the internal PAK sale and all FZCO books", () => {

@@ -1,7 +1,5 @@
 "use client";
 import { isSesameCommodity } from "@/lib/sesame";
-import { deskCounterpartyLabel, deskSide } from "@/lib/sesame-entity";
-import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
 import { TRADE_SCOPE_LABELS, executionIncotermLabel, paymentTypeLabel } from "@/lib/trade-constants";
 import { parseTraderWarehouseSelections } from "@/lib/warehouse-allocation";
@@ -27,7 +25,6 @@ import { isTraderDraft, traderCanEditTrade } from "@/lib/trade-lifecycle";
 import { formatPkDateTime } from "@/lib/formatters/datetime";
 
 export default function TradeDetailPage() {
-  const desk = useCommodityDesk();
   const params = useParams();
   const tradeRef = decodeURIComponent(params.ref as string);
   const utils = trpc.useUtils();
@@ -108,12 +105,6 @@ export default function TradeDetailPage() {
     );
   }
 
-  const shownDirection = desk.sesame
-    ? deskSide(trade.commodity.code, trade.direction, trade.tradeParams, desk.entity)
-    : trade.direction;
-  const shownCounterparty = desk.sesame
-    ? deskCounterpartyLabel(trade.commodity.code, trade.tradeParams, trade.counterparty.name, desk.entity)
-    : trade.counterparty.name;
   const creditDaysRaw = trade.tradeParams?.creditDays;
   const creditDays =
     typeof creditDaysRaw === "number"
@@ -280,8 +271,8 @@ export default function TradeDetailPage() {
         {[
           {
             label: "Direction",
-            value: shownDirection,
-            tone: shownDirection === "BUY" ? "text-success" : "text-kastros-red",
+            value: trade.direction,
+            tone: trade.direction === "BUY" ? "text-success" : "text-kastros-red",
           },
           {
             label: "Market",
@@ -400,7 +391,7 @@ export default function TradeDetailPage() {
         </DetailCard>
 
         <DetailCard title="Counterparty">
-          <Row label="Counterparty" value={shownCounterparty} />
+          <Row label="Counterparty" value={trade.counterparty.name} />
           <Row label="Code" value={trade.counterparty.code} />
           {trade.counterparty.companyNameNtn && (
             <Row label="Company (as per NTN)" value={trade.counterparty.companyNameNtn} />

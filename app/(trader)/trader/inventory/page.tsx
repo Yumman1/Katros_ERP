@@ -1,14 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 import { InventoryStatistics } from "@/components/execution/inventory-statistics";
 import { SesameInventoryView, SesamePakistanInventoryExtras } from "@/components/execution/sesame-entity-panels";
 import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
 import { isSesameCommodity } from "@/lib/sesame";
+import type { SesameEntity } from "@/lib/sesame-entity";
 
 export default function TraderInventoryPage() {
   const desk = useCommodityDesk();
-  const entity = desk.entity;
+  const [entity, setEntity] = useState<SesameEntity>("PAK");
   const active = desk.active;
 
   if (!active) {
@@ -31,7 +33,7 @@ export default function TraderInventoryPage() {
         key={`${active.code}-FZCO`}
         commodityCode={active.code}
         entity="FZCO"
-        onSelectEntity={desk.selectEntity}
+        onSelectEntity={setEntity}
       />
     );
   }
@@ -46,7 +48,7 @@ export default function TraderInventoryPage() {
       showWarehouseSetup={false}
     >
       {sesame ? (
-        <SesamePakistanInventoryExtras commodityCode={active.code} onSelectEntity={desk.selectEntity} />
+        <SesamePakistanInventoryExtras commodityCode={active.code} onSelectEntity={setEntity} />
       ) : null}
     </InventoryStatistics>
   );
