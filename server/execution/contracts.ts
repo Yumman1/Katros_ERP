@@ -1,6 +1,6 @@
 import {quantityUnitToKg} from "@/lib/unit-conversion";
 import { isSesameCommodity } from "@/lib/sesame";
-import { canonicalizeInternalPakSale, closesOnPayment, paperTrade, shouldCloseOnFullPayment, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
+import { canonicalizeInternalPakSale, closesOnPayment, deskCounterpartyLabel, deskSide, paperTrade, shouldCloseOnFullPayment, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
 import { entityCounterparty } from "@/server/finance/internal-payments";
 import { sesameSettlementFx } from "@/lib/execution-settlement";
 import { executionDeskTradeRefs } from "./desk-scope";
@@ -378,7 +378,7 @@ export function assertWithinDeliveryWindow(
 }
 
 function assertCanEditWarehouseAllocation(contract: ExecutionContract): void {
-  if (contract.contractStatus !== "Open") {
+  if (contract.contractStatus !== "Open" && !(contract.closeOnPayment && contract.executionEntity === "PAK" && contract.openQtyMt > 0)) {
     throw new Error(
       `Trade ${contract.tradeRef} is fully fulfilled — warehouse allocation can no longer be changed`,
     );
@@ -1005,7 +1005,7 @@ export async function getLockedContracts(filter?: {
     const refs = await executionDeskTradeRefs(filter.commodityCode, prisma, filter.executionEntity);
     where.tradeRef = { in: refs ?? [] };
   }
-  if (filter?.profile) where.executionProfile = filter.profile;
+  if (filter?.profile && filter.executionEntity !== "FZCO") where.executionProfile = filter.profile;
   if (filter?.incoterms) where.incoterms = filter.incoterms;
   if (filter?.tradeScope) where.tradeScope = filter.tradeScope;
   if (filter?.openOnly) where.contractStatus = "Open";
@@ -1017,10 +1017,20 @@ export async function getLockedContracts(filter?: {
   }
   const rows = await prisma.executionContract.findMany({
     where,
-    include: CONTRACT_INCLUDE,
+    include: {...CONTRACT_INCLUDE, trade:{select:{tradeParams:true}}},
     orderBy: { lockedAt: "desc" },
   });
   let list = rows.map((r) => normalizeContract(contractRowToRuntime(r)));
+  // Presentation only: stored contracts remain Pakistan sales for physical fulfilment.
+  if (filter?.executionEntity === "FZCO") {
+    const params = new Map(rows.map(r=>[r.tradeRef,r.trade.tradeParams]));
+    list = list.map(c=>({...c,
+      direction:deskSide(c.commodityCode,c.direction,params.get(c.tradeRef),"FZCO") as typeof c.direction,
+      counterpartyName:deskCounterpartyLabel(c.commodityCode,params.get(c.tradeRef),c.counterpartyName,"FZCO"),
+      executionProfile:c.executionEntity==="PAK" ? "PURCHASE_DELIVERED" as const : c.executionProfile,
+    }));
+    if(filter.profile)list=list.filter(c=>c.executionProfile===filter.profile);
+  }
   if (filter?.warehouseAllocated) {
     list = list.filter((c) => contractHasWarehouseAllocation(c));
   }
@@ -1030,7 +1040,7 @@ export async function getLockedContracts(filter?: {
   if (filter?.warehouseName?.trim()) {
     list = list.filter((c) => contractMatchesWarehouse(c, filter.warehouseName!));
   }
-  const fulfillment = await batchFulfillmentByWarehouse(list);
+  const fulfillment = await batchFulfillmentByWarehouse(rows.map(r=>normalizeContract(contractRowToRuntime(r))));
   return list.map((c) => {
     const warehouseAllocationProgress = computeWarehouseProgress(
       c,
@@ -1063,7 +1073,7 @@ export async function getContractByRef(tradeRef: string): Promise<ExecutionContr
   return withWarehouseProgress(contractRowToRuntime(row));
 }
 
-export async function getPendingTradesForExecution() {
+export async function getPendingTradesForExecution(asEntity?: SesameEntity) {
   const rows = await prisma.trade.findMany({
     where: {
       tradeStatus: TradeStatus.PENDING,
@@ -1073,21 +1083,29 @@ export async function getPendingTradesForExecution() {
     include: { commodity: true, counterparty: true },
     orderBy: { tradeDate: "desc" },
   });
-  return rows.map((t) => ({
-    tradeRef: t.tradeRef,
-    tradeDate: t.tradeDate,
-    traderName: t.traderName,
-    direction: t.direction,
-    commodityCode: t.commodity.code,
-    commodityName: t.commodity.name,
-    quantity: num(t.quantity),
-    quantityUnit: t.quantityUnit ?? t.commodity.unit,
-    counterpartyName: t.counterparty.name,
-    buyingCategory: t.buyingCategory ?? null,
-    tradeScope: t.tradeScope ?? tradeScopeFromSeed(t.tradeRef),
-    executionProfile: t.executionProfile ?? null,
-    expectedProfile: executionProfileFromTrade(t.direction, t.buyingCategory, t.incoterms),
-  }));
+  return rows.map((t) => {
+    const direction = asEntity
+      ? (deskSide(t.commodity.code, t.direction, t.tradeParams, asEntity) as typeof t.direction)
+      : t.direction;
+    const counterpartyName = asEntity
+      ? deskCounterpartyLabel(t.commodity.code, t.tradeParams, t.counterparty.name, asEntity)
+      : t.counterparty.name;
+    return {
+      tradeRef: t.tradeRef,
+      tradeDate: t.tradeDate,
+      traderName: t.traderName,
+      direction,
+      commodityCode: t.commodity.code,
+      commodityName: t.commodity.name,
+      quantity: num(t.quantity),
+      quantityUnit: t.quantityUnit ?? t.commodity.unit,
+      counterpartyName,
+      buyingCategory: t.buyingCategory ?? null,
+      tradeScope: t.tradeScope ?? tradeScopeFromSeed(t.tradeRef),
+      executionProfile: t.executionProfile ?? null,
+      expectedProfile: executionProfileFromTrade(t.direction, t.buyingCategory, t.incoterms),
+    };
+  });
 }
 
 export async function getDeskSummary(commodityCode?: string, executionEntity?: SesameEntity) {
@@ -1107,7 +1125,7 @@ export async function getDeskSummary(commodityCode?: string, executionEntity?: S
     pendingTrucksUnassigned,
   ] = await Promise.all([
     prisma.executionContract.findMany({ where: contractWhere, include: CONTRACT_INCLUDE }),
-    getPendingTradesForExecution().then(rows => refs ? rows.filter(r => refs.includes(r.tradeRef)) : rows),
+    getPendingTradesForExecution(executionEntity).then(rows => refs ? rows.filter(r => refs.includes(r.tradeRef)) : rows),
     prisma.trade.count({
       where: { ...tradeWhere, tradeStatus: TradeStatus.PENDING, submittedToExecution: true },
     }),
@@ -1116,7 +1134,12 @@ export async function getDeskSummary(commodityCode?: string, executionEntity?: S
     prisma.paymentRequest.count({ where: { ...tradeWhere, status: "PENDING" } }),
     prisma.pendingTruck.count({ where: { ...truckWhere, status: { in: ["PENDING", "PARTIAL"] } } }),
   ]);
-  const locked = contractRows.map((r) => normalizeContract(contractRowToRuntime(r)));
+  const locked = contractRows.map((r) => {
+    const c=normalizeContract(contractRowToRuntime(r));
+    return executionEntity === "FZCO" && c.executionEntity === "PAK"
+      ? {...c,direction:TradeDirection.BUY,executionProfile:"PURCHASE_DELIVERED" as const,counterpartyName:"Kastros Pakistan"}
+      : c;
+  });
   const open = locked.filter((c) => c.contractStatus === "Open");
   const vehiclesToday = inboundToday + outboundToday;
   const pendingWarehouseAllocation = open.filter(

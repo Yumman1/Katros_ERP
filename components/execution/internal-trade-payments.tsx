@@ -1,11 +1,41 @@
 "use client";
 import {useState} from 'react';
 import {trpc} from '@/lib/trpc/client';
-import {useExecutionCommodityDesk} from './commodity-desk-provider';
+
 export function InternalTradePayments(){
- const {entity}=useExecutionCommodityDesk();const query=trpc.sesameExecution.internalPayments.useQuery();const utils=trpc.useUtils();const [tradeRef,setTrade]=useState(''),[paymentRef,setRef]=useState(''),[amount,setAmount]=useState(''),[message,setMessage]=useState('');
- const save=trpc.sesameExecution.createInternalPayment.useMutation({onSuccess:r=>{setMessage(`${r.voucherNo} sent to Finance.`);setRef('');setAmount('');void utils.invalidate();}});const trade=query.data?.find(t=>t.tradeRef===tradeRef);
- const fx=entity==='FZCO'?(trade?.fxRate??0):1;
- const blocked=trade&&trade.pakistanPayable===false;
- return <section className="space-y-4 mt-4"><h3 className="font-semibold">Internal Pakistan / FZCO payment</h3><p className="text-sm">Use the same reconciliation reference on both desks. Each voucher requires its own Finance approval. Partial payments are supported. On a triparty sale the buyer must pay Dubai FZCO before FZCO pays Kastros Pakistan.</p><form className="grid gap-3 md:grid-cols-3" onSubmit={e=>{e.preventDefault();if(blocked)return;if(window.confirm('Generate this internal voucher for Finance?'))save.mutate({tradeRef,paymentRef,amountPkr:Math.round(Number(amount)*fx*100)/100});}}><label>Trade<select required className="kastros-select w-full" value={tradeRef} onChange={e=>setTrade(e.target.value)}><option value="">Select internal trade</option>{query.data?.filter(t=>t.locked).map(t=><option value={t.tradeRef} key={t.tradeRef}>{t.tradeRef} · {t.side==='BUY'?'Purchase payment':'Sale receipt'}{t.pakistanPayable===false?' · awaiting buyer payment':''}</option>)}</select></label><label>Shared reconciliation reference<input required maxLength={120} className="kastros-input w-full" value={paymentRef} onChange={e=>setRef(e.target.value)}/></label><label>Amount ({entity==='FZCO'?'USD':'PKR'})<input required type="number" min="0.01" step="0.01" className="kastros-input w-full" value={amount} onChange={e=>setAmount(e.target.value)}/></label>{trade&&<p className="text-sm">Agreed value: {(trade.amountPkr/(fx||1)).toLocaleString()} {entity==='FZCO'?'USD':'PKR'}{entity==='FZCO'?` · Saved FX: ${fx} PKR/USD`:''}</p>}{blocked&&<p className="text-sm text-destructive md:col-span-3">{trade.pakistanPayableReason}</p>}<button className="kastros-btn-primary" disabled={save.isPending||fx<=0||!!blocked}>Generate {trade?.side==='BUY'?'purchase':'sales receipt'} voucher</button></form>{message&&<p role="status">{message}</p>}{(query.error||save.error)&&<p role="alert">{query.error?.message||save.error?.message}</p>}<div className="overflow-auto"><table className="w-full text-sm"><thead><tr>{['Trade','Reference','Voucher','Counterpart','Status'].map(h=><th className="text-left p-2" key={h}>{h}</th>)}</tr></thead><tbody>{query.data?.flatMap(t=>t.payments.map(p=><tr key={p.voucherNo}><td className="p-2">{t.tradeRef}</td><td className="p-2">{p.reference}</td><td className="p-2">{p.voucherNo}</td><td className="p-2">{p.counterpart??'—'}</td><td className="p-2">{p.status}</td></tr>))}</tbody></table></div></section>;
+ const query=trpc.sesameExecution.internalPayments.useQuery();
+ const utils=trpc.useUtils();
+ const [tradeRef,setTrade]=useState('');
+ const [amount,setAmount]=useState('');
+ const [requestKey,setRequestKey]=useState('');
+ const [message,setMessage]=useState('');
+ const trade=query.data?.find(t=>t.tradeRef===tradeRef);
+ const fx=trade?.currency==='USD' ? trade.fxRate : 1;
+ const save=trpc.sesameExecution.createInternalPayment.useMutation({onSuccess:r=>{
+  setMessage(`${r.voucherNo} sent to the Trader. Finance will enter one payment reference after approval. This voucher is visible on both desks.`);
+  setTrade('');setAmount('');setRequestKey('');void utils.invalidate();
+ }});
+ return <section className="space-y-4 mt-4">
+  <h3 className="font-semibold">Internal Trade — Pakistan / Dubai FZCO</h3>
+  <p className="text-sm text-subtle">One voucher covers the Dubai purchase and Pakistan sale. Generate it from either desk, obtain one Trader approval, then Finance records and approves the payment once.</p>
+  <form className="grid gap-3 md:grid-cols-3" onSubmit={e=>{
+   e.preventDefault();
+   if(window.confirm('Send this shared internal trade voucher to the Trader for approval?'))
+    save.mutate({tradeRef,requestKey,amountPkr:Math.round(Number(amount)*fx*100)/100});
+  }}>
+   <label>Trade<select required className="kastros-select w-full" value={tradeRef} onChange={e=>{
+    const selected=query.data?.find(t=>t.tradeRef===e.target.value);
+    setTrade(e.target.value);setRequestKey(crypto.randomUUID());setMessage('');
+    const rate=selected?.currency==='USD'?selected.fxRate:1;
+    setAmount(selected&&rate>0?(selected.availablePkr/rate).toFixed(2):'');
+   }}><option value="">Select internal trade</option>{query.data?.filter(t=>t.locked).map(t=><option value={t.tradeRef} key={t.tradeRef} disabled={t.availablePkr<=.005}>{t.tradeRef} · Dubai purchase / Pakistan sale{t.availablePkr<=.005?' · paid or already requested':''}</option>)}</select></label>
+   <label>Amount ({trade?.currency??'USD'})<input required type="number" min="0.01" step="0.01" className="kastros-input w-full" value={amount} onChange={e=>{setAmount(e.target.value);setRequestKey(crypto.randomUUID());}}/></label>
+   <button className="kastros-btn-primary self-end" disabled={save.isPending||!trade||fx<=0||Number(amount)<=0}>Generate internal voucher</button>
+   {trade&&fx>0&&<p className="text-sm md:col-span-3">Agreed value: {(trade.amountPkr/fx).toLocaleString(undefined,{maximumFractionDigits:2})} {trade.currency} · Unpaid: {(trade.outstandingPkr/fx).toLocaleString(undefined,{maximumFractionDigits:2})} {trade.currency} · Available to request: {(trade.availablePkr/fx).toLocaleString(undefined,{maximumFractionDigits:2})} {trade.currency}</p>}
+   {trade&&fx<=0&&<p role="alert">Lock the trade exchange rate before generating the voucher.</p>}
+  </form>
+  {message&&<p role="status">{message}</p>}
+  {(query.error||save.error)&&<p role="alert" className="text-destructive">{query.error?.message||save.error?.message}</p>}
+  <p className="text-xs text-subtle">Shared vouchers, approval status and printable PDFs appear in the voucher history below. A partial payment leaves the balance open on both desks.</p>
+ </section>;
 }

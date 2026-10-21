@@ -141,6 +141,7 @@ export type ContractStatus = "Open" | "Close";
 export type ExecutionContract = {
   executionEntity?: string;
   paperOwnership?: boolean;
+  closeOnPayment?: boolean;
   tradeRef: string;
   tradeId: string;
   contractDate: Date;
@@ -405,6 +406,7 @@ export function contractRowToRuntime(row: ExecutionContractRowWithAllocations): 
   return {
     executionEntity: row.executionEntity,
     paperOwnership: row.paperOwnership,
+    closeOnPayment: row.closeOnPayment,
     tradeRef: row.tradeRef,
     tradeId: row.tradeId,
     contractDate: row.contractDate,

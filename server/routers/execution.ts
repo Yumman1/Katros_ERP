@@ -419,11 +419,11 @@ export const executionRouter = router({
     }),
 
   pendingForLock: roleProcedure([...execRoles]).query(async ({ ctx }) => {
-    return filterDeskTradeRows(await getPendingTradesForExecution(), ctx.executionCommodityCode, r => r.tradeRef, ctx.executionEntity);
+    return filterDeskTradeRows(await getPendingTradesForExecution(ctx.executionEntity), ctx.executionCommodityCode, r => r.tradeRef, ctx.executionEntity);
   }),
 
   openTrades: roleProcedure([...execRoles]).query(async ({ ctx }) => {
-    return filterDeskTradeRows(await getOpenTradesForExecution(), ctx.executionCommodityCode, r => r.tradeRef, ctx.executionEntity);
+    return filterDeskTradeRows(await getOpenTradesForExecution(ctx.executionEntity), ctx.executionCommodityCode, r => r.tradeRef, ctx.executionEntity);
   }),
 
   openTradeByRef: roleProcedure([...execRoles])

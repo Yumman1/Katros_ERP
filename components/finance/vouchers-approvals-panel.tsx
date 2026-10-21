@@ -159,8 +159,9 @@ export function FinanceVouchersPanel() {
                     </div>
 
                     {(v.side === "BUY" || !!v.internalPaymentRef) && <div className="mt-3 space-y-2 text-xs">
-                      {(v.side === "BUY" || !!v.internalPaymentRef) && <p>Commodity: {v.commodityCode} · Agreed trade amount: {v.agreedTradeAmountPkr?.toLocaleString() ?? "—"} PKR · Agreed advance: {v.agreedAdvancePercentage ?? "—"}%{v.traderApprovedBy ? ` · Excess advance approved by ${v.traderApprovedBy}` : ""}</p>}
+                      {(v.side === "BUY" || !!v.internalPaymentRef) && <p>Commodity: {v.commodityCode} · Agreed trade amount: {v.agreedTradeAmountPkr?.toLocaleString() ?? "—"} PKR · Agreed advance: {v.agreedAdvancePercentage ?? "—"}%{v.traderApprovedBy ? ` · ${v.voucherKind === "INTERNAL_TRADE" ? "Internal purchase" : "Excess advance"} approved by ${v.traderApprovedBy}` : ""}</p>}
                       {v.builtyNumber && <p>Purchase basis: {v.purchaseProfile === "PURCHASE_SPOT" ? "Spot" : "Delivered"} · Transporter: {v.transporterName}</p>}
+                      {v.voucherKind === "INTERNAL_TRADE" && <p>Shared internal settlement: this one reference posts the Dubai payment and Pakistan receipt.</p>}
                       <button className="kastros-btn-secondary" onClick={() => download(v)}>Download printable PDF</button>
                       <p>Print the voucher for reconciliation. Complete these fields after making payment.</p>
                       <label className="block">Payment method<select className="kastros-select ml-2" value={methods[v.id] ?? v.method ?? ""} onChange={e=>setMethods(m=>({...m,[v.id]:e.target.value as "Bank transfer" | "Cheque" | "Cash" | "Other"}))}><option value="">Select method</option>{["Bank transfer","Cheque","Cash","Other"].map(m=><option key={m}>{m}</option>)}</select></label>

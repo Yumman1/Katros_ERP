@@ -15,6 +15,7 @@ import {
 } from "./ledger";
 
 export type VoucherView = {
+  voucherKind?: string | null;
   internalPaymentRef?: string | null;
   blNo?: string | null;
   amountUsd?: number | null;
@@ -157,6 +158,7 @@ function voucherRowToView(row: VoucherRow): VoucherView {
   return {
     blNo: row.exportShipment?.blNo,
     internalPaymentRef:row.internalPaymentRef,
+    voucherKind:row.voucherKind,
     amountUsd:row.paymentFxRate&&row.executionEntity==="FZCO"?num(row.amountPkr)/num(row.paymentFxRate): row.executionEntity==="FZCO" && row.exportShipment ? num(row.amountPkr)/num(row.exportShipment.fxRate):null,
     exportShipmentId: row.exportShipmentId,
     agreedAdvancePercentage: row.agreedAdvancePercentage == null ? null : num(row.agreedAdvancePercentage),
@@ -226,7 +228,7 @@ export async function createVoucher(input: {
   note?: string | null;
   enteredByName: string;
 }): Promise<VoucherView> {
-  if(input.tradeRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef}});if(t&&(await import("@/lib/sesame-entity")).internalEntity(t.tradeParams))throw new Error("Use International Purchase in Vouchers for the Pakistan → Dubai FZCO sale");}
+  if(input.tradeRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef}});if(t&&(await import("@/lib/sesame-entity")).internalEntity(t.tradeParams))throw new Error("Use Internal Trade in Vouchers for the Pakistan → Dubai FZCO trade");}
   if(input.tradeRef&&(input.side??'SELL')==='SELL'&&!input.noteRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef},include:{commodity:true}});if(t&&t.tradeScope==='INTERNATIONAL'&&(await import('@/lib/sesame')).isSesameCommodity(t.commodity.code))throw new Error('Select the shipment BL in Receive payment against a BL');}
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Voucher amount must be positive");
@@ -384,7 +386,7 @@ export async function listVouchers(filter?: {
   const rows = await prisma.voucher.findMany({
     where: {
       ...(filter?.financeOnly ? {OR:[{traderApprovalRequired:false},{traderApprovedAt:{not:null}}]} : {}),
-      ...(filter?.executionEntity ? { executionEntity: filter.executionEntity } : {}),
+      ...(filter?.executionEntity ? { AND: [{OR:[{executionEntity:filter.executionEntity},{voucherKind:"INTERNAL_TRADE"}]}] } : {}),
       ...(filter?.commodityCode ? { commodityCode: filter.commodityCode } : {}),
       ...(filter?.status ? { status: filter.status } : {}),
       ...(filter?.counterpartyId ? { counterpartyId: filter.counterpartyId } : {}),
@@ -420,7 +422,16 @@ export async function approveVoucher(
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('voucher-payment-approval'))::text`;
     const current = await tx.voucher.findUniqueOrThrow({where:{id:voucherId}});
     if (current.status !== "PENDING_FINANCE") throw new Error("Voucher not found or already resolved");
-    if (current.traderApprovalRequired && !current.traderApprovedAt) throw new Error("The trade’s trader must approve this excess advance before Finance can pay it");
+    if (current.traderApprovalRequired && !current.traderApprovedAt) throw new Error("The trade’s trader must approve this voucher before Finance can pay it");
+    if(current.voucherKind === "INTERNAL_TRADE" && current.tradeRef) {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`internal-payment:${current.tradeRef}`}))::text`;
+      const t=await tx.trade.findUniqueOrThrow({where:{tradeRef:current.tradeRef},include:{commodity:true,contract:true}});
+      const {internalPakSale}=await import("@/lib/sesame-entity");
+      const {internalCommitted}=await import("./internal-payments");
+      if(!internalPakSale(t.commodity.code,t.direction,t.tradeParams)||!t.contract||!["LOCKED","CONFIRMED","EXECUTED"].includes(t.tradeStatus))throw new Error("Internal trade is no longer payable");
+      const total=quantityUnitToKg(num(t.quantity),t.quantityUnit??"MT")*num(t.contract.ratePerKg);
+      if(await internalCommitted(tx,t.tradeRef,true,current.id)+num(current.amountPkr)>total+.005)throw new Error("Payment exceeds the remaining internal trade amount");
+    }
     if(current.executionEntity==='FZCO'&&current.side==='BUY'&&current.tradeRef){
       const purchase=await tx.trade.findUnique({where:{tradeRef:current.tradeRef},include:{contract:true}});
       if(purchase?.direction==='BUY'&&purchase.contract){
@@ -436,7 +447,7 @@ export async function approveVoucher(
       const paid=shipment.vouchers.filter(v=>v.status==='APPROVED'&&v.side===current.side).reduce((a,v)=>a+num(v.amountPkr),0);
       if(paid+num(current.amountPkr)>cap+.005)throw new Error("Receipt exceeds outstanding BL balance");
     }
-    if((current.voucherKind==="INTL_PURCHASE"||current.internalPaymentRef)&&current.tradeRef&&current.side==="BUY"){
+    if(current.voucherKind!=="INTERNAL_TRADE"&&(current.voucherKind==="INTL_PURCHASE"||current.internalPaymentRef)&&current.tradeRef&&current.side==="BUY"){
       const {assertTripartyPakistanPayment}=await import("./triparty-pakistan-payment");
       await assertTripartyPakistanPayment(tx,{tradeRef:current.tradeRef,amountPkr:num(current.amountPkr),excludeVoucherId:voucherId});
     }
@@ -480,7 +491,7 @@ export async function approveVoucher(
       tx,
     );
     if(row?.internalPaymentRef||row?.exportShipmentId||row?.voucherKind)await tx.counterpartyLedgerEntry.updateMany({where:{voucherId},data:{executionEntity:row.executionEntity,paymentFxRate:row.paymentFxRate,exportShipmentId:row.exportShipmentId}});
-    if(row?.voucherKind==="INTL_PURCHASE"&&row.tradeRef){
+    if((row?.voucherKind==="INTL_PURCHASE"||row?.voucherKind==="INTERNAL_TRADE")&&row.tradeRef){
       const trade=await tx.trade.findUnique({where:{tradeRef:row.tradeRef},include:{commodity:true}});
       if(trade&&(await import("@/lib/sesame-entity")).internalPakSale(trade.commodity.code,trade.direction,trade.tradeParams)){
         const {entityCounterparty}=await import("@/server/finance/internal-payments");
@@ -497,10 +508,15 @@ export async function approveVoucher(
             sourceType:"VOUCHER",
             sourceRef:row.voucherNo,
             tradeRef:row.tradeRef,
-            note:row.note??`Internal receipt mirrored from ${row.voucherNo}`,
+            note:`${row.note ?? "Internal receipt"} · Payment reference: ${reference}`,
           },
         });
       }
+    }
+    if(row?.voucherKind==="INTERNAL_TRADE" && row.tradeRef){
+      await tx.counterpartyLedgerEntry.updateMany({where:{voucherId},data:{note:`${row.note ?? "Internal payment"} · Payment reference: ${reference}`}});
+      const {closeInternalSettlement}=await import("./internal-payments");
+      await closeInternalSettlement(tx,row.tradeRef);
     }
     if (row?.builtyNumber) await tx.counterpartyLedgerEntry.updateMany({ where: { voucherId }, data: { purchaseAdvanceFlow: true } });
     // Close the note only once the internal sub-ledger is within tolerance.
@@ -525,7 +541,7 @@ export async function approveVoucher(
   // The credit just landed — if it completes a settled trade's amount, that
   // trade closes now. A note voucher is exempt: its trade is already cancelled
   // or closed, and its money answers to the note, not to a settlement invoice.
-  if (fresh?.tradeRef && !fresh.noteRef) {
+  if (fresh?.tradeRef && !fresh.noteRef && fresh.voucherKind!=="INTERNAL_TRADE") {
     const { syncSettlementCollection } = await import("@/server/settlement-billing");
     await syncSettlementCollection(fresh.tradeRef, approvedByName);
     const { closeOnFullPayment } = await import("@/server/execution/contracts");
@@ -582,8 +598,8 @@ export async function resolveExcessAdvance(id:string,traderName:string,approve:b
     await tx.$queryRaw`SELECT id FROM "Voucher" WHERE id=${id} FOR UPDATE`;
     const v=await tx.voucher.findUniqueOrThrow({where:{id}});
     const trade=await tx.trade.findUniqueOrThrow({where:{tradeRef:v.tradeRef!}});
-    if (!traderNamesMatch(trade.traderName,traderName)) throw new Error("Only the trade’s trader can approve its excess advance");
-    if (v.status!=="PENDING_FINANCE" || !v.traderApprovalRequired || v.traderApprovedAt) throw new Error("This advance is not awaiting trader approval");
-    await tx.voucher.update({where:{id},data:approve ? {traderApprovedAt:new Date(),traderApprovedBy:traderName} : {status:"REJECTED",resolvedAt:new Date(),resolvedByName:traderName,resolutionNote:"Excess advance rejected by trader"}});
+    if (!traderNamesMatch(trade.traderName,traderName)) throw new Error("Only the trade’s trader can approve this voucher");
+    if (v.status!=="PENDING_FINANCE" || !v.traderApprovalRequired || v.traderApprovedAt) throw new Error("This voucher is not awaiting trader approval");
+    await tx.voucher.update({where:{id},data:approve ? {traderApprovedAt:new Date(),traderApprovedBy:traderName} : {status:"REJECTED",resolvedAt:new Date(),resolvedByName:traderName,resolutionNote:"Voucher rejected by trader"}});
   });
 }

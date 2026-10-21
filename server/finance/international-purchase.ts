@@ -24,18 +24,7 @@ export async function internationalPurchaseTrades(code: string, entity: SesameEn
     const own = tradeEntity(t.tradeParams);
     const fx = n((t.tradeParams as Record<string, unknown> | null)?.executionFxPkrPerUsd);
     const amountPkr = n(t.quantity) * 1000 * n(t.contract?.ratePerKg);
-    if (internal && entity === "FZCO" && cp.code === "INTERCO-PAK") {
-      return [{
-        tradeRef: t.tradeRef,
-        counterpartyId: cp.id,
-        counterparty: ENTITY_NAMES.PAK,
-        currency: t.currency,
-        fxRate: fx,
-        openMt: n(t.contract?.openQtyMt ?? t.quantity),
-        amountPkr,
-        internal: true,
-      }];
-    }
+    if (internal) return [];
     if (!internal && own === entity && t.direction === "BUY" && t.counterpartyId === counterpartyId && t.tradeScope === "INTERNATIONAL") {
       return [{
         tradeRef: t.tradeRef,
@@ -97,6 +86,7 @@ export async function createInternationalPurchase(input: {
     if (!isSesameCommodity(t.commodity.code) || t.commodity.code !== input.code) throw new Error("Select a Sesame trade on this desk");
     if(!t.contract||!["LOCKED","CONFIRMED","EXECUTED"].includes(t.tradeStatus))throw new Error("Select a locked purchase trade");
     const internal = internalPakSale(t.commodity.code, t.direction, t.tradeParams);
+    if (internal) throw new Error("Use the shared Internal Trade voucher category for Pakistan–FZCO settlements");
     if (internal && input.entity !== "FZCO") throw new Error("Dubai FZCO pays Kastros Pakistan on the internal sale");
     if (internal && !input.exportShipmentId) throw new Error("Select the BL. FZCO can pay Kastros Pakistan only after the buyer has paid Dubai FZCO");
     if (!internal && (tradeEntity(t.tradeParams) !== input.entity || t.direction !== "BUY")) throw new Error("Select an open international purchase");

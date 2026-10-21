@@ -1,4 +1,4 @@
-import { tradeEntity } from "@/lib/sesame-entity";
+import { tradeEntity, internalEntity } from "@/lib/sesame-entity";
 import { sesameGrade } from "@/lib/sesame-processing";
 import { quantityUnitToKg } from "@/lib/unit-conversion";
 
@@ -48,7 +48,7 @@ export function bookedPakistanSaleKgAtWarehouse(
   excludeTradeRef?: string,
 ): number {
   if (excludeTradeRef && t.tradeRef === excludeTradeRef) return 0;
-  if (!isPakistanPhysicalSale(t.direction, t.tradeParams) || t.contract?.contractStatus === "Close") return 0;
+  if (!isPakistanPhysicalSale(t.direction, t.tradeParams) || (t.contract?.contractStatus === "Close" && internalEntity(t.tradeParams)!=="FZCO")) return 0;
   if (grade && sesameGrade(t.tradeParams) !== grade) return 0;
   const c = t.contract;
   const unit = c?.quantityUnit ?? t.quantityUnit;
@@ -64,7 +64,7 @@ export function bookedPakistanSaleKgAtWarehouse(
 }
 
 export function unassignedPakistanSaleMt(t: SaleReservation): number {
-  if (!isPakistanPhysicalSale(t.direction, t.tradeParams) || t.contract?.contractStatus === "Close") return 0;
+  if (!isPakistanPhysicalSale(t.direction, t.tradeParams) || (t.contract?.contractStatus === "Close" && internalEntity(t.tradeParams)!=="FZCO")) return 0;
   if (t.contract?.warehouseAllocations.length || warehouseSelections(t.tradeParams).length) return 0;
   return Math.max(0, t.contract ? n(t.contract.openQtyMt) : n(t.quantity));
 }

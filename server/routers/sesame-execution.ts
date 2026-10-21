@@ -17,7 +17,7 @@ async function action<T>(fn: () => Promise<T>) {
 }
 export const sesameExecutionRouter = router({
   internalPayments:roleProcedure(['EXECUTION','FINANCE']).query(({ctx})=>internalPaymentRows(codeOf(ctx.executionCommodityCode),ctx.executionEntity??'PAK')),
-  createInternalPayment:roleProcedure(['EXECUTION']).input(z.object({tradeRef:z.string(),paymentRef:z.string().trim().min(1).max(120),amountPkr:z.number().finite().positive().multipleOf(.01)})).mutation(({ctx,input})=>action(()=>createInternalPayment({...input,entity:ctx.executionEntity??'PAK',actor:ctx.session.user.name??ctx.session.user.id,userId:ctx.session.user.id,code:codeOf(ctx.executionCommodityCode)}))),
+  createInternalPayment:roleProcedure(['EXECUTION']).input(z.object({tradeRef:z.string(),requestKey:z.string().uuid(),amountPkr:z.number().finite().positive().multipleOf(.01)})).mutation(({ctx,input})=>action(()=>createInternalPayment({...input,entity:ctx.executionEntity??'PAK',actor:ctx.session.user.name??ctx.session.user.id,userId:ctx.session.user.id,code:codeOf(ctx.executionCommodityCode)}))),
   positionSnapshot: roleProcedure(["TRADER","EXECUTION","ADMIN","FINANCE"]).input(z.object({commodityCode:z.string()})).query(async ({ctx,input}) => {
     const code=codeOf(ctx.session.user.role === "TRADER" ? input.commodityCode : ctx.executionCommodityCode);
     const user=await prisma.user.findUnique({where:{id:ctx.session.user.id},select:{disabled:true}});

@@ -37,7 +37,7 @@ type ApprovalRow = {
 export default function TraderInvoiceApprovalsPage() {
   const utils = trpc.useUtils();
   const advances=trpc.trader.excessAdvances.useQuery();
-  const approveAdvance=trpc.trader.resolveExcessAdvance.useMutation({onSuccess:()=>{void utils.trader.excessAdvances.invalidate();void utils.trader.invoiceApprovalsCount.invalidate();}});
+  const approveAdvance=trpc.trader.resolveExcessAdvance.useMutation({onSuccess:()=>{void utils.trader.excessAdvances.invalidate();void utils.trader.invoiceApprovalsCount.invalidate();void utils.finance.invalidate();}});
   const { data: sourceRows, isLoading } = trpc.trader.invoiceApprovals.useQuery(undefined, {
     refetchInterval: 20000,
   });
@@ -58,9 +58,9 @@ export default function TraderInvoiceApprovalsPage() {
   // Page shell, header and tabs come from the layout — this renders the buy tab.
   return (
       <div className="kastros-desk-scroll space-y-6 pb-6">
-      <section className="space-y-3"><h2 className="font-semibold">Advances above agreed terms</h2>
+      <section className="space-y-3"><h2 className="font-semibold">Voucher approvals</h2>
       {approveAdvance.error && <p className="text-destructive">{approveAdvance.error.message}</p>}
-      {advances.data?.map(v=><div className="exec-panel space-y-2" key={v.id}><p>{v.voucherNo} · {v.tradeRef} · {v.counterpartyName} · {v.commodityCode}</p><p>Truck {v.truckNo} · Builty {v.builtyNumber} · Weight {v.advanceWeightKg} kg</p><p>Agreed {v.agreedAdvancePercentage}% · Requested {v.advancePercentage}% · PKR {v.amountPkr.toLocaleString()}</p><button className="kastros-btn-primary" disabled={approveAdvance.isPending} onClick={()=>approveAdvance.mutate({id:v.id,approve:true})}>Approve for Finance</button> <button className="kastros-btn-secondary" disabled={approveAdvance.isPending} onClick={()=>approveAdvance.mutate({id:v.id,approve:false})}>Reject</button></div>)}
+      {advances.data?.map(v=><div className="exec-panel space-y-2" key={v.id}><p>{v.voucherNo} · {v.tradeRef} · {v.counterpartyName} · {v.commodityCode}</p><p>{v.voucherKind === "INTERNAL_TRADE" ? "Internal purchase — Dubai FZCO buys from Kastros Pakistan" : "Advance above agreed terms"}</p>{v.voucherKind !== "INTERNAL_TRADE" && <><p>Truck {v.truckNo} · Builty {v.builtyNumber} · Weight {v.advanceWeightKg} kg</p><p>Agreed {v.agreedAdvancePercentage}% · Requested {v.advancePercentage}% · PKR {v.amountPkr.toLocaleString()}</p></>}{v.voucherKind === "INTERNAL_TRADE" && <p>Requested payment: {v.amountUsd != null ? `${v.amountUsd.toLocaleString(undefined,{maximumFractionDigits:2})} USD` : `${v.amountPkr.toLocaleString()} PKR`}. Approval sends this to Finance; it does not settle either trade.</p>}<button className="kastros-btn-primary" disabled={approveAdvance.isPending} onClick={()=>approveAdvance.mutate({id:v.id,approve:true})}>Approve for Finance</button> <button className="kastros-btn-secondary" disabled={approveAdvance.isPending} onClick={()=>approveAdvance.mutate({id:v.id,approve:false})}>Reject</button></div>)}
       </section>
       {listFilters.controls}
         {isLoading ? (

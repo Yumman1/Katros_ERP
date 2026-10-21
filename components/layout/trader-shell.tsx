@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ShellHeader } from "@/components/layout/shell-header";
 import { trpc } from "@/lib/trpc/client";
+import { ENTITY_NAMES } from "@/lib/sesame-entity";
 
 import { DeferredPriceTicker } from "@/components/modules/deferred-price-ticker";
 
@@ -80,7 +81,7 @@ export function TraderShell({ children }: { children: ReactNode }) {
 
   return (
     <AppShell
-      brandSubtitle={desk.active ? `${desk.active.name} Desk` : "Trading Desk"}
+      brandSubtitle={desk.active ? `${desk.active.name}${desk.sesame ? desk.entity === "FZCO" ? " · Dubai FZCO" : " · Pakistan" : ""} Desk` : "Trading Desk"}
       pathname={pathname}
       nav={appNav}
       sidebarTop={
@@ -92,6 +93,24 @@ export function TraderShell({ children }: { children: ReactNode }) {
               {desk.desks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}
             </select>
           </label>
+          {desk.sesame && (
+            <fieldset className="mb-3">
+              <legend className="mb-2 text-xs text-subtle">Sesame desk</legend>
+              <div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">
+                {(["PAK", "FZCO"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={desk.entity === value}
+                    onClick={() => desk.selectEntity(value)}
+                    className={`rounded-md px-2 py-2 text-xs ${desk.entity === value ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}
+                  >
+                    {value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          )}
           <Link href="/trader/trades/new" className="kastros-btn-primary w-full">
             <Plus className="h-4 w-4" />
             Book Trade

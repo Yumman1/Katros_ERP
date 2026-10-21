@@ -1,6 +1,8 @@
 "use client";
+import {deskSide,deskCounterpartyLabel} from "@/lib/sesame-entity";
 import { isSesameCommodity, sesameFields, isPercentagePayment, sesameTradingEntity } from "@/lib/sesame";
-import { paperTrade } from "@/lib/sesame-entity";
+import { paperTrade, tradeEntity } from "@/lib/sesame-entity";
+import { useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -57,10 +59,10 @@ export function OpenTradeDetail({
   const isLockedMode = mode === "locked";
   const router = useRouter();
   const utils = trpc.useUtils();
+  const { entity: deskEntity } = useExecutionCommodityDesk();
   const { role, isHead } = useTeam();
   const isExecutionUser = role === Role.EXECUTION || role === Role.ADMIN;
   const isExecutionHead = role != null && canActOnDepartment(role, isHead, "EXECUTION");
-  const canEdit = isExecutionUser;
 
   const { data: openTrade, isLoading: openLoading } = trpc.execution.openTradeByRef.useQuery(
     { tradeRef },
@@ -174,6 +176,8 @@ export function OpenTradeDetail({
     setSaved(false);
   }, [trade]);
 
+  const lockOnThisDesk = !trade || !isSesameCommodity(trade.commodity.code, trade.commodity.name) || tradeEntity(trade.tradeParams) === deskEntity;
+  const canEdit = isExecutionUser && lockOnThisDesk;
   const canLock =
     isExecutionUser &&
     executionCanLockOpenTrade({
@@ -181,6 +185,7 @@ export function OpenTradeDetail({
       pendingTraderPrice: trade?.pendingTraderPrice,
       requiresWarehouse,
       warehouseSplitApproved: trade?.warehouseSplitApproved,
+      lockOnThisDesk,
     });
 
   const ro = !canEdit;
@@ -388,7 +393,7 @@ export function OpenTradeDetail({
             <Field label="Trading name">
               <input
                 readOnly={ro}
-                value={counterpartyName}
+                value={lockOnThisDesk ? counterpartyName : deskCounterpartyLabel(trade.commodity.code,trade.tradeParams,trade.counterparty.name,deskEntity)}
                 onChange={(e) => setCounterpartyName(e.target.value)}
                 className={inputClass}
               />
@@ -417,7 +422,7 @@ export function OpenTradeDetail({
             </Field>
 
             <Field label="Direction">
-              <input readOnly value={trade.direction} className={`${inputClass} opacity-80`} />
+              <input readOnly value={deskSide(trade.commodity.code,trade.direction,trade.tradeParams,deskEntity)} className={`${inputClass} opacity-80`} />
             </Field>
 
             <Field label="Market">

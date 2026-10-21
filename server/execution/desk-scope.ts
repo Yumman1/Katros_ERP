@@ -53,7 +53,7 @@ export async function assertDeskTarget(code: string | undefined, path: string, r
   if (typeof input.tradeRef === "string" && input.tradeRef.trim()) {
     const row = await prisma.trade.findUnique({ where: { tradeRef: input.tradeRef.trim() }, select: { tradeParams: true, commodity: { select: { code: true } } } });
     if (row && row.commodity.code !== code) reject();
-    if (row && entity && isSesameCommodity(code) && tradeEntity(row.tradeParams) !== entity && !(path === "sesameExport.assignGate" && entity === "PAK") && !(path.startsWith("sesameExecution.") && internalEntity(row.tradeParams) === entity)) reject();
+    if (row && entity && isSesameCommodity(code) && tradeEntity(row.tradeParams) !== entity && !(path === "sesameExport.assignGate" && entity === "PAK") && !(internalEntity(row.tradeParams) === entity && (path.startsWith("sesameExecution.") || ["execution.openTradeByRef","execution.lockedTradeByRef","execution.contractByRef","execution.tradeTimeline"].includes(path)))) reject();
   }
   if (typeof input.truckId === "string") {
     const row = await prisma.pendingTruck.findUnique({ where: { id: input.truckId }, select: { commodityCode: true, executionEntity: true } });

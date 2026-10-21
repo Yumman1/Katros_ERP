@@ -9,7 +9,7 @@ import { isBaleCommodity } from "@/lib/warehouse-utilization";
 import { filterDeskRows } from "@/server/execution/desk-scope";
 import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
 import { isSesameCommodity, normalizeSesameParams, sesameNetPrice, sesameTradingEntity } from "@/lib/sesame";
-import { canonicalizeInternalPakSale, internalEntity } from "@/lib/sesame-entity";
+import { belongsToSesameDesk, canonicalizeInternalPakSale, deskCounterpartyLabel, deskSide, internalPakSale, internalEntity, presentTraderBook } from "@/lib/sesame-entity";
 import { entityCounterparty } from "@/server/finance/internal-payments";
 import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
 import { z } from "zod";
@@ -252,7 +252,7 @@ const bookTradeInputSchema = z
     }
   });
 
-const deskInput = z.object({ commodityId: z.string().optional() }).optional();
+const deskInput = z.object({ commodityId: z.string().optional(), entity: z.enum(["PAK", "FZCO"]).optional() }).optional();
 
 export const traderRouter = router({
   positionCommodities: roleProcedure(["TRADER"]).query(async ({ctx}) => {await traderCommodityDesks(ctx.session.user.id);return (await getMergedCommodities()).map(c=>({id:c.id,code:c.code,name:c.name}));}),
@@ -262,7 +262,7 @@ export const traderRouter = router({
   deskSummary: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
     if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    return mockTraderDeskSummary(name, input?.commodityId);
+    return mockTraderDeskSummary(name, input?.commodityId, input?.entity);
   }),
 
   myTrades: protectedProcedure
@@ -270,6 +270,7 @@ export const traderRouter = router({
       z
         .object({
           commodityId: z.string().optional(),
+          entity: z.enum(["PAK", "FZCO"]).optional(),
           status: z.nativeEnum(TradeStatus).optional(),
           bucket: z.enum(["DRAFTS", "LOCKED", "CLOSED", "CANCELLED", "SETTLED"]).optional(),
         })
@@ -278,7 +279,7 @@ export const traderRouter = router({
     .query(async ({ ctx, input }) => {
       const name = traderNameFromSession(ctx.session.user);
       if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
-      const overlaid = await getTraderBookTrades(name, input?.commodityId);
+      const overlaid = await getTraderBookTrades(name, input?.commodityId, input?.entity);
 
       const isDraft = (s: TradeStatus) => s === TradeStatus.PENDING;
       const isLocked = (s: TradeStatus) =>
@@ -306,7 +307,7 @@ export const traderRouter = router({
   myCancelledCount: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
     if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    const all = await mockTraderTrades(name, { commodityId: input?.commodityId });
+    const all = presentTraderBook(await mockTraderTrades(name, { commodityId: input?.commodityId }), input?.entity);
     return all.filter((t) => t.tradeStatus === TradeStatus.CANCELLED).length;
   }),
 
@@ -319,7 +320,7 @@ export const traderRouter = router({
   myCancelledTrades: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
     if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    const all = await mockTraderTrades(name, { commodityId: input?.commodityId });
+    const all = presentTraderBook(await mockTraderTrades(name, { commodityId: input?.commodityId }), input?.entity);
     const cancelled = all.filter((t) => t.tradeStatus === TradeStatus.CANCELLED);
     if (cancelled.length === 0) return [];
 
@@ -617,13 +618,13 @@ export const traderRouter = router({
   myExposure: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
     if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    return mockTraderExposure(name, input?.commodityId);
+    return mockTraderExposure(name, input?.commodityId, input?.entity);
   }),
 
   actionItems: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
     if (input?.commodityId) await requireTraderCommodity(ctx.session.user.id, input.commodityId);
     const name = traderNameFromSession(ctx.session.user);
-    return mockTraderActionItems(name, input?.commodityId);
+    return mockTraderActionItems(name, input?.commodityId, input?.entity);
   }),
 
   referenceData: protectedProcedure.query(async ({ ctx }) => {
@@ -1269,37 +1270,50 @@ export const traderRouter = router({
     }),
 
   /** Locked trades with fulfillment progress for the signed-in trader. */
-  tradeFulfillment: protectedProcedure.query(async ({ ctx }) => {
+  tradeFulfillment: protectedProcedure.input(deskInput).query(async ({ ctx, input }) => {
     const traderName = traderNameFromSession(ctx.session.user);
+    const entity = input?.entity;
     const [contracts, book] = await Promise.all([getLockedContracts({}), getTraderBookTrades(traderName)]);
+    const bookByRef = new Map(book.map((t) => [t.tradeRef, t]));
     const mtmByRef = new Map(book.map(t => [t.tradeRef, t.mtmPnlUsd]));
     return contracts
       .filter((c) => c.traderName === traderName)
-      .map((c) => ({
-        tradeRef: c.tradeRef,
-        mtmPnlUsd: mtmByRef.get(c.tradeRef) ?? null,
-        direction: c.direction,
-        executionProfile: c.executionProfile,
-        tradeScope: c.tradeScope,
-        incoterms: c.incoterms,
-        commodityCode: c.commodityCode,
-        commodityName: c.commodityName,
-        counterpartyName: c.counterpartyName,
-        quantityUnit: c.quantityUnit,
-        contractualQtyMt: c.contractualQtyMt,
-        receivedQtyMt: c.receivedQtyMt,
-        openQtyMt: c.openQtyMt,
-        contractStatus: c.contractStatus,
-        quantityToleranceMt: c.quantityToleranceMt,
-        autoCloseAboveQtyMt: autoCloseThresholdQty(c.contractualQtyMt, c.quantityToleranceMt),
-        fulfillmentPct:
-          c.contractualQtyMt > 0 ? Math.min(1, c.receivedQtyMt / c.contractualQtyMt) : 0,
-        warehouseAllocationProgress: c.warehouseAllocationProgress,
-        contractDate: c.contractDate,
-        deliveryStart: c.deliveryStart,
-        deliveryEnd: c.deliveryEnd,
-        lockedAt: c.lockedAt,
-      }));
+      .filter((c) => {
+        const t = bookByRef.get(c.tradeRef);
+        return !entity || !t || belongsToSesameDesk(c.commodityCode, t.tradeParams, entity);
+      })
+      .map((c) => {
+        const t = bookByRef.get(c.tradeRef);
+        const direction = entity && t ? deskSide(c.commodityCode, c.direction, t.tradeParams, entity) : c.direction;
+        const counterpartyName = entity && t
+          ? deskCounterpartyLabel(c.commodityCode, t.tradeParams, c.counterpartyName, entity)
+          : c.counterpartyName;
+        return {
+          tradeRef: c.tradeRef,
+          mtmPnlUsd: mtmByRef.get(c.tradeRef) ?? null,
+          direction,
+          executionProfile: c.executionProfile,
+          tradeScope: c.tradeScope,
+          incoterms: c.incoterms,
+          commodityCode: c.commodityCode,
+          commodityName: c.commodityName,
+          counterpartyName,
+          quantityUnit: c.quantityUnit,
+          contractualQtyMt: c.contractualQtyMt,
+          receivedQtyMt: c.receivedQtyMt,
+          openQtyMt: c.openQtyMt,
+          contractStatus: c.contractStatus,
+          quantityToleranceMt: c.quantityToleranceMt,
+          autoCloseAboveQtyMt: autoCloseThresholdQty(c.contractualQtyMt, c.quantityToleranceMt),
+          fulfillmentPct:
+            c.contractualQtyMt > 0 ? Math.min(1, c.receivedQtyMt / c.contractualQtyMt) : 0,
+          warehouseAllocationProgress: c.warehouseAllocationProgress,
+          contractDate: c.contractDate,
+          deliveryStart: c.deliveryStart,
+          deliveryEnd: c.deliveryEnd,
+          lockedAt: c.lockedAt,
+        };
+      });
   }),
 
   // ─── Gate-invoice approvals (trader-owned trades) ─────────────────────────
@@ -1615,10 +1629,10 @@ export const traderRouter = router({
             .at(-1) ?? null;
         return {
           tradeRef: t.tradeRef,
-          direction: t.direction,
+          direction: internalPakSale(t.commodity.code,t.direction,t.tradeParams) ? "BUY" as const : t.direction,
           commodityName: t.commodity.name,
           commodityCode: t.commodity.code,
-          counterpartyName: t.counterparty.name,
+          counterpartyName: internalPakSale(t.commodity.code,t.direction,t.tradeParams) ? "Kastros Pakistan" : t.counterparty.name,
           quantity: t.quantity,
           quantityUnit: t.quantityUnit,
           editedBy: t.executionLastEditedBy ?? lastEdit?.actorName ?? null,

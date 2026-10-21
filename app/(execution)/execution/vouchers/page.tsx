@@ -1,4 +1,5 @@
 "use client";
+import {InternalTradePayments} from "@/components/execution/internal-trade-payments";
 import {InternationalPurchaseVoucher} from "@/components/execution/international-purchase-voucher";
 import {useExecutionCommodityDesk} from "@/components/execution/commodity-desk-provider";
 import {isSesameCommodity} from "@/lib/sesame";
@@ -58,6 +59,7 @@ export default function ExecutionVouchersPage() {
   const {active,entity}=useExecutionCommodityDesk();
   const fzco=isSesameCommodity(active.code)&&entity==="FZCO";
   const [purchaseIntl,setPurchaseIntl]=useState(false);
+  const [internal,setInternal]=useState(false);
   const [international,setInternational]=useState(false);
   const [side, setSide] = useState<"SELL" | "BUY">("SELL");
   const [counterpartyId, setCounterpartyId] = useState("");
@@ -187,12 +189,12 @@ export default function ExecutionVouchersPage() {
       <div className="exec-panel p-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <ReceiptText className="h-4 w-4 text-accent-secondary" />
-            {side === "BUY" ? "New purchase voucher request" : "New payment voucher"}
+            {internal ? "New internal trade voucher" : side === "BUY" ? "New purchase voucher request" : "New payment voucher"}
           </h2>
 
           {/* Which ledger the money lands on. A purchase credits the buy
               account, a sale the sell account — the two never mix. */}
-          {side === "BUY" && <p className="mt-3 text-xs text-subtle">Generate this purchase request for Finance. Finance can download and print the voucher, then enter the payment method, bank and receipt/reference after making payment.</p>}
+          {!internal && side === "BUY" && <p className="mt-3 text-xs text-subtle">Generate this purchase request for Finance. Finance can download and print the voucher, then enter the payment method, bank and receipt/reference after making payment.</p>}
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <div className="exec-segment h-8">
               {(fzco ? (["INTERNATIONAL"] as const) : (["SELL", "BUY", "INTERNATIONAL"] as const)).map((s) => (
@@ -200,28 +202,29 @@ export default function ExecutionVouchersPage() {
                   key={s}
                   type="button"
                   onClick={() => {
-                    setPurchaseIntl(false);setInternational(s==="INTERNATIONAL");
+                    setInternal(false);setPurchaseIntl(false);setInternational(s==="INTERNATIONAL");
                     setSide(s==="INTERNATIONAL"?"SELL":s);
                     clearAgainst();
                   }}
                   className={cn(
                     "exec-segment-item px-3 py-1 text-xs",
-                    (!purchaseIntl&&(s==="INTERNATIONAL"?(international||fzco):!international&&side===s)) && "exec-segment-active",
+                    (!internal&&!purchaseIntl&&(s==="INTERNATIONAL"?(international||fzco):!international&&side===s)) && "exec-segment-active",
                   )}
                 >
                   {s === "INTERNATIONAL" ? (fzco ? "Sale" : "International Sale") : s === "SELL" ? "Sale" : "Purchase"}
                 </button>
               ))}
-              {isSesameCommodity(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",purchaseIntl&&"exec-segment-active")} onClick={()=>{setPurchaseIntl(true);setInternational(false);setSide("BUY");clearAgainst();}}>{fzco ? "Purchase" : "International Purchase"}</button>}
+              {isSesameCommodity(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",!internal&&purchaseIntl&&"exec-segment-active")} onClick={()=>{setInternal(false);setPurchaseIntl(true);setInternational(false);setSide("BUY");clearAgainst();}}>{fzco ? "Purchase" : "International Purchase"}</button>}
+              {isSesameCommodity(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",internal&&"exec-segment-active")} onClick={()=>{setInternal(true);setPurchaseIntl(false);setInternational(false);}}>Internal Trade</button>}
             </div>
             <span className="text-xs text-subtle">
-              {side === "SELL"
+              {internal ? "One Trader approval, then one Finance payment for both desks." : side === "SELL"
                 ? "Credits the sell ledger — money received from a buyer."
                 : "Generate a purchase voucher for Finance to print, reconcile and pay."}
             </span>
           </div>
 
-          {purchaseIntl?<InternationalPurchaseVoucher/>:(international||fzco)?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
+          {internal&&isSesameCommodity(active.code)?<InternalTradePayments/>:purchaseIntl?<InternationalPurchaseVoucher/>:(international||fzco)?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Counterparty
@@ -499,7 +502,7 @@ export default function ExecutionVouchersPage() {
                             : "bg-success/15 text-success",
                         )}
                       >
-                        {v.side === "BUY" ? "Purchase" : "Sale"}
+                        {v.voucherKind === "INTERNAL_TRADE" ? "Internal Trade" : v.side === "BUY" ? "Purchase" : "Sale"}
                       </span>
                       {v.noteRef && (
                         <span className="rounded-full bg-warning/15 px-2 py-1 font-mono text-[10px] font-bold text-warning">

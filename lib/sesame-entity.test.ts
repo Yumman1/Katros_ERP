@@ -63,7 +63,7 @@ test("internal payment-open sales stay on the book after the stock has left", ()
   assert.equal(sesameBookQty({ ...shipped, asEntity: "PAK" }), 4);
   assert.equal(sesameBookQty({ ...shipped, asEntity: "FZCO" }), 4);
   assert.equal(sesameBookQty({ ...unshipped, asEntity: "PAK" }), 2);
-  assert.equal(sesameBookQty({ ...unshipped, asEntity: "FZCO" }), 0);
+  assert.equal(sesameBookQty({ ...unshipped, asEntity: "FZCO" }), 2);
   assert.equal(sesameBookQty({ ...shipped, contractStatus: "Close", asEntity: "PAK" }), 0);
   assert.equal(sesameBookQty({ quantityMt: 4, openMt: 0, receivedMt: 4, internal: false, closeOnPayment: true, contractStatus: "Open", asEntity: "FZCO" }), 4);
   assert.equal(sesameBookQty({ quantityMt: 4, openMt: 0, receivedMt: 4, internal: false, closeOnPayment: true, contractStatus: "Close", asEntity: "FZCO" }), 0);
