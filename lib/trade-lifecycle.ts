@@ -89,12 +89,10 @@ type OpenTradeLockGate = {
   pendingTraderPrice?: boolean;
   requiresWarehouse?: boolean;
   warehouseSplitApproved?: boolean;
-  lockOnThisDesk?: boolean;
 };
 
 /** Execution may lock only when price is set, trader review is clear, and warehouse split is head-approved. */
 export function executionCanLockOpenTrade(trade: OpenTradeLockGate): boolean {
-  if (trade.lockOnThisDesk === false) return false;
   if (trade.pendingTraderReview) return false;
   if (trade.pendingTraderPrice) return false;
   if (trade.requiresWarehouse && trade.warehouseSplitApproved !== true) return false;

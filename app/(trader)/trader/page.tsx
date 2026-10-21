@@ -27,7 +27,7 @@ const statusStyle: Partial<Record<TradeStatus, string>> = {
 export default function TraderDeskPage() {
   const desk = useCommodityDesk();
   const widgets = useDeskWidgets(desk.active?.id);
-  const input = desk.query;
+  const input = { commodityId: desk.active?.id };
   const options = { enabled: Boolean(desk.active), refetchInterval: 30_000 };
   const { data: summary, isLoading, error: summaryError } = trpc.trader.deskSummary.useQuery(input, options);
   const { data: trades } = trpc.trader.myTrades.useQuery(input, options);
@@ -49,9 +49,9 @@ export default function TraderDeskPage() {
       <DeskScroll className="space-y-4 pb-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">{desk.active?.name}{desk.sesame ? desk.entity === "FZCO" ? " · Dubai FZCO" : " · Pakistan" : ""} Dashboard</h1>
+            <h1 className="text-2xl font-semibold text-foreground">{desk.active?.name} Dashboard</h1>
             <p className="text-sm text-subtle">
-              {desk.active?.name}{desk.sesame ? desk.entity === "FZCO" ? " · Dubai FZCO" : " · Pakistan" : ""} · Your open book and today&apos;s activity
+              {desk.active?.name} · Your open book and today&apos;s activity
             </p>
           </div>
           <Link

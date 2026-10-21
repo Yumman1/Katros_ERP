@@ -21,7 +21,7 @@ const fmtNum = (n: number) => n.toLocaleString("en-PK", { maximumFractionDigits:
 export default function TraderFulfillmentPage() {
   const desk = useCommodityDesk();
   const utils = trpc.useUtils();
-  const { data: allTrades, isLoading } = trpc.trader.tradeFulfillment.useQuery(desk.query, {
+  const { data: allTrades, isLoading } = trpc.trader.tradeFulfillment.useQuery(undefined, {
     refetchInterval: 20000,
   });
   const trades = allTrades?.filter(t => t.commodityCode === desk.active?.code);

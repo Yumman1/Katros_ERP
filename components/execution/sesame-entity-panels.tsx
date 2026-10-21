@@ -92,10 +92,6 @@ export function SesamePakistanInventoryExtras({
       )}
       <section>
         <h2 className="text-sm font-semibold text-foreground">Pakistan sesame book</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Physical sesame in Pakistan warehouses. Open sales are already booked (not free to sell). Triparty is a
-          Pakistan sale leaving the warehouse. FZCO does not hold warehouse stock.
-        </p>
       </section>
       {isLoading && <p className="text-sm text-muted-foreground">Loading sesame book…</p>}
       {error && <p role="alert">{error.message}</p>}
@@ -164,7 +160,7 @@ export function SesameInventoryView({
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h1 className="text-2xl font-semibold">{ENTITY_NAMES[entity]} Sesame inventory</h1>
-        <p className="text-sm text-muted-foreground">{entity === "FZCO" ? "Open purchases stay until FZCO pays Kastros Pakistan or the supplier. Open sales stay until the buyer pays FZCO. Net is purchases minus sales. Supplier-held goods are shown separately below." : "Physical sesame in Pakistan warehouses, like corn: open sales are already booked (not free to sell). Triparty is a Pakistan sale leaving the warehouse."}</p>
+        {entity === "FZCO" && <p className="text-sm text-muted-foreground">Open purchases stay until FZCO pays Kastros Pakistan or the supplier. Open sales stay until the buyer pays FZCO. Net is purchases minus sales. Supplier-held goods are shown separately below.</p>}
       </div>
       {onSelectEntity && <fieldset><legend className="mb-2 text-xs text-muted-foreground">Sesame entity</legend><div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">{(["PAK", "FZCO"] as const).map(value => <button key={value} type="button" aria-pressed={entity === value} onClick={() => onSelectEntity(value)} className={`rounded-md px-3 py-2 text-xs ${entity === value ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}>{value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}</button>)}</div></fieldset>}
     </div>
