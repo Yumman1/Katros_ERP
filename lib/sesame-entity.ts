@@ -2,6 +2,9 @@ import { isSesameCommodity, sesameTradingEntity } from "./sesame";
 
 export type SesameEntity = "PAK" | "FZCO";
 export const ENTITY_NAMES = { PAK: "Kastros Pakistan", FZCO: "Dubai FZCO" } as const;
+/** FZCO is a books entity. It does not own bags sitting in a Pakistan warehouse. */
+export const FZCO_NO_PAKISTAN_WAREHOUSE =
+  "FZCO does not hold inventory in Pakistan warehouses. Ship Pakistan stock on a Pakistan sale (triparty) or confirm FZCO stock with a third-party holder.";
 export function tradeEntity(params: unknown): SesameEntity {
   return sesameTradingEntity((params ?? {}) as Record<string, string | number | null>) === "Kastros FZCO" ? "FZCO" : "PAK";
 }

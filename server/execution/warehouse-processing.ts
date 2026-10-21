@@ -19,24 +19,22 @@ export const editProcessingInput=z.object({id:z.string().min(1),revision:z.numbe
 async function settleDailyDefaults(db:Prisma.TransactionClient,code:string) {
  await db.$queryRaw`SELECT public.run_sesame_daily_processing(${code})`;
 }
-/** Stock a warehouse can still ship: physical grade minus FZCO custody, allocated sales, processing and trucks at gate. Unallocated sales are not pinned to every warehouse. */
+/** Stock a warehouse can still ship: physical grade minus allocated sales, processing and trucks at gate. */
 export async function processingAvailability(db:Prisma.TransactionClient,code:string,warehouse:string,grade:string,excludeTradeRef?:string) {
- const [rows,sales,custody,pending,atGate]=await Promise.all([
+ const [rows,sales,pending,atGate]=await Promise.all([
   sesameGrades(db,code),
   db.trade.findMany({where:{commodity:{code},...(excludeTradeRef?{tradeRef:{not:excludeTradeRef}}:{}),directSettled:false,tradeStatus:{in:['PENDING','LOCKED','CONFIRMED','EXECUTED']}},include:{contract:{include:{warehouseAllocations:true}}}}),
-  db.sesameOwnershipEntry.findMany({where:{commodityCode:code,warehouseName:{equals:warehouse,mode:'insensitive'}},include:{trade:{select:{tradeParams:true}}}}),
   db.pendingTruck.findMany({where:{commodityCode:code,warehouseName:{equals:warehouse,mode:'insensitive'},movementType:'OUTBOUND',executionEntity:'PAK',status:{not:'ASSIGNED'}}}),
   db.outboundDispatch.findMany({where:{warehouseName:{equals:warehouse,mode:'insensitive'},status:'AT_GATE',trade:{commodity:{code}}},include:{trade:{select:{tradeParams:true}}}}),
  ]);
  const same=(v:string)=>v.trim().toLowerCase()===warehouse.trim().toLowerCase();
  const physicalKg=(rows.find(r=>same(r.name))?.grades[sesameGrade({sesameType:grade})]??0)*1000;
- const custodyKg=custody.filter(e=>sesameGrade(e.trade.tradeParams)===grade).reduce((s,e)=>s+(e.toEntity==='FZCO'?n(e.quantityMt)*1000:0)-(e.fromEntity==='FZCO'?n(e.quantityMt)*1000:0),0);
  const bookedKg=sales.reduce((s,t)=>s+bookedPakistanSaleKgAtWarehouse(t,warehouse,grade,excludeTradeRef),0);
  // Open allocations may already include trucks at gate; use the larger reservation.
  const gateKg=atGate.filter(r=>tradeEntity(r.trade.tradeParams)==='PAK'&&sesameGrade(r.trade.tradeParams)===grade).reduce((s,r)=>s+n(r.allocatedQtyMt)*1000,0);
  const processingKg=await processingReservedKg(db,code,warehouse,grade);
  const pendingKg=pending.reduce((s,t)=>s+n(t.remainingKg),0);
- return {physicalKg,bookedKg:Math.max(bookedKg,gateKg),processingKg,availableKg:Math.max(0,physicalKg-custodyKg-Math.max(bookedKg,gateKg)-processingKg-pendingKg)};
+ return {physicalKg,bookedKg:Math.max(bookedKg,gateKg),processingKg,availableKg:Math.max(0,physicalKg-Math.max(bookedKg,gateKg)-processingKg-pendingKg)};
 }
 export async function warehouseProcessing(code:string) {
  const [warehouses,plans,history]=await Promise.all([getCompanyWarehouses(),prisma.sesameProcessingPlan.findMany({where:{commodityCode:code},include:{records:true},orderBy:{createdAt:'desc'}}),prisma.sesameProcessing.findMany({where:{commodityCode:code},orderBy:{createdAt:'desc'}})]);

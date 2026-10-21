@@ -278,7 +278,7 @@ export async function dispatchStockTransfer(
     if (isSesameCommodity(t.commodityCode)) {
       await lockSesameOwnership(tx, t.commodityCode);
       if (t.fromWarehouseName) await assertGradeAvailable(tx, t.commodityCode, t.fromWarehouseName, t.sesameType, qty);
-      if (t.fromWarehouseName && await pakistanAvailable(tx, t.commodityCode, t.fromWarehouseName) + TRANSIT_TOLERANCE_MT < qty) throw new Error("Insufficient Pakistan-owned stock; FZCO custody stock cannot be shifted");
+      if (t.fromWarehouseName && await pakistanAvailable(tx, t.commodityCode, t.fromWarehouseName) + TRANSIT_TOLERANCE_MT < qty) throw new Error("Insufficient physical sesame stock at the source warehouse");
     }
 
     const outGatepassNo = `INT-${await nextSerial(SERIALS.GATEPASS_OUTBOUND, tx)}`;

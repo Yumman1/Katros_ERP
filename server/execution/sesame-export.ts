@@ -6,14 +6,13 @@ import type {Prisma} from '@prisma/client';
 import {prisma} from '@/server/db';
 import {nextSerial,SERIALS} from '@/server/db/serials';
 import {isSesameCommodity} from '@/lib/sesame';
-import {tradeEntity,internalEntity,internalPakSale} from '@/lib/sesame-entity';
+import {tradeEntity,internalEntity,internalPakSale,FZCO_NO_PAKISTAN_WAREHOUSE} from '@/lib/sesame-entity';
 import {sesameGrade} from '@/lib/sesame-processing';
 import {quantityUnitToKg} from '@/lib/unit-conversion';
 import {warehouseAllowedForCommodity} from '@/lib/warehouse-eligibility';
 import {getCompanyWarehouses} from '@/server/trader-master-data';
 import {lockSesameOwnership} from './sesame-stock';
 import {sesameGrades} from './sesame-processing';
-import {processingReservedKg} from './processing-reservations';
 import {processingAvailability} from './warehouse-processing';
 import {releaseFzcoOwnership} from './sesame-ownership';
 import {closeOnFullPayment,refreshContract} from './contracts';
@@ -55,7 +54,7 @@ export function exportView(s:ExportRow){
 }
 export async function exportGateTrades(warehouse?:string){
  const trades=await prisma.trade.findMany({where:{direction:'SELL',tradeScope:'INTERNATIONAL',directSettled:false,tradeStatus:{in:['LOCKED','CONFIRMED','EXECUTED']},contract:{contractStatus:'Open'}},include:{commodity:true,counterparty:true,contract:{include:{warehouseAllocations:true}}}});
- return trades.filter(t=>!internalEntity(t.tradeParams)&&isSesameCommodity(t.commodity.code)&&(!warehouse||warehouseAllowedForCommodity(warehouse,t.commodity.code))&&(!warehouse||!t.contract?.warehouseAllocations.length||tradeEntity(t.tradeParams)==='FZCO'||t.contract.warehouseAllocations.some(a=>a.warehouseName===warehouse))).map(t=>({tradeRef:t.tradeRef,counterpartyName:t.counterparty.name,counterpartyCode:t.counterparty.code,commodityCode:t.commodity.code,commodityName:t.commodity.name,entity:tradeEntity(t.tradeParams)}));
+ return trades.filter(t=>!internalEntity(t.tradeParams)&&isSesameCommodity(t.commodity.code)&&tradeEntity(t.tradeParams)==='PAK'&&(!warehouse||warehouseAllowedForCommodity(warehouse,t.commodity.code))&&(!warehouse||!t.contract?.warehouseAllocations.length||t.contract.warehouseAllocations.some(a=>a.warehouseName===warehouse))).map(t=>({tradeRef:t.tradeRef,counterpartyName:t.counterparty.name,counterpartyCode:t.counterparty.code,commodityCode:t.commodity.code,commodityName:t.commodity.name,entity:tradeEntity(t.tradeParams)}));
 }
 const directContainers=z.array(z.object({truckNo:text,containerNo:z.string().trim().max(120).default(''),croNo:z.string().trim().max(120).default(''),weightKg:z.number().finite().positive().multipleOf(.001).max(1000000)})).min(1).max(100);
 export const directGateInput=exportGateInput.omit({warehouseName:true,recordedByName:true}).extend({containers:directContainers,holderId:z.string().min(1),dispatchLocation:z.string().trim().max(120).default(''),movementDate:z.coerce.date(),documentLinks:z.array(z.string().url().max(2000).refine(v=>v.startsWith("https://"),"Use HTTPS document links")).max(20).default([])});
@@ -87,16 +86,9 @@ export async function addExportContainers(raw:z.infer<typeof exportGateInput>, d
   if(n(allocated._sum.allocatedQtyMt)*1000+n(directAllocated._sum.totalWeightKg)+n(ownership?._sum.quantityMt)*1000+total>quantityUnitToKg(n(c.contractualQtyMt)+n(c.quantityToleranceMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds remaining trade quantity');
   if(!direct&&entity==='PAK'&&c.warehouseAllocations.length){const a=c.warehouseAllocations.find(a=>a.warehouseName===input.warehouseName);if(!a)throw new Error('Warehouse is not allocated to this trade');const used=await db.outboundDispatch.aggregate({where:{tradeRef:trade.tradeRef,warehouseName:input.warehouseName},_sum:{allocatedQtyMt:true}});if(n(used._sum.allocatedQtyMt)*1000+total>quantityUnitToKg(n(a.qtyMt),c.quantityUnit)+.001)throw new Error('Shipment exceeds the trade warehouse allocation');}
   if(direct){await db.counterparty.findUniqueOrThrow({where:{id:direct.holderId}});if(trade.direction==='SELL')await assertCustody(db,code,grade,total/1000,{holderId:direct.holderId,location:direct.dispatchLocation});}
+  if(!direct&&entity==='FZCO')throw new Error(FZCO_NO_PAKISTAN_WAREHOUSE);
   if(!direct&&entity==='PAK'){
-   const available=await processingAvailability(db,code,input.warehouseName,grade,trade.tradeRef);if(total>available.availableKg+.001)throw new Error(`Insufficient unreserved Pakistan-owned ${grade} at ${input.warehouseName} (${(available.availableKg/1000).toFixed(3)} MT free)`);
-  }else if(!direct){
-   const entries=await db.sesameOwnershipEntry.findMany({where:{commodityCode:code,warehouseName:input.warehouseName},include:{trade:{select:{tradeParams:true}}}});
-   const custody=entries.filter(e=>sesameGrade(e.trade.tradeParams)===grade).reduce((a,e)=>a+(e.toEntity==='FZCO'?n(e.quantityMt)*1000:0)-(e.fromEntity==='FZCO'?n(e.quantityMt)*1000:0),0);
-   const reserved=await db.outboundDispatch.findMany({where:{warehouseName:input.warehouseName,status:'AT_GATE',trade:{commodity:{code}}},include:{trade:{select:{tradeParams:true}}}});
-   const fzcoReserved=reserved.filter(r=>tradeEntity(r.trade.tradeParams)==='FZCO'&&sesameGrade(r.trade.tradeParams)===grade).reduce((a,r)=>a+n(r.allocatedQtyMt)*1000,0);
-   const stock=(await sesameGrades(db,code)).find(w=>w.name===input.warehouseName)?.grades[grade]??0;
-   const allReserved=reserved.filter(r=>sesameGrade(r.trade.tradeParams)===grade).reduce((a,r)=>a+n(r.allocatedQtyMt)*1000,0);
-   if(total>custody-fzcoReserved+.001||total>stock*1000-allReserved-await processingReservedKg(db,code,input.warehouseName,grade)+.001)throw new Error('Insufficient unreserved FZCO-owned grade stock at this warehouse');
+   const available=await processingAvailability(db,code,input.warehouseName,grade,trade.tradeRef);if(total>available.availableKg+.001)throw new Error(`Insufficient ${grade} at ${input.warehouseName} (${(available.availableKg/1000).toFixed(3)} MT free after open sales and processing)`);
   }
   const source=direct?.sourcePurchaseTradeRef?await thirdPartySource(db,{tradeRef:direct.sourcePurchaseTradeRef,holderId:direct.holderId,location:direct.dispatchLocation,code,grade,quantityKg:total}):null;
   if(source&&trade.direction!=='SELL')throw new Error('Triparty dispatch requires a sale to the final buyer');

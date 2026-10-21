@@ -68,12 +68,10 @@ async function main(){
  // Local Sesame retains the original path; group endpoint rejects it.
  const local=await trade('LOCAL-1','PAK','LOCAL');await assert.rejects(()=>addExportContainers({...input,requestKey:randomUUID(),tradeRef:local.tradeRef}),/international Sesame/);
  await prisma.trade.update({where:{id:local.id},data:{tradeStatus:'CANCELLED'}});
- // FZCO consumes its own custody only at physical release.
- const ft=await trade('FZCO-1','FZCO');await prisma.sesameOwnershipEntry.create({data:{commodityCode:'SES',tradeRef:ft.tradeRef,fromEntity:'PAK',toEntity:'FZCO',quantityMt:20,warehouseName:'Export Store',recordedBy:'Admin'}});
- let f=await addExportContainers({...input,requestKey:randomUUID(),tradeRef:ft.tradeRef,containers:[{truckNo:'F-1',containerNo:'F-CONT-1',croNo:'F-CRO',weightKg:10000}]});
- await assert.rejects(()=>caller(exec,'FZCO').sesameExport.generate({id:f.id,revision:f.revision}));
- for(const a of ['generate','trader','execution','finance','release'] as const)f=await exportAction(f.id,f.revision,'Admin',a);
- assert.equal(await stock(),90);assert.equal(await prisma.sesameOwnershipEntry.count({where:{truckId:f.trucks[0].id}}),1);
+ // FZCO cannot ship from a Pakistan warehouse; that stock is Pakistan's.
+ const ft=await trade('FZCO-1','FZCO');
+ await assert.rejects(()=>addExportContainers({...input,requestKey:randomUUID(),tradeRef:ft.tradeRef,containers:[{truckNo:'F-1',containerNo:'F-CONT-1',croNo:'F-CRO',weightKg:10000}]}),/does not hold inventory/);
+ assert.equal(await stock(),100);
 
  // Short booking is allowed; actual dispatch requires the right stock holder and grade.
  const ds=await trade('DIRECT-SELL','FZCO');await prisma.trade.update({where:{id:ds.id},data:{submittedToExecution:true}});
@@ -95,18 +93,18 @@ async function main(){
  assert.equal((await sesameBook('SES')).custody.find(r=>r.holderId===cp.id&&r.grade==='Raw')!.availableMt,10);
  assert.equal(await prisma.outboundDispatch.count({where:{tradeRef:ds.tradeRef}}),0);
  assert.equal(await prisma.sesameOwnershipEntry.count({where:{tradeRef:ds.tradeRef}}),0);
- assert.equal(await stock(),90);
+ assert.equal(await stock(),100);
  const buy=await trade('DIRECT-BUY','FZCO');await prisma.trade.update({where:{id:buy.id},data:{direction:'BUY',submittedToExecution:true}});await prisma.executionContract.update({where:{tradeRef:buy.tradeRef},data:{direction:'BUY',executionProfile:'PURCHASE_DELIVERED'}});
  assert.equal((await sesameBook('SES')).positions.find(p=>p.entity==='FZCO')!.netPositionMt,0);
  for(const a of ['generate','trader','execution','finance','release'] as const)d=await exportAction(d.id,d.revision,'Admin',a);
- assert.equal(await stock(),90);assert.equal(Number((await prisma.executionContract.findUniqueOrThrow({where:{tradeRef:ds.tradeRef}})).openQtyMt),50);
+ assert.equal(await stock(),100);assert.equal(Number((await prisma.executionContract.findUniqueOrThrow({where:{tradeRef:ds.tradeRef}})).openQtyMt),50);
  assert.equal((await sesameBook('SES')).positions.find(p=>p.entity==='FZCO')!.netPositionMt,50);
  d=await exportAction(d.id,d.revision,'Admin','bl',{blNo:'BL-DIRECT-SELL'});
  const buyInput={...intake,side:'BUY' as const,requestKey:randomUUID(),containers:[{truckNo:'BUY-1',containerNo:'BUY-C1',croNo:'BUY-REF',weightKg:20000}]};await caller(exec,'FZCO').sesameExport.logDirect(buyInput);
  let b=await caller(exec,'FZCO').sesameExport.assignDirect({id:buyInput.requestKey,tradeRef:buy.tradeRef});
  for(const a of ['generate','trader','execution','finance','release'] as const)b=await exportAction(b.id,b.revision,'Admin',a);
  b=await exportAction(b.id,b.revision,'Admin','bl',{blNo:'BL-DIRECT-BUY'});
- assert.equal(await stock(),90);assert.equal(await prisma.inboundReceipt.count({where:{tradeRef:buy.tradeRef}}),0);
+ assert.equal(await stock(),100);assert.equal(await prisma.inboundReceipt.count({where:{tradeRef:buy.tradeRef}}),0);
  assert.equal(Number((await prisma.executionContract.findUniqueOrThrow({where:{tradeRef:buy.tradeRef}})).openQtyMt),80);
  assert.equal((await sesameBook('SES')).positions.find(p=>p.entity==='FZCO')!.netPositionMt,30);
  const payKey=randomUUID();await caller(exec,'FZCO').sesameExport.receipt({id:b.id,amountPkr:2800000,method:'Bank transfer',reference:'',bankName:'Dubai Bank',requestKey:payKey});
@@ -116,8 +114,8 @@ async function main(){
  const usd=await caller(finance,'FZCO').sesameExport.usdLedger();
  assert.equal(usd.find(t=>t.tradeRef===buy.tradeRef)!.balanceUsd,10000);
  assert.equal(usd.find(t=>t.tradeRef===ds.tradeRef)!.balanceUsd,50000);
- assert.equal((await caller(exec,'FZCO').sesameExport.list()).find(s=>s.id===f.id)!.movementReadOnly,true);
- assert.ok((await caller(exec,'PAK').sesameExport.list()).some(s=>s.id===f.id));
+ assert.ok(!(await caller(exec,'FZCO').sesameExport.list()).some(s=>s.tradeRef===ft.tradeRef));
+ assert.ok(!(await caller(exec,'PAK').sesameExport.list()).some(s=>s.tradeRef===ft.tradeRef));
  assert.ok(!(await caller(exec,'PAK').sesameExport.list()).some(s=>s.id===d.id));
  await assert.rejects(()=>caller(exec,'PAK').sesameExport.release({id:d.id,revision:d.revision}));
 
@@ -127,11 +125,8 @@ async function main(){
  assert.equal(await prisma.pendingTruck.count({where:{gatepassNo:gate.gatepasses[0]}}),0);
  assert.ok((await pendingExportGates('SES')).some(g=>g.id===gate.id));
  await assert.rejects(()=>caller(exec,'FZCO').sesameExport.assignGate({id:gate.id,tradeRef:ft.tradeRef}));
- const assigned=await caller(exec,'PAK').sesameExport.assignGate({id:gate.id,tradeRef:ft.tradeRef});
- assert.equal(assigned.trucks[0].gatepassNo,gate.gatepasses[0]);assert.equal(assigned.totalWeightKg,5000);
- assert.equal((await pendingExportGates('SES')).length,0);
- await assert.rejects(()=>caller(exec,'PAK').sesameExport.assignGate({id:gate.id,tradeRef:ft.tradeRef}),/already assigned/);
- assert.equal(await stock(),90);
+ await assert.rejects(()=>caller(exec,'PAK').sesameExport.assignGate({id:gate.id,tradeRef:ft.tradeRef}),/does not hold inventory/);
+ assert.equal(await stock(),100);
  const pbuy=await trade('WAREHOUSE-NO-REF','PAK','LOCAL');await prisma.trade.update({where:{id:pbuy.id},data:{direction:'BUY'}});
  await prisma.executionContract.update({where:{tradeRef:pbuy.tradeRef},data:{direction:'BUY',executionProfile:'PURCHASE_SPOT',paperOwnership:false}});
  const response=await postWarehouseGate(new Request('http://localhost/api/warehouse-gatepass',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({movementType:'INBOUND',counterpartyName:cp.name,warehouseName:'Export Store',truckNo:'IN-NO-REF',builtyDetails:'123456',commodityCode:'SES',commodityName:'Sesame',recordedByName:'Warehouse staff',purchaseBasis:'PURCHASE_SPOT',weightAsPerBuiltyKg:1000,warehouseWeightKg:990})}));
@@ -151,17 +146,13 @@ async function main(){
  await assert.rejects(()=>caller(exec,'FZCO').sesameExecution.createInternalPayment({...request,paymentRef:'OVER',amountPkr:28000001}),/exceeds/);
  // Third-party stock cannot fund a Pakistan shipment, nor can another grade.
  const wrong=await trade('WRONG-CUSTODY','FZCO');await prisma.trade.update({where:{id:wrong.id},data:{tradeParams:{...wrong.tradeParams as object,sesameType:'Sortex'}}});
- await assert.rejects(()=>addExportContainers({...input,requestKey:randomUUID(),tradeRef:wrong.tradeRef}),/Insufficient/);
+ await assert.rejects(()=>addExportContainers({...input,requestKey:randomUUID(),tradeRef:wrong.tradeRef}),/does not hold inventory/);
  const warehouseAttempt=await trade('THIRD-PARTY-NOT-PAK','FZCO');
- await assert.rejects(()=>addExportContainers({...input,requestKey:randomUUID(),tradeRef:warehouseAttempt.tradeRef,containers:[{truckNo:'NO-PAK',containerNo:'NO-PAK',croNo:'NO-PAK',weightKg:20000}]}),/Insufficient/);
+ await assert.rejects(()=>addExportContainers({...input,requestKey:randomUUID(),tradeRef:warehouseAttempt.tradeRef,containers:[{truckNo:'NO-PAK',containerNo:'NO-PAK',croNo:'NO-PAK',weightKg:20000}]}),/does not hold inventory/);
  const ownershipKey=randomUUID();
  const stockBeforeInternal=await stock();
- await caller(head,'PAK').sesameExecution.confirmOwnership({tradeRef:inter.tradeRef,quantityMt:2,warehouseName:'Export Store',requestKey:ownershipKey});
- await assert.rejects(()=>caller(head,'PAK').sesameExecution.confirmOwnership({tradeRef:inter.tradeRef,quantityMt:2,warehouseName:'Export Store',requestKey:ownershipKey}),/already recorded/);
+ await assert.rejects(()=>caller(head,'PAK').sesameExecution.confirmOwnership({tradeRef:inter.tradeRef,quantityMt:2,warehouseName:'Export Store',requestKey:ownershipKey}),/triparty|does not hold inventory|ownership confirmation/);
  assert.equal(await stock(),stockBeforeInternal);
- const invoices=await prisma.counterpartyLedgerEntry.findMany({where:{tradeRef:inter.tradeRef,sourceType:'INVOICE'}});
- assert.equal(invoices.length,2);assert.deepEqual(invoices.map(i=>i.executionEntity).sort(),['FZCO','PAK']);assert.ok(invoices.every(i=>Number(i.amountPkr)===560000));
- const ledgerAfter=await caller(finance,'FZCO').sesameExport.usdLedger();assert.equal(ledgerAfter.find(t=>t.tradeRef===inter.tradeRef)!.balanceUsd,1000);
  assert.equal((await sesameBook('SES')).custody.find(r=>r.holderId===cp.id&&r.grade==='Raw')!.ownedMt,30);
  console.log('PASS: custody by holder and grade, staged trade assignment, paired internal vouchers, ledger separation, reconciliation and partial-payment limits');
  console.log('PASS: FZCO independent long/short, purchases and sales, third-party stock isolation, partial fulfilment, USD ledger, Finance supplier payment, PAK movement visibility and permissions');

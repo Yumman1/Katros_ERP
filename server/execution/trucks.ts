@@ -489,7 +489,7 @@ export async function createPendingTruck(input: {
   const createWithGatepass = (gatepassNo: string) => prisma.$transaction(async tx => {
     if (isSesameCommodity(input.commodityCode)) {
       await lockSesameOwnership(tx, input.commodityCode);
-      if (input.movementType === "OUTBOUND" && await pakistanAvailable(tx, input.commodityCode, input.warehouseName) + 0.000001 < input.weightKg/1000) throw new Error("Insufficient unreserved Pakistan-owned Sesame stock");
+      if (input.movementType === "OUTBOUND" && await pakistanAvailable(tx, input.commodityCode, input.warehouseName) + 0.000001 < input.weightKg/1000) throw new Error("Insufficient physical sesame stock at this warehouse");
     }
     if (!input.advanceVoucherId && input.movementType === "INBOUND" && isSesameCommodity(input.commodityCode) && await tx.voucher.findFirst({ where: { builtyNumber: input.builtyDetails.trim(), OR: [{truckNo: input.truckNo.trim().toUpperCase()}, {truckNo: null}], commodityCode: input.commodityCode, counterparty: { name: input.counterpartyName.trim() }, status: { in: ["PENDING_FINANCE", "APPROVED"] } } })) throw new Error("This builty has an advance voucher; select its approved builty and truck");
     const created = await tx.pendingTruck.create({

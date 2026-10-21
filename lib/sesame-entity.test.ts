@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   canonicalizeInternalPakSale,
   closesOnPayment,
+  FZCO_NO_PAKISTAN_WAREHOUSE,
   internalPakSale,
   isFzcoBuyFromPakistan,
   paperTrade,
@@ -15,6 +16,10 @@ const pakSellFzco = { tradingEntity: "Kastros PAK", internalCounterpartyEntity: 
 const fzcoSell = { tradingEntity: "Kastros FZCO" };
 const fzcoBuy = { tradingEntity: "Kastros FZCO" };
 const pakExternal = { tradingEntity: "Kastros PAK" };
+
+test("FZCO does not hold inventory in Pakistan warehouses", () => {
+  assert.match(FZCO_NO_PAKISTAN_WAREHOUSE, /does not hold inventory in Pakistan warehouses/);
+});
 
 test("internal Pakistan → FZCO sale is a physical trade, not paper ownership", () => {
   assert.equal(internalPakSale(sesame, "SELL", pakSellFzco), true);

@@ -8,24 +8,25 @@ export async function lockSesameOwnership(db: DB, code: string) {
   // Serialize ownership transfers and truck reservations across BOTH entities.
   await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`sesame-ownership:${code}`}))::text`;
 }
+/** Paper/third-party FZCO holdings only. Pakistan warehouse names are ignored. */
 export async function fzcoCustody(db: DB, code: string) {
-  const entries = await db.sesameOwnershipEntry.findMany({ where: { commodityCode: code } });
+  const entries = await db.sesameOwnershipEntry.findMany({ where: { commodityCode: code, OR: [{ warehouseName: null }, { warehouseName: "" }] } });
   const map = new Map<string, number>();
   for (const e of entries) {
-    const wh = e.warehouseName ?? "";
-    map.set(wh, (map.get(wh) ?? 0) + (e.toEntity === "FZCO" ? n(e.quantityMt) : 0) - (e.fromEntity === "FZCO" ? n(e.quantityMt) : 0));
+    const holder = e.holderId ?? "";
+    map.set(holder, (map.get(holder) ?? 0) + (e.toEntity === "FZCO" ? n(e.quantityMt) : 0) - (e.fromEntity === "FZCO" ? n(e.quantityMt) : 0));
   }
   return map;
 }
 
-/** Pakistan can only commit stock it owns, excluding already reserved trucks. */
+/** Physical sesame at a Pakistan warehouse minus trucks already at gate and processing holds. */
 export async function pakistanAvailable(db: DB, code: string, warehouse: string, excludeTruckId?: string, excludeDispatchId?: string) {
-  const [physical, custody, pending] = await Promise.all([
-    physicalStock(db, code, excludeDispatchId), fzcoCustody(db, code),
+  const [physical, pending] = await Promise.all([
+    physicalStock(db, code, excludeDispatchId),
     db.pendingTruck.findMany({ where: { commodityCode: code, executionEntity: "PAK", status: { not: "ASSIGNED" }, ...(excludeTruckId ? { id: { not: excludeTruckId } } : {}) } }),
   ]);
   const same = (name: string) => name.trim().toLowerCase() === warehouse.trim().toLowerCase();
-  let qty = [...physical].filter(([wh]) => same(wh)).reduce((s,[,v])=>s+v,0) - [...custody].filter(([wh]) => same(wh)).reduce((s,[,v])=>s+v,0);
+  let qty = [...physical].filter(([wh]) => same(wh)).reduce((s,[,v])=>s+v,0);
   for (const t of pending) if (same(t.warehouseName) && t.movementType === "OUTBOUND") qty -= n(t.remainingKg)/1000;
   return qty - await processingReservedKg(db,code,warehouse)/1000;
 }

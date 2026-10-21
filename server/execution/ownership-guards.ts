@@ -1,7 +1,6 @@
 import { prisma } from "@/server/db";
 import { TRPCError } from "@trpc/server";
 import { isSesameCommodity } from "@/lib/sesame";
-import { fzcoCustody } from "./sesame-stock";
 
 async function assertProcessingSource(code:string,warehouse:string) {
  if(!isSesameCommodity(code))return;
@@ -34,7 +33,6 @@ export async function assertOwnershipWrite(path: string, raw: unknown): Promise<
     const t = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
     if (t?.executionEntity === "FZCO") fail();
     if(t?.commodityCode && t.movementType === "INBOUND")await assertProcessingSource(t.commodityCode,t.warehouseName);
-    if (t?.commodityCode && isSesameCommodity(t.commodityCode) && (await fzcoCustody(prisma, t.commodityCode)).get(t.warehouseName)) fail();
   }
   for (const inbound of [true, false]) {
     const key = inbound ? "receiptId" : "dispatchId";
@@ -44,6 +42,5 @@ export async function assertOwnershipWrite(path: string, raw: unknown): Promise<
     const m = inbound ? await prisma.inboundReceipt.findUnique({ where: { id: movementId }, select }) : await prisma.outboundDispatch.findUnique({ where: { id: movementId }, select });
     if (m?.trade.contract?.paperOwnership) fail();
     if(m && inbound)await assertProcessingSource(m.trade.commodity.code,m.warehouseName);
-    if (m && isSesameCommodity(m.trade.commodity.code) && (await fzcoCustody(prisma, m.trade.commodity.code)).get(m.warehouseName)) fail();
   }
 }

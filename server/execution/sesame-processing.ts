@@ -31,13 +31,9 @@ export async function sesameGrades(db: DB, code: string) {
 export async function assertGradeAvailable(db: DB, code: string, warehouse: string, grade: string, qtyMt: number) {
   const rows = await sesameGrades(db,code);
   const available = rows.find(r => r.name.trim().toLowerCase() === warehouse.trim().toLowerCase())?.grades[sesameGrade({sesameType:grade})] ?? 0;
-  const [entries, reserved] = await Promise.all([
-    db.sesameOwnershipEntry.findMany({where:{commodityCode:code,warehouseName:{equals:warehouse,mode:"insensitive"}},include:{trade:{select:{tradeParams:true}}}}),
-    db.outboundDispatch.findMany({where:{warehouseName:{equals:warehouse,mode:"insensitive"},status:"AT_GATE",trade:{commodity:{code}}},include:{trade:{select:{tradeParams:true}}}}),
-  ]);
-  const custody = entries.filter(e=>sesameGrade(e.trade.tradeParams)===grade).reduce((sum,e)=>sum+(e.toEntity==="FZCO"?n(e.quantityMt):0)-(e.fromEntity==="FZCO"?n(e.quantityMt):0),0);
+  const reserved = await db.outboundDispatch.findMany({where:{warehouseName:{equals:warehouse,mode:"insensitive"},status:"AT_GATE",trade:{commodity:{code}}},include:{trade:{select:{tradeParams:true}}}});
   const reservedMt = reserved.filter(r=>tradeEntity(r.trade.tradeParams)==="PAK" && sesameGrade(r.trade.tradeParams)===grade).reduce((sum,r)=>sum+n(r.allocatedQtyMt),0);
-  if (qtyMt > Math.max(0,available-custody-reservedMt-await processingReservedKg(db,code,warehouse,grade)/1000)+0.000001) throw new Error(`Insufficient unreserved Pakistan-owned ${grade} at ${warehouse}`);
+  if (qtyMt > Math.max(0,available-reservedMt-await processingReservedKg(db,code,warehouse,grade)/1000)+0.000001) throw new Error(`Insufficient ${grade} at ${warehouse}`);
 }
 export async function recordProcessing(input: { code: string; transferId: string; toType: string; inputKg: number; yieldRatio: number; requestKey: string; actor: string }) {
   const amounts = processingYield(input.inputKg,input.yieldRatio);
@@ -55,7 +51,7 @@ export async function recordProcessing(input: { code: string; transferId: string
     const used = await db.sesameProcessing.aggregate({where:{transferId:t.id},_sum:{inputKg:true}});
     if (n(used._sum.inputKg)+amounts.inputKg > n(t.receivedQtyMt)*1000+0.000001) throw new Error("Input exceeds the unprocessed quantity received on this truck");
     await assertGradeAvailable(db,input.code,t.toWarehouseName,t.sesameType,amounts.inputKg/1000);
-    if (await pakistanAvailable(db,input.code,t.toWarehouseName)+0.000001 < amounts.inputKg/1000) throw new Error("Stock is reserved or owned by FZCO");
+    if (await pakistanAvailable(db,input.code,t.toWarehouseName)+0.000001 < amounts.inputKg/1000) throw new Error("Stock is reserved for processing or already at the gate");
     const saved = await db.sesameProcessing.create({data:{requestKey:input.requestKey,transferId:t.id,commodityCode:input.code,warehouseName:t.toWarehouseName,fromType:t.sesameType,toType:input.toType,...amounts,yieldRatio:input.yieldRatio,recordedBy:input.actor}});
     return { id: saved.id };
   });

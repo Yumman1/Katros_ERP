@@ -54,7 +54,6 @@ import { exportTradeFileCsv } from "@/server/trade-file-export";
 import { loadStockTransfersForStock } from "@/server/execution/stock-transfer-load";
 import { computePositionLedger } from "@/server/position-ledger";
 import { getSeasonNetPositions, setPositionMarketInput } from "@/server/net-position";
-import { fzcoCustody } from "@/server/execution/sesame-stock";
 import { getCounterpartyLedgers } from "@/server/finance/ledger";
 import { buildTraderCounterpartyReport } from "@/server/trader-reports";
 import {
@@ -702,14 +701,6 @@ export const traderRouter = router({
           key,
           (stockOnHandByWarehouse.get(key) ?? 0) + row.netQty,
         );
-      }
-    }
-
-    // Sell commitment already promised out of each warehouse but not yet
-    if (commodity && isSesameCommodity(commodity.code)) {
-      for (const [name, qty] of await fzcoCustody(prisma, commodity.code)) {
-        const key = normWarehouseName(name);
-        stockOnHandByWarehouse.set(key, (stockOnHandByWarehouse.get(key) ?? 0) - qty);
       }
     }
 
