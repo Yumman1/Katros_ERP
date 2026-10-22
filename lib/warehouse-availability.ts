@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from "@/lib/formatters/numbers";
 import { stockAsOf } from "@/lib/warehouse-stock-utils";
 import { normWarehouseName } from "@/lib/warehouse-allocation";
 import {
@@ -221,5 +222,5 @@ export function availabilityTone(pct: number | null | undefined): "high" | "medi
 
 export function fmtCapacityMt(n: number | null | undefined) {
   if (n == null || !Number.isFinite(n)) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return formatDisplayNumber(n, undefined, { maximumFractionDigits: 1 });
 }

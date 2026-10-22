@@ -1,4 +1,5 @@
 "use client";
+import { formatDisplayFixed } from "@/lib/formatters/numbers";
 
 import { trpc } from "@/lib/trpc/client";
 import { formatCurrency, formatQty } from "@/lib/formatters/numbers";
@@ -107,7 +108,7 @@ export default function PositionsPage() {
               <span>L {formatQty(c.longQty)} / S {formatQty(c.shortQty)}</span>
               <span>Mkt {formatCurrency(c.marketPrice)}</span>
               <span className={c.dayChangePct >= 0 ? "text-success" : "text-kastros-red"}>
-                Δ {((c.dayChangePct ?? 0) * 100).toFixed(2)}%
+                Δ {formatDisplayFixed(((c.dayChangePct ?? 0) * 100), 2)}%
               </span>
             </div>
           </div>
@@ -162,7 +163,7 @@ export default function PositionsPage() {
                     >
                       {formatCurrency(r.mtmPnl, r.currency)}
                     </td>
-                    <td className="px-2 py-1">{(r.pctChange * 100).toFixed(2)}%</td>
+                    <td className="px-2 py-1">{formatDisplayFixed((r.pctChange * 100), 2)}%</td>
                     <td className="px-2 py-1 text-muted-foreground">{r.tradeRef}</td>
                     <td className="max-w-[140px] truncate px-2 py-1 text-subtle">{r.counterparty}</td>
                   </tr>

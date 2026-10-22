@@ -1,4 +1,5 @@
 "use client";
+import { formatDisplayFixed } from "@/lib/formatters/numbers";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field } from "@/lib/record-filters";
@@ -343,7 +344,7 @@ export function InventoryStatistics({
                     <span
                       key={`${c.code}-${c.unit}`}
                       className="rounded-full bg-foreground/5 px-2 py-1 text-[10px] font-semibold text-foreground"
-                      title={`Unalloc ${c.unallocated.toFixed(1)} · Alloc ${c.allocated.toFixed(1)}`}
+                      title={`Unalloc ${formatDisplayFixed(c.unallocated, 1)} · Alloc ${formatDisplayFixed(c.allocated, 1)}`}
                     >
                       {c.code}: {formatQtyWithUnit(c.qty, c.unit, 1)}
                     </span>
@@ -360,11 +361,11 @@ export function InventoryStatistics({
                 const util = { utilizationPct: shared.utilizationPct / 100 };
                 return (
                   <div className="mt-3 rounded-xl border border-border bg-foreground/[0.02] p-3">
-                    <div className="mb-2 text-xs text-subtle">{shared.commodityUtilization.map(c => <p key={c.commodityCode}>{c.commodityName}: {c.stockMt.toFixed(3)} MT · {c.utilizationPct?.toFixed(1) ?? "—"}%</p>)}</div>
+                    <div className="mb-2 text-xs text-subtle">{shared.commodityUtilization.map(c => <p key={c.commodityCode}>{c.commodityName}: {formatDisplayFixed(c.stockMt, 3)} MT · {c.utilizationPct == null ? "—" : formatDisplayFixed(c.utilizationPct, 1)}%</p>)}</div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-subtle">Total utilization (all commodities)</span>
                       <span className="font-semibold text-muted-foreground">
-                        {(util.utilizationPct * 100).toFixed(1)}%
+                        {formatDisplayFixed((util.utilizationPct * 100), 1)}%
                       </span>
                     </div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-foreground/10">

@@ -1,4 +1,5 @@
 "use client";
+import { formatDisplayNumber } from "@/lib/formatters/numbers";
 import {FzcoGateAssignment} from "./fzco-gate-assignment";
 import {FzcoDirectEntry} from "./fzco-direct-entry";
 import {SesameExportShipments} from "./sesame-export-shipments";
@@ -13,7 +14,7 @@ import { InventoryStatistics } from "./inventory-statistics";
 import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
 
-const qty = (value: number) => value.toLocaleString("en-PK", { maximumFractionDigits: 3 });
+const qty = (value: number) => formatDisplayNumber(value, "en-PK", { maximumFractionDigits: 3 });
 const cell = "border-b border-border px-4 py-3 text-left";
 const input = "kastros-input w-full";
 function useBook(commodityCode?: string) {

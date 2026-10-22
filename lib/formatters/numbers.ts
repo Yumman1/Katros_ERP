@@ -1,3 +1,14 @@
+/** Remove the minus only when the formatted value rounds to zero. */
+export function formatDisplayNumber(value: number, locales?: Intl.LocalesArgument, options?: Intl.NumberFormatOptions): string {
+  const formatted = value.toLocaleString(locales, options);
+  return /^-0(?:[.,]0+)?$/.test(formatted) ? formatted.slice(1) : formatted;
+}
+
+export function formatDisplayFixed(value: number, digits: number): string {
+  const formatted = value.toFixed(digits);
+  return /^-0(?:\.0+)?$/.test(formatted) ? formatted.slice(1) : formatted;
+}
+
 export function formatCurrency(value: number, currency = "USD"): string {
   const code =
     currency === "PKR"
@@ -13,9 +24,9 @@ export function formatCurrency(value: number, currency = "USD"): string {
       currency: code,
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }).format(value);
+    }).format(Number(formatDisplayFixed(value, 2)));
   } catch {
-    return `${currency} ${value.toFixed(2)}`;
+    return `${currency} ${formatDisplayFixed(value, 2)}`;
   }
 }
 
@@ -40,5 +51,5 @@ export function formatQtyWithUnit(value: number, unit = "MT", maxFrac = 2): stri
 }
 
 export function formatPct(value: number): string {
-  return `${(value * 100).toFixed(2)}%`;
+  return `${formatDisplayFixed(value * 100, 2)}%`;
 }

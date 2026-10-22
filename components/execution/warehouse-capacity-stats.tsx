@@ -1,4 +1,5 @@
 "use client";
+import { formatDisplayFixed, formatDisplayNumber } from "@/lib/formatters/numbers";
 
 import { fmtCapacityMt } from "@/lib/warehouse-availability";
 import type { WarehouseUtilizationView } from "@/lib/warehouse-utilization";
@@ -18,10 +19,10 @@ export function WarehouseCapacityStats({ view, compact }: Props) {
         Divisions: {view.grainDivisionSqFt} sq ft / MT grain · {view.balesDivisionSqFt} sq ft / MT baled
       </p>
       <div className={gridClass}>
-        <Stat label="On hand (MT)" value={view.stockMt.toFixed(1)} />
-        <Stat label="On hand (bales)" value={view.stockBales.toLocaleString()} />
-        <Stat label="Utilization" value={`${view.utilizationPct.toFixed(1)}%`} />
-        <Stat label="Free sq ft" value={view.remainingSqFt.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+        <Stat label="On hand (MT)" value={formatDisplayFixed(view.stockMt, 1)} />
+        <Stat label="On hand (bales)" value={formatDisplayNumber(view.stockBales)} />
+        <Stat label="Utilization" value={`${formatDisplayFixed(view.utilizationPct, 1)}%`} />
+        <Stat label="Free sq ft" value={formatDisplayNumber(view.remainingSqFt, undefined, { maximumFractionDigits: 0 })} />
         <Stat
           label="Avail. grain (MT)"
           value={fmtCapacityMt(view.availableGrainMt)}

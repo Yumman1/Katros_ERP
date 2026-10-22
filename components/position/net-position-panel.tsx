@@ -1,4 +1,5 @@
 "use client";
+import { formatDisplayNumber } from "@/lib/formatters/numbers";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
 import { field } from "@/lib/record-filters";
@@ -9,9 +10,9 @@ import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
 const fmtQty = (n: number) =>
-  n.toLocaleString("en-PK", { maximumFractionDigits: 2 });
+  formatDisplayNumber(n, "en-PK", { maximumFractionDigits: 2 });
 const fmtMoney = (n: number) =>
-  n.toLocaleString("en-PK", { maximumFractionDigits: 0 });
+  formatDisplayNumber(n, "en-PK", { maximumFractionDigits: 0 });
 
 function money(v: number | null, parens = true): string {
   if (v == null) return "—";
@@ -147,7 +148,7 @@ export function NetPositionPanel({
             <Row
               label="FX"
               values={cols.map((c) =>
-                c.fxRate != null ? c.fxRate.toLocaleString("en-PK", { maximumFractionDigits: 4 }) : "—",
+                c.fxRate != null ? formatDisplayNumber(c.fxRate, "en-PK", { maximumFractionDigits: 4 }) : "—",
               )}
             />
           </tbody>

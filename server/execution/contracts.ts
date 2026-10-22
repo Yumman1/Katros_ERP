@@ -825,7 +825,7 @@ export async function lockTradeInStore(
     traderSelections,
     destName: trade.destName,
     qtyMt: trade.quantity,
-    resolveName: (hint) => resolveCompanyWarehouseName(hint) ?? hint.trim() || null,
+    resolveName: (hint) => resolveCompanyWarehouseName(hint) ?? (hint.trim() || null),
   });
 
   await prisma.$transaction(async (tx) => {

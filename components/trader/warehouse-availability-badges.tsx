@@ -1,4 +1,5 @@
 "use client";
+import { formatDisplayNumber, formatDisplayFixed } from "@/lib/formatters/numbers";
 
 import { USE_BASIS_MESSAGE } from "@/lib/warehouse-basis";
 
@@ -21,7 +22,7 @@ const DIVISION_LABEL: Record<WarehouseStorageDivision, string> = {
 };
 
 function fmtMt(n: number) {
-  return n.toLocaleString(undefined, {
+  return formatDisplayNumber(n, undefined, {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   });
@@ -76,8 +77,8 @@ export function WarehouseAvailabilityBadges({
   }
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-      {w.commodityUtilization && <div className="w-full text-xs text-subtle">{w.commodityUtilization.map(c=>`${c.commodityName}: ${fmtMt(c.stockMt)} MT${c.utilizationPct == null ? "" : ` (${c.utilizationPct.toFixed(1)}%)`}`).join(" · ")} · Total utilization: {w.utilizationPct == null ? "Not configured" : `${w.utilizationPct.toFixed(1)}%`}</div>}
-      {w.sesameGrades && <div className="w-full text-xs text-subtle">{Object.entries(w.sesameGrades).map(([grade,qty])=>`${grade}: ${qty.toLocaleString("en-PK",{maximumFractionDigits:3})} MT`).join(" · ")}</div>}
+      {w.commodityUtilization && <div className="w-full text-xs text-subtle">{w.commodityUtilization.map(c=>`${c.commodityName}: ${fmtMt(c.stockMt)} MT${c.utilizationPct == null ? "" : ` (${formatDisplayFixed(c.utilizationPct, 1)}%)`}`).join(" · ")} · Total utilization: {w.utilizationPct == null ? "Not configured" : `${formatDisplayFixed(w.utilizationPct, 1)}%`}</div>}
+      {w.sesameGrades && <div className="w-full text-xs text-subtle">{Object.entries(w.sesameGrades).map(([grade,qty])=>`${grade}: ${formatDisplayNumber(qty, "en-PK", {maximumFractionDigits:3})} MT`).join(" · ")}</div>}
       {isSell ? (
         <>
           <span
@@ -119,7 +120,7 @@ export function WarehouseAvailabilityBadges({
           title={badgeTitle}
         >
           Available {fmtMt(badgeMt)} MT
-          {badgePct != null ? ` · ${badgePct.toFixed(0)}%` : ""}
+          {badgePct != null ? ` · ${formatDisplayFixed(badgePct, 0)}%` : ""}
         </span>
       ) : hasCapacity ? (
         <span
