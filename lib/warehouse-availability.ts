@@ -151,7 +151,7 @@ export function computeWarehouseAvailability(
     const stock = inv?.stock ?? stockAsOf(loc.name, inbound, outbound, contractByRef, asOf);
     if (loc.warehouseBasis === "USE") return {
       ...EMPTY_ROW(loc), grainDivisionSqFt: null, balesDivisionSqFt: null, capacitySqFt: null,
-      utilizationPct: 100, storageDivision, allocatedInvMt, unallocatedInvMt,
+      utilizationPct: stock.stockMt + stock.stockBales > 0.0000001 ? 100 : 0, storageDivision, allocatedInvMt, unallocatedInvMt,
       stockMt: stock.stockMt, stockBales: stock.stockBales,
     };
     const view = buildWarehouseUtilizationView(loc, stock);

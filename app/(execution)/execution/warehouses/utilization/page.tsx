@@ -84,7 +84,7 @@ export default function WarehouseUtilizationPage() {
   }, [enriched, search, cityFilter, minUtilPct]);
 
   const filterKey = `${search}|${cityFilter}|${minUtilPct}|${dateFrom}|${dateTo}`;
-  const listFilters = useRecordFilters("utilization", filtered.map((r) => ({ ...r, utilizationBand: r.loc.warehouseBasis === "USE" ? "Use basis — manual space confirmation" : !r.view ? "Not configured" : r.view.utilizationPct >= 100 ? "Full / over capacity" : r.view.utilizationPct <= 0 ? "Empty" : "Partially occupied" })), { fields: [field("warehouse", "Warehouse", "loc.name"), field("band", "Utilization", "utilizationBand")], searchPaths: ["loc.name", "loc.code", "loc.city"] });
+  const listFilters = useRecordFilters("utilization", filtered.map((r) => ({ ...r, utilizationBand: r.loc.warehouseBasis === "USE" ? (r.stock.stockMt + r.stock.stockBales > 0.0000001 ? "Use basis — manual space confirmation" : "Empty") : !r.view ? "Not configured" : r.view.utilizationPct >= 100 ? "Full / over capacity" : r.view.utilizationPct <= 0 ? "Empty" : "Partially occupied" })), { fields: [field("warehouse", "Warehouse", "loc.name"), field("band", "Utilization", "utilizationBand")], searchPaths: ["loc.name", "loc.code", "loc.city"] });
   const utilizationPagination = useListPagination(listFilters.rows, { resetKey: filterKey + listFilters.resetKey });
 
   function exportExcel() {
@@ -101,7 +101,7 @@ export default function WarehouseUtilizationPage() {
         GrainDivisionSqFt: view?.grainDivisionSqFt ?? "",
         BaleDivisionSqFt: view?.balesDivisionSqFt ?? "",
         WarehouseBasis: loc.warehouseBasis ?? "LEASE",
-        UtilizationPct: loc.warehouseBasis === "USE" ? "100.0" : view ? view.utilizationPct.toFixed(1) : "",
+        UtilizationPct: loc.warehouseBasis === "USE" ? (stock.stockMt + stock.stockBales > 0.0000001 ? "100.0" : "0.0") : view ? view.utilizationPct.toFixed(1) : "",
         AvailGrainMT: view ? view.availableGrainMt.toFixed(1) : "",
         AvailBaleAsGrainMT: view ? view.availableBaleAsGrainMt.toFixed(1) : "",
         UsedSqFt: view ? view.consumedSqFt.toFixed(0) : "",
@@ -185,7 +185,7 @@ export default function WarehouseUtilizationPage() {
           <div className="py-8 text-sm text-subtle">Loading…</div>
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
-            {utilizationPagination.items.map(({ loc, view, commodityUtilization }) => (
+            {utilizationPagination.items.map(({ loc, view, stock, commodityUtilization }) => (
               <div key={loc.id} className="exec-panel">
                 <div className="flex items-start gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-secondary-muted text-accent-secondary">
@@ -199,7 +199,7 @@ export default function WarehouseUtilizationPage() {
                   </div>
                 </div>
                 {loc.warehouseBasis === "USE" ? (
-                  <p className="mt-3 text-xs text-subtle">Use basis · utilization 100% (reporting convention). No fixed capacity. Confirm space by phone before adding inventory.</p>
+                  <p className="mt-3 text-xs text-subtle">Use basis · {stock.stockMt + stock.stockBales > 0.0000001 ? "utilization 100% (reporting convention)" : "Empty · utilization 0%"}. No fixed capacity. Confirm space by phone before adding inventory.</p>
                 ) : view ? (
                   <>
                     <WarehouseCapacityStats view={view} />
@@ -225,7 +225,7 @@ export default function WarehouseUtilizationPage() {
                 <div className="mt-3 space-y-1 text-xs">
                   <p className="font-semibold">Commodity utilization</p>
                   {commodityUtilization.map(c => <p key={c.commodityCode}>{c.commodityName}: {c.stockMt.toLocaleString(undefined, {maximumFractionDigits: 3})} MT · {c.utilizationPct == null ? "No fixed capacity" : `${c.utilizationPct.toFixed(1)}%`}</p>)}
-                  <p className="font-semibold">Total utilization: {loc.warehouseBasis === "USE" ? "100% (use basis)" : view ? `${view.utilizationPct.toFixed(1)}%` : "Not configured"}</p>
+                  <p className="font-semibold">Total utilization: {loc.warehouseBasis === "USE" ? (stock.stockMt + stock.stockBales > 0.0000001 ? "100% (use basis)" : "0% (empty)") : view ? `${view.utilizationPct.toFixed(1)}%` : "Not configured"}</p>
                 </div>
                 {loc.warehouseBasis !== "USE" && <WarehouseCostingSummaryCard
                   loc={loc}

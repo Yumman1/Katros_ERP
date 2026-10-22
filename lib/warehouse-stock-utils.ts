@@ -1,7 +1,7 @@
 import { aggregateWarehouseStock } from "@/lib/warehouse-utilization";
 import {
   inboundStockDelta,
-  outboundStockDelta,
+  physicalOutboundStockDelta,
   stockTransferDelta,
   type StockTransferStockInput,
 } from "@/lib/inventory-stock";
@@ -42,7 +42,7 @@ export function stockAsOf(
   for (const d of outbound) {
     if (d.warehouseName !== warehouseName) continue;
     if (asOf && new Date(d.dispatchDate) > asOf) continue;
-    const delta = outboundStockDelta(d.status, d.allocatedQtyMt);
+    const delta = physicalOutboundStockDelta(d.status, d.allocatedQtyMt);
     if (delta === 0) continue;
     const c = contractByRef.get(d.tradeRef);
     rows.push({

@@ -227,7 +227,7 @@ export function InventoryStatistics({
           <table className="w-full text-xs">
             <thead>
               <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                {["Warehouse", "Commodity", "Unit", "Unallocated", "Allocated", "Net"].map((h) => (
+                {["Warehouse", "Commodity", "Unit", "Unallocated", "Allocated", "Physical stock", "Sellable stock"].map((h) => (
                   <th
                     key={h}
                     className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
@@ -260,7 +260,14 @@ export function InventoryStatistics({
                     {formatQtyWithUnit(row.allocatedQty, row.quantityUnit, 2)}
                   </td>
                   <td className="px-4 py-3 tabular-nums font-semibold text-brand">
-                    {formatQtyWithUnit(row.netQty, row.quantityUnit, 2)}
+                    {formatQtyWithUnit(row.physicalQty, row.quantityUnit, 2)}
+                  </td>
+                  <td className="px-4 py-3 tabular-nums font-semibold">
+                    {(() => {
+                      const selectedRow = sharedAvailability?.inventoryRows.some(r => r.commodityCode === row.commodityCode);
+                      const available = selectedRow ? sharedAvailability?.warehouses.find(w => w.name.trim().toLowerCase() === row.warehouseName.trim().toLowerCase())?.freeToSellMt : null;
+                      return available == null ? "—" : formatQtyWithUnit(available, row.quantityUnit, 2);
+                    })()}
                   </td>
                 </tr>
               ))}
@@ -352,7 +359,10 @@ export function InventoryStatistics({
               </div>
               {(() => {
                 const cfg = warehouseConfigByName.get(w.name);
-                if (cfg?.warehouseBasis === "USE") return <p className="mt-3 text-xs text-subtle">Use basis · utilization 100% (reporting convention). Confirm space by phone before adding inventory.</p>;
+                if (cfg?.warehouseBasis === "USE") {
+                  const occupied = sharedAvailability?.warehouses.find(row => row.id === cfg.id)?.utilizationPct;
+                  return <p className="mt-3 text-xs text-subtle">Use basis · {occupied == null ? "Loading utilization…" : occupied === 0 ? "Empty · utilization 0%." : "Stock present · utilization 100% (reporting convention)."} Confirm space by phone before adding inventory.</p>;
+                }
                 const capSqFt = cfg?.capacitySqFt ?? 0;
                 if (!capSqFt) return null;
                 if (cfg?.grainDivisionSqFt == null && cfg?.balesDivisionSqFt == null) return <p className="mt-3 text-xs text-subtle">Confirm storage divisions in Warehouses → Update &amp; delete to calculate utilization.</p>;

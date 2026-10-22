@@ -696,8 +696,8 @@ export const traderRouter = router({
       const cur = inventoryByWarehouse.get(key) ?? { allocatedMt: 0, unallocatedMt: 0, stock: { stockMt: 0, stockBales: 0 } };
       cur.allocatedMt += row.allocatedQty;
       cur.unallocatedMt += row.unallocatedQty;
-      if (isBaleCommodity(row.commodityCode, row.quantityUnit)) cur.stock.stockBales += Math.max(0, row.netQty);
-      else cur.stock.stockMt += Math.max(0, row.netQty);
+      if (isBaleCommodity(row.commodityCode, row.quantityUnit)) cur.stock.stockBales += Math.max(0, row.physicalQty);
+      else cur.stock.stockMt += Math.max(0, row.physicalQty);
       inventoryByWarehouse.set(key, cur);
       if (commodity && row.commodityCode === commodity.code) {
         stockOnHandByWarehouse.set(
@@ -761,7 +761,7 @@ export const traderRouter = router({
       return {
         ...row,
         commodityUtilization: inventoryRows.filter(r => normWarehouseName(r.warehouseName) === key).map(r => {
-          const stockMt = Math.max(0, r.netQty);
+          const stockMt = Math.max(0, r.physicalQty);
           const division = isBaleCommodity(r.commodityCode, r.quantityUnit) ? row.balesDivisionSqFt : row.grainDivisionSqFt;
           const consumedSqFt = stockMt * (division ?? 0);
           return { commodityCode: r.commodityCode, commodityName: r.commodityName, stockMt, consumedSqFt,

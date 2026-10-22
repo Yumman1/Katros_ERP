@@ -23,6 +23,11 @@ export function countsAsReleasedOutbound(status: string): boolean {
   return status === "WEIGHED" || status === "FINANCE_PENDING" || status === "RELEASED";
 }
 
+/** Capacity remains occupied until the outbound gate release is completed. */
+export function physicalOutboundStockDelta(status: string, qtyMt: number): number {
+  return status === "RELEASED" ? -qtyMt : 0;
+}
+
 export type StockTransferStockInput = {
   commodityCode: string;
   commodityName?: string | null;
@@ -83,6 +88,8 @@ export type LocationCommodityInventoryRow = {
   unallocatedQty: number;
   allocatedQty: number;
   netQty: number;
+  /** Goods still occupying the warehouse, including outbound loads awaiting release. */
+  physicalQty: number;
   unallocatedInbound: number;
   unallocatedOutbound: number;
   allocatedInbound: number;
@@ -127,6 +134,7 @@ export function buildLocationCommodityInventory(input: {
         unallocatedQty: 0,
         allocatedQty: 0,
         netQty: 0,
+        physicalQty: 0,
         unallocatedInbound: 0,
         unallocatedOutbound: 0,
         allocatedInbound: 0,
@@ -143,12 +151,14 @@ export function buildLocationCommodityInventory(input: {
     const qty = inboundStockDelta(r.status, r.allocatedQtyMt);
     if (qty <= 0) continue;
     row.allocatedInbound += qty;
+    row.physicalQty += qty;
   }
 
   for (const d of input.outbound) {
     const trade = input.commodityForTradeRef(d.tradeRef);
     if (!trade) continue;
     const row = ensure(d.warehouseName, trade.code, trade.name, trade.unit);
+    row.physicalQty += physicalOutboundStockDelta(d.status, d.allocatedQtyMt);
     if (!countsAsReleasedOutbound(d.status)) continue;
     row.allocatedOutbound += d.allocatedQtyMt;
   }
@@ -160,7 +170,7 @@ export function buildLocationCommodityInventory(input: {
     const qty = pendingTruckUnallocatedQtyMt(t, unit);
     if (qty <= 0) continue;
     const row = ensure(t.warehouseName, code, t.commodityName?.trim() || code, unit);
-    if (t.movementType === "INBOUND") row.unallocatedInbound += qty;
+    if (t.movementType === "INBOUND") { row.unallocatedInbound += qty; row.physicalQty += qty; }
     else row.unallocatedOutbound += qty;
   }
 
@@ -176,6 +186,7 @@ export function buildLocationCommodityInventory(input: {
       const delta = stockTransferDelta(wh, t);
       if (delta === 0) continue;
       const row = ensure(wh, code, name, "MT");
+      row.physicalQty += delta;
       if (delta > 0) row.allocatedInbound += delta;
       else row.allocatedOutbound += -delta;
     }
