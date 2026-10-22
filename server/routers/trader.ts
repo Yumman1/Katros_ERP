@@ -31,6 +31,7 @@ import {
   priceBasisRequiresQuote,
 } from "@/lib/trade-constants";
 import { computeWarehouseAvailability } from "@/lib/warehouse-availability";
+import { freeToSellQty } from "@/lib/warehouse-stock-utils";
 import { normWarehouseName } from "@/lib/warehouse-allocation";
 import { buildLocationCommodityInventory, countsAsReleasedOutbound, inboundStockDelta } from "@/lib/inventory-stock";
 import { buildRatePkrPerMtByRef, computeWeightedPurchasePrice } from "@/server/inventory-valuation";
@@ -773,7 +774,7 @@ export const traderRouter = router({
         processingReservedMt: processingByWarehouse.get(key)??0,
         freeToSellMt:
           stockOnHandMt != null && bookedQtyMt != null
-            ? Math.max(0, stockOnHandMt - bookedQtyMt - (processingByWarehouse.get(key)??0))
+            ? freeToSellQty(stockOnHandMt, bookedQtyMt, processingByWarehouse.get(key) ?? 0)
             : null,
       };
     });

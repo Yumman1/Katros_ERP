@@ -5,12 +5,13 @@ import { prisma } from "@/server/db";
 import { tradeEntity, internalEntity, sesameBookQty, FZCO_NO_PAKISTAN_WAREHOUSE, type SesameEntity } from "@/lib/sesame-entity";
 import { isSesameCommodity } from "@/lib/sesame";
 import { getSeasonNetPositions } from "@/server/net-position";
+import { lockSesameOwnership, reservedFzco, physicalStock } from "./sesame-stock";
+import { freeToSellQty } from "@/lib/warehouse-stock-utils";
+import { processingReservedKg } from "./processing-reservations";
+import { bookedPakistanSaleKgAtWarehouse, unassignedPakistanSaleMt } from "./sesame-sale-reservation";
 
 type DB = Prisma.TransactionClient;
 const n = (v: unknown) => Number(v ?? 0);
-import { lockSesameOwnership, reservedFzco, physicalStock } from "./sesame-stock";
-import { processingReservedKg } from "./processing-reservations";
-import { bookedPakistanSaleKgAtWarehouse, unassignedPakistanSaleMt } from "./sesame-sale-reservation";
 
 export async function sesameBook(code: string) {
   const [trades, entries, physical, reserved] = await Promise.all([
@@ -53,14 +54,14 @@ export async function sesameBook(code: string) {
     const inOut = entryRate != null && marketRate != null ? marketRate-entryRate : null;
     const netQty = entity === "FZCO" ? buys-sells : owned+buys-sells;
     const valuePkr = inOut != null ? inOut*netQty*25 : null;
-    return { entity, ownedMt: owned, openBuyMt: buys, openSellMt: sells, bookedNotLeftMt: entity === "PAK" ? physicalSells : sells, freeMt: owned-(entity === "PAK" ? physicalSells : sells), netPositionMt: entity === "FZCO" ? buys-sells : owned+buys-sells, physicalInPakistanMt: entity === "PAK" ? physicalPak : 0, loadingMt: entity === "FZCO" ? [...reserved.values()].reduce((a,b)=>a+b,0) : 0, entryRatePkrPerMaund: entryRate, marketRatePkrPerMaund: marketRate, inOutPkrPerMaund: inOut, inOutValuePkr: valuePkr, inOutValueUsd: valuePkr != null && market?.fxRate ? valuePkr/market.fxRate : null };
+    return { entity, ownedMt: owned, openBuyMt: buys, openSellMt: sells, bookedNotLeftMt: entity === "PAK" ? physicalSells : sells, freeMt: freeToSellQty(owned, entity === "PAK" ? physicalSells : sells), netPositionMt: entity === "FZCO" ? buys-sells : owned+buys-sells, physicalInPakistanMt: entity === "PAK" ? physicalPak : 0, loadingMt: entity === "FZCO" ? [...reserved.values()].reduce((a,b)=>a+b,0) : 0, entryRatePkrPerMaund: entryRate, marketRatePkrPerMaund: marketRate, inOutPkrPerMaund: inOut, inOutValuePkr: valuePkr, inOutValueUsd: valuePkr != null && market?.fxRate ? valuePkr/market.fxRate : null };
   });
   const openSales = trades.filter((t) => ["PENDING", "LOCKED", "CONFIRMED", "EXECUTED"].includes(t.tradeStatus) && !t.directSettled);
   const unassignedBookedMt = openSales.reduce((s, t) => s + unassignedPakistanSaleMt(t), 0);
   const warehouses = await Promise.all([...physical].map(async ([name, quantityMt]) => {
     const bookedMt = openSales.reduce((s, t) => s + bookedPakistanSaleKgAtWarehouse(t, name) / 1000, 0);
     const processingReservedMt = await processingReservedKg(prisma, code, name) / 1000;
-    return { name, quantityMt, bookedMt, processingReservedMt, freeToSellMt: Math.max(0, quantityMt - bookedMt - processingReservedMt) };
+    return { name, quantityMt, bookedMt, processingReservedMt, freeToSellMt: freeToSellQty(quantityMt, bookedMt, processingReservedMt) };
   }));
   return { custody:await custodyRows(prisma,code), trades: rows, positions, warehouses, unassignedBookedMt, entries: entries.map(e => ({ ...e, quantityMt: n(e.quantityMt) })) };
 }

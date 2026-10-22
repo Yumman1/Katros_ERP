@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildLocationCommodityInventory } from "./inventory-stock";
 import { computeWarehouseAvailability } from "./warehouse-availability";
+import { freeToSellQty } from "./warehouse-stock-utils";
 
 function inventory(status: string, received = 100) {
   return buildLocationCommodityInventory({
@@ -39,4 +40,11 @@ test("empty use-basis warehouse reports zero rather than permanent occupancy", (
     { id: "w", name: "Warehouse", warehouseBasis: "USE" },
   ], [], [], []);
   assert.equal(warehouse.utilizationPct, 0);
+});
+
+test("free to sell is never negative when open sales exceed physical stock", () => {
+  assert.equal(freeToSellQty(0, 4500), 0);
+  assert.equal(freeToSellQty(100, 250, 10), 0);
+  assert.equal(freeToSellQty(200, 50, 10), 140);
+  assert.equal(freeToSellQty(-94.48, 0), 0);
 });

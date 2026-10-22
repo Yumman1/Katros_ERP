@@ -55,7 +55,7 @@ export function WarehouseAvailabilityBadges({
 
   const stockMt = w.stockOnHandMt ?? 0;
   const bookedMt = w.bookedQtyMt ?? 0;
-  const freeToSellMt = w.freeToSellMt ?? Math.max(0, stockMt - bookedMt);
+  const freeToSellMt = Math.max(0, w.freeToSellMt ?? Math.max(0, stockMt - bookedMt));
   // Red once the pick cannot cover what is being booked; a warehouse with
   // nothing left to sell reads red even before a quantity is entered.
   const freeTone =

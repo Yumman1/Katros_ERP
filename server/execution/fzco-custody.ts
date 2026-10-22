@@ -27,7 +27,7 @@ export async function custodyRows(db: DB, code: string) {
   if (s.status === 'RELEASED' || s.status === 'BL_RECORDED') row.ownedMt -= n(s.totalWeightKg) / 1000;
   else row.reservedMt += n(s.totalWeightKg) / 1000;
  }
- return [...rows.values()].map(r => ({ ...r, availableMt: r.ownedMt - r.reservedMt }));
+ return [...rows.values()].map(r => ({ ...r, availableMt: Math.max(0, r.ownedMt - r.reservedMt) }));
 }
 export async function assertCustody(db: DB, code: string, grade: ReturnType<typeof sesameGrade>, qtyMt: number, source: { warehouseName?: string; holderId?: string; location?: string }, release = false) {
  if (source.warehouseName) throw new Error(FZCO_NO_PAKISTAN_WAREHOUSE);

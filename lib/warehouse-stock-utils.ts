@@ -76,6 +76,14 @@ function netByCommodity(
   return Array.from(net.values());
 }
 
+/** Physical leftover that can still be sold. Never negative. */
+export function freeToSellQty(stockMt: number, bookedMt = 0, reservedMt = 0): number {
+  const stock = Number.isFinite(stockMt) ? stockMt : 0;
+  const booked = Number.isFinite(bookedMt) ? bookedMt : 0;
+  const reserved = Number.isFinite(reservedMt) ? reservedMt : 0;
+  return Math.max(0, stock - booked - reserved);
+}
+
 export function hadActivityInRange(
   warehouseName: string,
   inbound: { warehouseName: string; receiveDate: Date | string }[],

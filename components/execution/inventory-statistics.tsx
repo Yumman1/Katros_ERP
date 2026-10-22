@@ -266,7 +266,7 @@ export function InventoryStatistics({
                     {(() => {
                       const selectedRow = sharedAvailability?.inventoryRows.some(r => r.commodityCode === row.commodityCode);
                       const available = selectedRow ? sharedAvailability?.warehouses.find(w => w.name.trim().toLowerCase() === row.warehouseName.trim().toLowerCase())?.freeToSellMt : null;
-                      return available == null ? "—" : formatQtyWithUnit(available, row.quantityUnit, 2);
+                      return available == null ? "—" : formatQtyWithUnit(Math.max(0, available), row.quantityUnit, 2);
                     })()}
                   </td>
                 </tr>
