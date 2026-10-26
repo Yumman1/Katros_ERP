@@ -8,7 +8,7 @@ import { DESK_REFETCH_MS } from "@/lib/invalidate-caches";
 import { trpc } from "@/lib/trpc/client";
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { type SesameEntity } from "@/lib/sesame-entity";
 import {FzcoUsdLedger} from "@/components/execution/fzco-usd-ledger";
 import { SesameInternalLedger } from "@/components/execution/sesame-entity-panels";
@@ -17,7 +17,7 @@ export default function ExecutionLedgersPage() {
   const { active, entity: deskEntity } = useExecutionCommodityDesk();
   const search = useSearchParams();
   const [entity, setEntity] = useState<SesameEntity | "">(search.get("entity") === "FZCO" ? "FZCO" : "");
-  const sesame = isSesameCommodity(active.code);
+  const sesame = usesSesameWorkflow(active.code);
   const { data, isLoading } = trpc.execution.counterpartyLedgers.useQuery(sesame && entity ? { entity } : undefined, {
     refetchInterval: DESK_REFETCH_MS,
   });

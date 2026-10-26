@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
 import { tradeEntity } from "@/lib/sesame-entity";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { purchaseAdvancePercentage, roundMoney } from "@/lib/purchase-advance";
 
 export async function advanceTrade(tradeRef: string, db: Prisma.TransactionClient = prisma) {
@@ -11,7 +11,7 @@ export async function advanceTrade(tradeRef: string, db: Prisma.TransactionClien
   const contract = await db.executionContract.findUnique({ where: { tradeRef } });
   if (!trade || !contract || trade.direction !== "BUY" || trade.directSettled ||
       !["LOCKED", "CONFIRMED"].includes(trade.tradeStatus) ||
-      !isSesameCommodity(trade.commodity.code) || tradeEntity(trade.tradeParams) !== "PAK" ||
+      !usesSesameWorkflow(trade.commodity.code) || tradeEntity(trade.tradeParams) !== "PAK" ||
       (trade.tradeParams as Record<string, unknown> | null)?.internalCounterpartyEntity) {
     throw new Error("Select an open external Pakistan Sesame purchase trade");
   }

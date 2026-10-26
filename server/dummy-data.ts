@@ -1,4 +1,4 @@
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { presentTraderBook, type SesameEntity } from "@/lib/sesame-entity";
 import { addDays } from "date-fns";
 import {
@@ -631,7 +631,7 @@ export function syncBookedTradesFromDisk(_force = false): void {}
 export async function upsertBookedTrade(trade: MockTraderTrade): Promise<void> {
   const columns = mockTradeToColumns(trade);
   await prisma.$transaction(async (tx) => {
-    if(isSesameCommodity(trade.commodity.code)) {
+    if(usesSesameWorkflow(trade.commodity.code)) {
       const {lockSesameOwnership}=await import("./execution/sesame-stock");
       const {guardProcessingSale}=await import("./execution/warehouse-processing");
       await lockSesameOwnership(tx,trade.commodity.code);
@@ -921,7 +921,7 @@ export async function mockBookTrade(input: {
 
   const bookingActor = input.actorId ?? await getSystemUserId();
   const row = await prisma.$transaction(async tx => {
-    if(isSesameCommodity(input.commodityCode)) {
+    if(usesSesameWorkflow(input.commodityCode)) {
       const {lockSesameOwnership}=await import("./execution/sesame-stock");
       const {guardProcessingSale}=await import("./execution/warehouse-processing");
       await lockSesameOwnership(tx,input.commodityCode);
@@ -937,7 +937,7 @@ export async function mockBookTrade(input: {
       direction: input.direction,
       tradeScope: input.tradeScope ?? "LOCAL",
       // Sesame uses one compatibility bucket; no crop season is selected or shown.
-      season: isSesameCommodity(input.commodityCode, input.commodityName) ? "SUMMER" : input.season ?? "SUMMER",
+      season: usesSesameWorkflow(input.commodityCode, input.commodityName) ? "SUMMER" : input.season ?? "SUMMER",
       commodityId: input.commodityId,
       counterpartyId: input.counterpartyId,
       counterpartyKycStatus: input.counterpartyKycStatus,
@@ -973,11 +973,11 @@ export async function mockBookTrade(input: {
             : "Delivered"
           : null),
       paymentType: input.paymentType,
-      paymentTerms: paymentTypeLabel(input.paymentType, input.creditDays, isSesameCommodity(input.commodityCode, input.commodityName) && input.tradeParams?.paymentPercentage != null ? Number(input.tradeParams.paymentPercentage) : undefined),
+      paymentTerms: paymentTypeLabel(input.paymentType, input.creditDays, usesSesameWorkflow(input.commodityCode, input.commodityName) && input.tradeParams?.paymentPercentage != null ? Number(input.tradeParams.paymentPercentage) : undefined),
       grade: input.grade,
       productOrigin: input.productOrigin,
       qualityTolerances: input.qualityTolerances,
-      qualityTolerancesDetail: isSesameCommodity(input.commodityCode, input.commodityName) ? undefined :
+      qualityTolerancesDetail: usesSesameWorkflow(input.commodityCode, input.commodityName) ? undefined :
         input.qualityTolerancesDetail ??
         ({
           ...DEFAULT_QUALITY_TOLERANCES,

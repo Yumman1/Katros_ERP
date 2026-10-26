@@ -1,4 +1,4 @@
-import { isSesameCommodity, sesameTradingEntity } from "./sesame";
+import { usesSesameWorkflow, sesameTradingEntity } from "./sesame";
 
 export type SesameEntity = "PAK" | "FZCO";
 export const ENTITY_NAMES = { PAK: "Kastros Pakistan", FZCO: "Dubai FZCO" } as const;
@@ -25,7 +25,7 @@ export function isFzcoBuyFromPakistan(
   params: unknown,
   counterpartyCode?: string | null,
 ): boolean {
-  if (!isSesameCommodity(code) || direction !== "BUY" || tradeEntity(params) !== "FZCO") return false;
+  if (!usesSesameWorkflow(code) || direction !== "BUY" || tradeEntity(params) !== "FZCO") return false;
   return internalEntity(params) === "PAK" || counterpartyCode === "INTERCO-PAK";
 }
 /** Rewrite an FZCO-from-Pakistan purchase into the canonical Pakistan warehouse sale. */
@@ -54,15 +54,15 @@ export function paperTrade(
   extra?: { direction?: string; counterpartyCode?: string | null },
 ): boolean {
   if (isFzcoBuyFromPakistan(code, extra?.direction ?? "", params, extra?.counterpartyCode)) return false;
-  return isSesameCommodity(code) && tradeEntity(params) === "FZCO" && internalEntity(params) === null;
+  return usesSesameWorkflow(code) && tradeEntity(params) === "FZCO" && internalEntity(params) === null;
 }
 /** Pakistan sells, Dubai FZCO buys — the only supported internal trade shape. */
 export function internalPakSale(code: string, direction: string, params: unknown): boolean {
-  return isSesameCommodity(code) && direction === "SELL" && tradeEntity(params) === "PAK" && internalEntity(params) === "FZCO";
+  return usesSesameWorkflow(code) && direction === "SELL" && tradeEntity(params) === "PAK" && internalEntity(params) === "FZCO";
 }
 /** One physical Pakistan sale appears on both sesame desks: SELL in Pakistan, BUY in FZCO. */
 export function belongsToSesameDesk(code: string, params: unknown, asEntity: SesameEntity): boolean {
-  if (!isSesameCommodity(code)) return true;
+  if (!usesSesameWorkflow(code)) return true;
   return tradeEntity(params) === asEntity || internalEntity(params) === asEntity;
 }
 export function deskSide(
@@ -72,7 +72,7 @@ export function deskSide(
   asEntity: SesameEntity,
 ): "BUY" | "SELL" {
   const stored: "BUY" | "SELL" = direction === "BUY" ? "BUY" : "SELL";
-  if (!isSesameCommodity(code) || tradeEntity(params) === asEntity) return stored;
+  if (!usesSesameWorkflow(code) || tradeEntity(params) === asEntity) return stored;
   if (internalEntity(params) === asEntity) return stored === "BUY" ? "SELL" : "BUY";
   return stored;
 }
@@ -82,7 +82,7 @@ export function deskCounterpartyLabel(
   storedName: string,
   asEntity: SesameEntity,
 ): string {
-  if (!isSesameCommodity(code) || !internalEntity(params)) return storedName;
+  if (!usesSesameWorkflow(code) || !internalEntity(params)) return storedName;
   const other = tradeEntity(params) === asEntity ? internalEntity(params) : tradeEntity(params);
   return other ? ENTITY_NAMES[other] : storedName;
 }
@@ -111,7 +111,7 @@ export function presentTraderBook<T extends {
  * internals close when FZCO pays Kastros Pakistan.
  */
 export function closesOnPayment(code: string, direction: string, tradeScope: string | null | undefined, params: unknown): boolean {
-  if (!isSesameCommodity(code)) return false;
+  if (!usesSesameWorkflow(code)) return false;
   if (internalPakSale(code, direction, params)) return true;
   return tradeEntity(params) === "FZCO" && internalEntity(params) === null;
 }

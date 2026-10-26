@@ -1,6 +1,6 @@
 "use client";
 import {SesameExportContainers} from "@/components/warehouse/sesame-export-containers";
-import {isSesameCommodity} from "@/lib/sesame";
+import {usesSesameWorkflow} from "@/lib/sesame";
 import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 
 import { ThemeToggle } from "@/components/theme/theme-toggle";
@@ -287,7 +287,7 @@ export default function WarehouseGatepassPage() {
     }
   }
 
-  const exportMode=form.movementType==='OUTBOUND'&&isSesameCommodity(form.commodityCode)&&(outboundScope==='INTERNATIONAL'||triparty);
+  const exportMode=form.movementType==='OUTBOUND'&&usesSesameWorkflow(form.commodityCode)&&(outboundScope==='INTERNATIONAL'||triparty);
   const paidAdvance=reference.advances?.find(v=>v.id===form.advanceVoucherId);
   const purchaseTrade=reference.inboundCounterparties.find(c=>c.name===form.counterpartyName)?.trades?.find(t=>t.tradeRef===paidAdvance?.tradeRef);
   const delivered=form.movementType==='INBOUND'&&(purchaseTrade?.profile??purchaseBasis)==='PURCHASE_DELIVERED';
@@ -446,7 +446,7 @@ export default function WarehouseGatepassPage() {
               <Field label="Purchase basis"><select className={inputClass} value={purchaseTrade?.profile??purchaseBasis} disabled={!!purchaseTrade} onChange={e=>setPurchaseBasis(e.target.value as typeof purchaseBasis)}><option value="PURCHASE_DELIVERED">Delivered</option><option value="PURCHASE_SPOT">Ex-Works</option></select></Field>
               <Field label="Approved advance builty (if paid)"><select className={inputClass} value={form.advanceVoucherId} onChange={e=>{const v=reference.advances?.find(a=>a.id===e.target.value);setForm(f=>({...f,advanceVoucherId:v?.id??'',truckNo:v?.truckNo??f.truckNo,builtyDetails:v?.builtyNumber??f.builtyDetails,transporterName:v?.transporterName??f.transporterName,weightAsPerBuiltyKg:v?String(v.advanceWeightKg):f.weightAsPerBuiltyKg}));}}><option value="">No advance selected</option>{reference.advances?.filter(v=>v.counterpartyName===form.counterpartyName&&v.commodityCode===form.commodityCode).map(v=><option key={v.id} value={v.id}>{v.builtyNumber} · Truck {v.truckNo??'—'}</option>)}</select></Field>
             </FormSection>}
-            {form.movementType==='OUTBOUND'&&!triparty&&isSesameCommodity(form.commodityCode)&&<div className="exec-segment">{(['LOCAL','INTERNATIONAL'] as const).map(scope=><button key={scope} type="button" aria-pressed={outboundScope===scope} className={`exec-segment-item ${outboundScope===scope?'exec-segment-active':''}`} onClick={()=>setOutboundScope(scope)}>{scope==='LOCAL'?'Local':'International'}</button>)}</div>}
+            {form.movementType==='OUTBOUND'&&!triparty&&usesSesameWorkflow(form.commodityCode)&&<div className="exec-segment">{(['LOCAL','INTERNATIONAL'] as const).map(scope=><button key={scope} type="button" aria-pressed={outboundScope===scope} className={`exec-segment-item ${outboundScope===scope?'exec-segment-active':''}`} onClick={()=>setOutboundScope(scope)}>{scope==='LOCAL'?'Local':'International'}</button>)}</div>}
             {exportMode?<SesameExportContainers key={[form.counterpartyName,form.commodityCode,form.warehouseName,String(triparty)].join(':')} triparty={triparty} counterpartyName={form.counterpartyName} commodityCode={form.commodityCode} warehouseName={form.warehouseName} recordedByName={form.recordedByName} onSaved={()=>setPreviewTick(v=>v+1)}/>:<>
             <FormSection title={form.movementType === "OUTBOUND" ? "Outbound details" : "Inbound details"} icon={<Truck className="h-4 w-4" />} color={accentColor}>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -500,7 +500,7 @@ export default function WarehouseGatepassPage() {
                     className={inputClass}
                   />
                 </Field>
-                <Field label={form.movementType === "OUTBOUND" && isSesameCommodity(form.commodityCode) ? "Container / Truck Weight (kg)" : "Weight as per seller (Kg)"} required={!delivered}>
+                <Field label={form.movementType === "OUTBOUND" && usesSesameWorkflow(form.commodityCode) ? "Container / Truck Weight (kg)" : "Weight as per seller (Kg)"} required={!delivered}>
                   <input
                     type="number"
                     inputMode="decimal"

@@ -5,7 +5,7 @@ import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 import { InventoryStatistics } from "@/components/execution/inventory-statistics";
 import { SesameInventoryView, SesamePakistanInventoryExtras } from "@/components/execution/sesame-entity-panels";
 import { DeskPage, DeskScroll } from "@/components/layout/desk-page";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import type { SesameEntity } from "@/lib/sesame-entity";
 
 export default function TraderInventoryPage() {
@@ -26,7 +26,7 @@ export default function TraderInventoryPage() {
     );
   }
 
-  const sesame = isSesameCommodity(active.code);
+  const sesame = usesSesameWorkflow(active.code);
   if (sesame && entity === "FZCO") {
     return (
       <SesameInventoryView

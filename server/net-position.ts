@@ -1,5 +1,5 @@
 import { sesameGrade } from "@/lib/sesame-processing";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import type { TradeSeason } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { num, numOrNull } from "@/server/db/convert";
@@ -118,7 +118,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
   const ratePkrPerMtByRef = buildRatePkrPerMtByRef(contracts);
   const buyTradeMeta = new Map(
     trades
-      .filter((t) => t.direction === "BUY" && (!isSesameCommodity(t.commodity.code) || sesameGrade(t.tradeParams) !== "Impurities"))
+      .filter((t) => t.direction === "BUY" && (!usesSesameWorkflow(t.commodity.code) || sesameGrade(t.tradeParams) !== "Impurities"))
       .map((t) => [t.tradeRef, { commodityCode: t.commodity.code, season: t.season }]),
   );
 
@@ -151,7 +151,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
   for (const p of processing) bucketOf(p.commodityCode,p.transfer?.commodityName??"Sesame",p.transfer?.season??"SUMMER").inventoryMt -= num(p.impuritiesKg)/1000;
 
   for (const t of trades) {
-    if (isSesameCommodity(t.commodity.code) && sesameGrade(t.tradeParams) === "Impurities") continue;
+    if (usesSesameWorkflow(t.commodity.code) && sesameGrade(t.tradeParams) === "Impurities") continue;
     const b = bucketOf(t.commodity.code, t.commodity.name, t.season);
     const contract = contractByRef.get(t.tradeRef);
     const openMt = contract && contract.contractStatus === "Open" ? num(contract.openQtyMt) : 0;
@@ -166,8 +166,8 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
   }
 
   for (const s of transfers) {
-    if (isSesameCommodity(s.commodityCode) && s.sesameType === "Impurities") continue;
-    const sesame = isSesameCommodity(s.commodityCode);
+    if (usesSesameWorkflow(s.commodityCode) && s.sesameType === "Impurities") continue;
+    const sesame = usesSesameWorkflow(s.commodityCode);
     if (!sesame && (!s.externalOrigin || s.status !== "RECEIVED")) continue;
     const b = bucketOf(s.commodityCode, s.commodityCode, s.season);
     if (sesame && !s.externalOrigin) b.inventoryMt -= num(s.dispatchedQtyMt);
@@ -228,7 +228,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
         commodityCode: b.commodityCode,
         commodityName: b.commodityName || b.commodityCode,
         season: b.season,
-        label: isSesameCommodity(b.commodityCode, b.commodityName) ? titleCase(b.commodityName || b.commodityCode) : `${titleCase(b.commodityName || b.commodityCode)} ${titleCase(b.season)}`,
+        label: usesSesameWorkflow(b.commodityCode, b.commodityName) ? titleCase(b.commodityName || b.commodityCode) : `${titleCase(b.commodityName || b.commodityCode)} ${titleCase(b.season)}`,
         openPurchasesMt: round2(b.openPurchasesMt),
         inventoryMt: round2(b.inventoryMt),
         openSalesMt: round2(b.openSalesMt),

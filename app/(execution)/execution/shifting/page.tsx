@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { InternalGateLinks } from "@/components/execution/internal-gate-links";
 import { useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
-import { isSesameCommodity, SESAME_TYPES } from "@/lib/sesame";
+import { usesSesameWorkflow, SESAME_TYPES } from "@/lib/sesame";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import { useRecordFilters } from "@/components/ui/record-filters";
@@ -87,7 +87,7 @@ export default function ExecutionShiftingPage() {
     [rows],
   );
 
-  const listFilters = useRecordFilters("shifts", rows, { fields: [field("from", "Origin", "fromWarehouseName", "externalOrigin"), field("to", "Destination", "toWarehouseName"), field("commodity", "Commodity", "commodityCode"), ...(isSesameCommodity(active.code) ? [] : [field("season", "Season")]), field("status", "Status")], date: { label: "Booking date", paths: ["createdAt"] } });
+  const listFilters = useRecordFilters("shifts", rows, { fields: [field("from", "Origin", "fromWarehouseName", "externalOrigin"), field("to", "Destination", "toWarehouseName"), field("commodity", "Commodity", "commodityCode"), ...(usesSesameWorkflow(active.code) ? [] : [field("season", "Season")]), field("status", "Status")], date: { label: "Booking date", paths: ["createdAt"] } });
 
   if (isLoading) return <PageLoadingSkeleton />;
 
@@ -250,7 +250,7 @@ function ShiftRow({
           <div className="mt-0.5 text-xs text-muted-foreground">from outside our warehouses</div>
         ) : null}
       </td>
-      <td className="px-4 py-3">{row.commodityName}{isSesameCommodity(row.commodityCode) && <div className="text-xs text-subtle">{row.sesameType} · {row.purpose === "PROCESSING" ? "Processing" : "Shifting"}</div>}</td>
+      <td className="px-4 py-3">{row.commodityName}{usesSesameWorkflow(row.commodityCode) && <div className="text-xs text-subtle">{row.sesameType} · {row.purpose === "PROCESSING" ? "Processing" : "Shifting"}</div>}</td>
       <td className="px-4 py-3">{row.truckNo}</td>
       <td className="px-4 py-3 text-right tabular-nums">{mt(row.dispatchedQtyMt)}</td>
       <td className="px-4 py-3 text-right tabular-nums">
@@ -339,7 +339,7 @@ function NewShiftForm({
         e.preventDefault();
         onSubmit({
           commodityCode,
-          ...(isSesameCommodity(commodityCode) ? {sesameType,purpose} : {}),
+          ...(usesSesameWorkflow(commodityCode) ? {sesameType,purpose} : {}),
           commodityName: commodity?.name ?? commodityCode,
           fromWarehouseName: fromOutside ? null : fromWarehouse,
           externalOrigin: fromOutside ? externalOrigin.trim() || null : null,
@@ -382,7 +382,7 @@ function NewShiftForm({
           </SearchableSelect>
         </Field>
 
-        {isSesameCommodity(commodityCode) && <>
+        {usesSesameWorkflow(commodityCode) && <>
           <Field label="Purpose"><select className="kastros-select w-full" value={purpose} onChange={e=>{setPurpose(e.target.value as typeof purpose);if(e.target.value==="PROCESSING")setSesameType("Raw");}}><option value="SHIFT">Internal shifting / return from processing</option><option value="PROCESSING">Send for processing</option></select></Field>
           <Field label="Sesame type"><select className="kastros-select w-full" value={sesameType} onChange={e=>setSesameType(e.target.value as typeof sesameType)}>{SESAME_TYPES.filter(t=>purpose!=="PROCESSING" || t==="Raw" || t==="Machine Cleaned").map(t=><option key={t}>{t}</option>)}</select></Field>
         </>}

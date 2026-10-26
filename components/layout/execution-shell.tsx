@@ -29,13 +29,13 @@ import { trpc } from "@/lib/trpc/client";
 import { useTeam } from "@/lib/use-team";
 import { canActOnDepartment } from "@/lib/departments";
 import { cn } from "@/lib/utils";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { FzcoBook, FzcoOverview, FzcoTrucks, SesamePositions } from "@/components/execution/sesame-entity-panels";
 
 export function ExecutionShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { active, entity, selectEntity } = useExecutionCommodityDesk();
-  const sesame = isSesameCommodity(active.code);
+  const sesame = usesSesameWorkflow(active.code);
   const fzco = sesame && entity === "FZCO";
   const { role, isHead } = useTeam();
   const isExecutionHead = role != null && canActOnDepartment(role, isHead, "EXECUTION");

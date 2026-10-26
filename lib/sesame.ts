@@ -5,6 +5,13 @@ export function isSesameCommodity(code?: string | null, name?: string | null): b
   return ["SES", "SESAME"].includes(code?.trim().toUpperCase() ?? "") || /^sesame(?:\s+seeds?)?$/i.test(name?.trim() ?? "");
 }
 
+/** PKE starts with the same execution and Pakistan/FZCO workflow as Sesame.
+ * Commodity codes remain distinct for stock, trades, payments and permissions.
+ */
+export function usesSesameWorkflow(code?: string | null, name?: string | null): boolean {
+  return code?.trim().toUpperCase() === "PKE" || isSesameCommodity(code, name);
+}
+
 export const SESAME_TYPES = ["Machine Cleaned", "Raw", "Sortex", "Impurities"] as const;
 export const SESAME_TRADING_ENTITIES = ["Kastros FZCO", "Kastros PAK"] as const;
 

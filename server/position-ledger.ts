@@ -1,4 +1,4 @@
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { sesameGrade } from "@/lib/sesame-processing";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
@@ -130,8 +130,8 @@ export async function computePositionLedger(options?: {
 
   const tradeRefs = new Set(trades.map((t) => t.tradeRef));
   const sesameTrades = await prisma.trade.findMany({select:{tradeRef:true,tradeParams:true,commodity:{select:{code:true}}}});
-  const impurityRefs = new Set(sesameTrades.filter(t=>isSesameCommodity(t.commodity.code) && sesameGrade(t.tradeParams)==="Impurities").map(t=>t.tradeRef));
-  const scopedSesameCodes = new Set(sesameTrades.filter(t=>isSesameCommodity(t.commodity.code) && (!options?.traderName || tradeRefs.has(t.tradeRef))).map(t=>t.commodity.code));
+  const impurityRefs = new Set(sesameTrades.filter(t=>usesSesameWorkflow(t.commodity.code) && sesameGrade(t.tradeParams)==="Impurities").map(t=>t.tradeRef));
+  const scopedSesameCodes = new Set(sesameTrades.filter(t=>usesSesameWorkflow(t.commodity.code) && (!options?.traderName || tradeRefs.has(t.tradeRef))).map(t=>t.commodity.code));
 
   for (const c of contracts) {
     if (impurityRefs.has(c.tradeRef)) continue;
@@ -177,7 +177,7 @@ export async function computePositionLedger(options?: {
     prisma.sesameProcessing.findMany(),
     prisma.stockTransfer.findMany({where:{status:{in:["IN_TRANSIT","RECEIVED"]}}}),
   ]);
-  const inScope = (code: string) => isSesameCommodity(code) && (!options?.traderName || scopedSesameCodes.has(code));
+  const inScope = (code: string) => usesSesameWorkflow(code) && (!options?.traderName || scopedSesameCodes.has(code));
   for (const t of transfers) {
     if (!inScope(t.commodityCode) || t.sesameType === "Impurities") continue;
     const row = addCommodity(map,t.commodityCode,t.commodityName,"MT");

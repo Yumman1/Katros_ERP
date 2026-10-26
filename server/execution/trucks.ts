@@ -6,7 +6,7 @@ import { sesameGrade } from "@/lib/sesame-processing";
 import { executionTradeValuePkr } from "@/lib/execution-settlement";
 import { formatLockedContractRate } from "@/lib/formatters/contract-rate";
 import { formatCurrency } from "@/lib/formatters/numbers";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { lockSesameOwnership, pakistanAvailable } from "./sesame-stock";
 import { assertOwnershipWrite } from "./ownership-guards";
 import { Prisma, TradeDirection, type Role } from "@prisma/client";
@@ -490,11 +490,11 @@ export async function createPendingTruck(input: {
     await assertSufficientOutboundStock(input.warehouseName, input.commodityCode, qtyMt);
   }
   const createWithGatepass = (gatepassNo: string) => prisma.$transaction(async tx => {
-    if (isSesameCommodity(input.commodityCode)) {
+    if (usesSesameWorkflow(input.commodityCode)) {
       await lockSesameOwnership(tx, input.commodityCode);
       if (input.movementType === "OUTBOUND" && await pakistanAvailable(tx, input.commodityCode, input.warehouseName) + 0.000001 < input.weightKg/1000) throw new Error("Insufficient physical sesame stock at this warehouse");
     }
-    if (!input.advanceVoucherId && input.movementType === "INBOUND" && isSesameCommodity(input.commodityCode) && await tx.voucher.findFirst({ where: { builtyNumber: input.builtyDetails.trim(), OR: [{truckNo: input.truckNo.trim().toUpperCase()}, {truckNo: null}], commodityCode: input.commodityCode, counterparty: { name: input.counterpartyName.trim() }, status: { in: ["PENDING_FINANCE", "APPROVED"] } } })) throw new Error("This builty has an advance voucher; select its approved builty and truck");
+    if (!input.advanceVoucherId && input.movementType === "INBOUND" && usesSesameWorkflow(input.commodityCode) && await tx.voucher.findFirst({ where: { builtyNumber: input.builtyDetails.trim(), OR: [{truckNo: input.truckNo.trim().toUpperCase()}, {truckNo: null}], commodityCode: input.commodityCode, counterparty: { name: input.counterpartyName.trim() }, status: { in: ["PENDING_FINANCE", "APPROVED"] } } })) throw new Error("This builty has an advance voucher; select its approved builty and truck");
     const created = await tx.pendingTruck.create({
       data: {
         gatepassNo,
@@ -684,7 +684,7 @@ export async function assignTruckToTrade(
       include: TRUCK_INCLUDE,
     });
     if (!truckRow) throw new Error("Pending truck not found");
-    if (truckRow.commodityCode && isSesameCommodity(truckRow.commodityCode)) await lockSesameOwnership(tx, truckRow.commodityCode);
+    if (truckRow.commodityCode && usesSesameWorkflow(truckRow.commodityCode)) await lockSesameOwnership(tx, truckRow.commodityCode);
     if (totalDeductionsKg !== undefined) throw new Error("Enter deductions on the Quality review page");
     if (truckRow.purchaseTradeRef && truckRow.purchaseTradeRef !== tradeRef) throw new Error("Assign the trade selected on this gatepass");
     const truck = truckRowToRuntime(truckRow);
@@ -799,7 +799,7 @@ export async function assignTruckToTrade(
       throw new Error("Nothing to allocate — check truck remaining weight and order open quantity");
     }
 
-    if (truck.movementType === "OUTBOUND" && isSesameCommodity(contract.commodityCode)) {
+    if (truck.movementType === "OUTBOUND" && usesSesameWorkflow(contract.commodityCode)) {
       const trade = await tx.trade.findUniqueOrThrow({where:{tradeRef},select:{tradeParams:true}});
       await assertGradeAvailable(tx,contract.commodityCode,truck.warehouseName,sesameGrade(trade.tradeParams),allocateKg/1000);
     }

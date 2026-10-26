@@ -1,5 +1,5 @@
 import { tradeEntity } from "@/lib/sesame-entity";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { deskLedgerWhere } from "@/server/execution/desk-scope";
 import type { CounterpartySide, Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/server/db";
@@ -469,7 +469,7 @@ export async function canFundTruck(
   const available = await availableCreditPkr(input.counterpartyId, db, {
     excludeTruckId: input.excludeTruckId,
     commodityCode: trade.commodity.code,
-    executionEntity: isSesameCommodity(trade.commodity.code) ? tradeEntity(trade.tradeParams) : undefined,
+    executionEntity: usesSesameWorkflow(trade.commodity.code) ? tradeEntity(trade.tradeParams) : undefined,
   });
   const ok = available + 0.005 >= input.amountPkr;
   return {

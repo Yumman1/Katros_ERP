@@ -1,9 +1,9 @@
 import { prisma } from "@/server/db";
 import { TRPCError } from "@trpc/server";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 
 async function assertProcessingSource(code:string,warehouse:string) {
- if(!isSesameCommodity(code))return;
+ if(!usesSesameWorkflow(code))return;
  const where={commodityCode:code,warehouseName:{equals:warehouse,mode:"insensitive" as const}};
  if(await prisma.sesameProcessingPlan.count({where:{...where,status:"ACTIVE"}})||await prisma.sesameProcessing.count({where}))throw new TRPCError({code:"BAD_REQUEST",message:"This warehouse has reserved or processed stock. Its source stock movements cannot be changed after processing; record a separate correction movement."});
 }

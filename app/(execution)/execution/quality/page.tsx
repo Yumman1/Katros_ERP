@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { PageHeader } from "@/components/ui/page-header";
-import { isSesameCommodity, SESAME_FIELDS } from "@/lib/sesame";
+import { usesSesameWorkflow, SESAME_FIELDS } from "@/lib/sesame";
 
 export default function QualityReviewPage() {
   const utils=trpc.useUtils();
@@ -14,7 +14,7 @@ export default function QualityReviewPage() {
   const truck=queue.data?.find(t=>t.id===truckId); const contract=contracts.data?.find(c=>c.tradeRef===tradeRef);
   const agreed=trpc.execution.qualityTradeSpecs.useQuery({tradeRef},{enabled:!!tradeRef});
   const spot=contract?.executionProfile==="PURCHASE_SPOT";
-  const fields= isSesameCommodity(truck?.commodityCode) ? SESAME_FIELDS.filter(f=>f.group==="quality").map(f=>({key:f.key,label:f.label})) : [{key:"moisturePct",label:"Moisture (%)"},{key:"damagePct",label:"Damage (%)"},{key:"brokenPct",label:"Broken (%)"},{key:"fungusPct",label:"Fungus (%)"},{key:"foreignMatterPct",label:"Foreign matter (%)"}];
+  const fields= usesSesameWorkflow(truck?.commodityCode) ? SESAME_FIELDS.filter(f=>f.group==="quality").map(f=>({key:f.key,label:f.label})) : [{key:"moisturePct",label:"Moisture (%)"},{key:"damagePct",label:"Damage (%)"},{key:"brokenPct",label:"Broken (%)"},{key:"fungusPct",label:"Fungus (%)"},{key:"foreignMatterPct",label:"Foreign matter (%)"}];
   const eligible=contracts.data?.filter(c=>c.direction==="BUY" && c.commodityCode===truck?.commodityCode && c.counterpartyName===truck.counterpartyName);
   return <div className="kastros-desk-page space-y-4 pb-6">
     <PageHeader title="Quality and Invoice" subtitle="Review allocated trucks, enter financial deductions and generate an invoice for trader approval. Physical inventory stays unchanged." />

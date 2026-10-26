@@ -8,7 +8,7 @@ import { sesameGrades } from "@/server/execution/sesame-processing";
 import { isBaleCommodity } from "@/lib/warehouse-utilization";
 import { filterDeskRows } from "@/server/execution/desk-scope";
 import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
-import { isSesameCommodity, normalizeSesameParams, sesameNetPrice, sesameTradingEntity } from "@/lib/sesame";
+import { usesSesameWorkflow, normalizeSesameParams, sesameNetPrice, sesameTradingEntity } from "@/lib/sesame";
 import { belongsToSesameDesk, canonicalizeInternalPakSale, deskCounterpartyLabel, deskSide, internalPakSale, internalEntity, presentTraderBook } from "@/lib/sesame-entity";
 import { entityCounterparty } from "@/server/finance/internal-payments";
 import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
@@ -741,8 +741,8 @@ export const traderRouter = router({
     }
 
     const processingByWarehouse = new Map<string,number>();
-    if(commodity && isSesameCommodity(commodity.code)) for(const loc of locations) processingByWarehouse.set(normWarehouseName(loc.name),await processingReservedKg(prisma,commodity.code,loc.name)/1000);
-    const gradeRows = commodity && isSesameCommodity(commodity.code) ? await sesameGrades(prisma,commodity.code) : [];
+    if(commodity && usesSesameWorkflow(commodity.code)) for(const loc of locations) processingByWarehouse.set(normWarehouseName(loc.name),await processingReservedKg(prisma,commodity.code,loc.name)/1000);
+    const gradeRows = commodity && usesSesameWorkflow(commodity.code) ? await sesameGrades(prisma,commodity.code) : [];
     const warehouses = computeWarehouseAvailability(
       locations.filter(w=>warehouseAllowedForCommodity(w.name,commodity?.code)),
       inbound,
@@ -933,7 +933,7 @@ export const traderRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid commodity" });
       }
 
-      const sesame = isSesameCommodity(c.code, c.name);
+      const sesame = usesSesameWorkflow(c.code, c.name);
       const paramDefs = resolveAllTradeParameters(sesame ? "SESAME" : c.code, c.tradeParameterDefs);
       let tradeParams = input.tradeParams ?? {};
       if (sesame) {

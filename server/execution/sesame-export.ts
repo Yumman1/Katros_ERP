@@ -5,7 +5,7 @@ import {z} from 'zod';
 import type {Prisma} from '@prisma/client';
 import {prisma} from '@/server/db';
 import {nextSerial,SERIALS} from '@/server/db/serials';
-import {isSesameCommodity} from '@/lib/sesame';
+import {usesSesameWorkflow} from '@/lib/sesame';
 import {tradeEntity,internalEntity,internalPakSale,FZCO_NO_PAKISTAN_WAREHOUSE} from '@/lib/sesame-entity';
 import {sesameGrade} from '@/lib/sesame-processing';
 import {quantityUnitToKg} from '@/lib/unit-conversion';
@@ -26,19 +26,19 @@ export type ExportRow=Prisma.SesameExportShipmentGetPayload<{include:typeof incl
 /** Triparty: the Pakistan → FZCO internal sale ships straight to FZCO's buyer. */
 export type TripartyLink={fzcoSaleTradeRef:string};
 function validTrade(t:{direction:string;tradeScope:string;directSettled:boolean;tradeStatus:string;tradeParams?:unknown;commodity:{code:string};contract:{contractStatus:string}|null}, direct=false, triparty=false){
- const open=isSesameCommodity(t.commodity.code)&&!t.directSettled&&['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus)&&!!t.contract&&(t.contract.contractStatus!=='Close'||(direct&&tradeEntity(t.tradeParams)==='FZCO')||(triparty&&internalPakSale(t.commodity.code,t.direction,t.tradeParams)));
+ const open=usesSesameWorkflow(t.commodity.code)&&!t.directSettled&&['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus)&&!!t.contract&&(t.contract.contractStatus!=='Close'||(direct&&tradeEntity(t.tradeParams)==='FZCO')||(triparty&&internalPakSale(t.commodity.code,t.direction,t.tradeParams)));
  if(triparty){if(!open||!internalPakSale(t.commodity.code,t.direction,t.tradeParams)||t.tradeScope!=='INTERNATIONAL')throw new Error('Select an open, locked Pakistan → Dubai FZCO internal sale');return;}
  if(internalEntity(t.tradeParams)||(!direct&&t.direction!=='SELL')||(!direct&&t.tradeScope!=='INTERNATIONAL')||(direct&&tradeEntity(t.tradeParams)!=='FZCO')||!open)throw new Error('Select an open, locked international Sesame sale trade');
 }
 /** FZCO's external sale that a triparty shipment fulfils. */
 function validFzcoSale(t:{direction:string;tradeScope:string;directSettled:boolean;tradeStatus:string;tradeParams?:unknown;commodity:{code:string};contract:{contractStatus:string}|null}){
- if(!isSesameCommodity(t.commodity.code)||t.direction!=='SELL'||t.tradeScope!=='INTERNATIONAL'||tradeEntity(t.tradeParams)!=='FZCO'||internalEntity(t.tradeParams)||t.directSettled||!['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus)||!t.contract||t.contract.contractStatus==='Close')throw new Error('Select an open, locked Dubai FZCO international sale');
+ if(!usesSesameWorkflow(t.commodity.code)||t.direction!=='SELL'||t.tradeScope!=='INTERNATIONAL'||tradeEntity(t.tradeParams)!=='FZCO'||internalEntity(t.tradeParams)||t.directSettled||!['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus)||!t.contract||t.contract.contractStatus==='Close')throw new Error('Select an open, locked Dubai FZCO international sale');
 }
 const tradeInclude={commodity:true,counterparty:true,contract:{include:{warehouseAllocations:true}}} as const;
 /** Trades offered at the gate for a triparty gate-out: internal PAK → FZCO sales and FZCO's buyer sales. */
 export async function tripartyGateTrades(warehouse?:string){
  const trades=await prisma.trade.findMany({where:{direction:'SELL',tradeScope:'INTERNATIONAL',directSettled:false,tradeStatus:{in:['LOCKED','CONFIRMED','EXECUTED']},contract:{OR:[{contractStatus:'Open'},{closeOnPayment:true,openQtyMt:{gt:0}}]}},include:tradeInclude});
- const sesame=trades.filter(t=>isSesameCommodity(t.commodity.code));
+ const sesame=trades.filter(t=>usesSesameWorkflow(t.commodity.code));
  const internal=sesame.filter(t=>internalPakSale(t.commodity.code,t.direction,t.tradeParams)&&(!warehouse||warehouseAllowedForCommodity(warehouse,t.commodity.code))&&(!warehouse||!t.contract?.warehouseAllocations.length||t.contract.warehouseAllocations.some(a=>a.warehouseName===warehouse)));
  const fzco=sesame.filter(t=>t.contract?.contractStatus==='Open'&&tradeEntity(t.tradeParams)==='FZCO'&&!internalEntity(t.tradeParams)&&internal.some(i=>i.commodity.code===t.commodity.code));
  const view=(t:typeof trades[number])=>({tradeRef:t.tradeRef,counterpartyName:t.counterparty.name,counterpartyCode:t.counterparty.code,counterpartyId:t.counterpartyId,commodityCode:t.commodity.code,commodityName:t.commodity.name,grade:sesameGrade(t.tradeParams),openMt:n(t.contract?.openQtyMt??t.quantity)});
@@ -54,7 +54,7 @@ export function exportView(s:ExportRow){
 }
 export async function exportGateTrades(warehouse?:string){
  const trades=await prisma.trade.findMany({where:{direction:'SELL',tradeScope:'INTERNATIONAL',directSettled:false,tradeStatus:{in:['LOCKED','CONFIRMED','EXECUTED']},contract:{contractStatus:'Open'}},include:{commodity:true,counterparty:true,contract:{include:{warehouseAllocations:true}}}});
- return trades.filter(t=>!internalEntity(t.tradeParams)&&isSesameCommodity(t.commodity.code)&&tradeEntity(t.tradeParams)==='PAK'&&(!warehouse||warehouseAllowedForCommodity(warehouse,t.commodity.code))&&(!warehouse||!t.contract?.warehouseAllocations.length||t.contract.warehouseAllocations.some(a=>a.warehouseName===warehouse))).map(t=>({tradeRef:t.tradeRef,counterpartyName:t.counterparty.name,counterpartyCode:t.counterparty.code,commodityCode:t.commodity.code,commodityName:t.commodity.name,entity:tradeEntity(t.tradeParams)}));
+ return trades.filter(t=>!internalEntity(t.tradeParams)&&usesSesameWorkflow(t.commodity.code)&&tradeEntity(t.tradeParams)==='PAK'&&(!warehouse||warehouseAllowedForCommodity(warehouse,t.commodity.code))&&(!warehouse||!t.contract?.warehouseAllocations.length||t.contract.warehouseAllocations.some(a=>a.warehouseName===warehouse))).map(t=>({tradeRef:t.tradeRef,counterpartyName:t.counterparty.name,counterpartyCode:t.counterparty.code,commodityCode:t.commodity.code,commodityName:t.commodity.name,entity:tradeEntity(t.tradeParams)}));
 }
 const directContainers=z.array(z.object({truckNo:text,containerNo:z.string().trim().max(120).default(''),croNo:z.string().trim().max(120).default(''),weightKg:z.number().finite().positive().multipleOf(.001).max(1000000)})).min(1).max(100);
 export const directGateInput=exportGateInput.omit({warehouseName:true,recordedByName:true}).extend({containers:directContainers,holderId:z.string().min(1),dispatchLocation:z.string().trim().max(120).default(''),movementDate:z.coerce.date(),documentLinks:z.array(z.string().url().max(2000).refine(v=>v.startsWith("https://"),"Use HTTPS document links")).max(20).default([])});

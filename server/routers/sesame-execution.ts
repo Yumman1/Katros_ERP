@@ -6,10 +6,10 @@ import { sesameGrades, recordProcessing } from "@/server/execution/sesame-proces
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, roleProcedure, headProcedure } from "@/server/trpc/trpc";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { cancelFzcoLoad, loadFzcoTruck, sesameBook } from "@/server/execution/sesame-ownership";
 function codeOf(code?: string) {
-  if (!code || !isSesameCommodity(code)) throw new TRPCError({ code: "BAD_REQUEST", message: "Open the Sesame execution desk first" });
+  if (!code || !usesSesameWorkflow(code)) throw new TRPCError({ code: "BAD_REQUEST", message: "Open the Sesame execution desk first" });
   return code;
 }
 async function action<T>(fn: () => Promise<T>) {

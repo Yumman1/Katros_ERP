@@ -1,4 +1,4 @@
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 /**
  * When inbound/outbound movements affect warehouse stock balances.
  * Gatepass trucks count as unallocated until assigned to a trade.
@@ -193,7 +193,7 @@ export function buildLocationCommodityInventory(input: {
   }
 
   for (const row of map.values()) {
-    row.unallocatedQty = row.unallocatedInbound - (isSesameCommodity(row.commodityCode) ? 0 : row.unallocatedOutbound);
+    row.unallocatedQty = row.unallocatedInbound - (usesSesameWorkflow(row.commodityCode) ? 0 : row.unallocatedOutbound);
     row.allocatedQty = row.allocatedInbound - row.allocatedOutbound;
     row.netQty = row.unallocatedQty + row.allocatedQty;
   }

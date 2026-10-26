@@ -1,6 +1,6 @@
 "use client";
 import {deskSide,deskCounterpartyLabel} from "@/lib/sesame-entity";
-import { isSesameCommodity, sesameFields, isPercentagePayment, sesameTradingEntity } from "@/lib/sesame";
+import { usesSesameWorkflow, sesameFields, isPercentagePayment, sesameTradingEntity } from "@/lib/sesame";
 import { paperTrade, tradeEntity } from "@/lib/sesame-entity";
 import { useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
 
@@ -111,7 +111,7 @@ export function OpenTradeDetail({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  const isSesame = isSesameCommodity(trade?.commodity.code, trade?.commodity.name);
+  const isSesame = usesSesameWorkflow(trade?.commodity.code, trade?.commodity.name);
   const isCorn = isCornCommodity(trade?.commodity.code);
   const tradeScope = trade?.tradeScope ?? "LOCAL";
   const requiresWarehouse = trade ? !paperTrade(trade.commodity.code, trade.tradeParams) &&
@@ -165,7 +165,7 @@ export function OpenTradeDetail({
         params[k] = v;
       }
     }
-    if (isSesameCommodity(trade.commodity.code, trade.commodity.name)) params.tradingEntity = sesameTradingEntity(params);
+    if (usesSesameWorkflow(trade.commodity.code, trade.commodity.name)) params.tradingEntity = sesameTradingEntity(params);
     setTradeParams(params);
     setWarehouseSelections(parseTraderWarehouseSelections(trade.tradeParams));
     setEditNote(trade.executionEditNote ?? "");
@@ -176,7 +176,7 @@ export function OpenTradeDetail({
     setSaved(false);
   }, [trade]);
 
-  const lockOnThisDesk = !trade || !isSesameCommodity(trade.commodity.code, trade.commodity.name) || tradeEntity(trade.tradeParams) === deskEntity;
+  const lockOnThisDesk = !trade || !usesSesameWorkflow(trade.commodity.code, trade.commodity.name) || tradeEntity(trade.tradeParams) === deskEntity;
   const canEdit = isExecutionUser && lockOnThisDesk;
   const canLock =
     isExecutionUser &&

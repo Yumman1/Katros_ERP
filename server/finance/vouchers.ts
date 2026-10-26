@@ -229,7 +229,7 @@ export async function createVoucher(input: {
   enteredByName: string;
 }): Promise<VoucherView> {
   if(input.tradeRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef}});if(t&&(await import("@/lib/sesame-entity")).internalEntity(t.tradeParams))throw new Error("Use Internal Trade in Vouchers for the Pakistan → Dubai FZCO trade");}
-  if(input.tradeRef&&(input.side??'SELL')==='SELL'&&!input.noteRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef},include:{commodity:true}});if(t&&t.tradeScope==='INTERNATIONAL'&&(await import('@/lib/sesame')).isSesameCommodity(t.commodity.code))throw new Error('Select the shipment BL in Receive payment against a BL');}
+  if(input.tradeRef&&(input.side??'SELL')==='SELL'&&!input.noteRef){const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef},include:{commodity:true}});if(t&&t.tradeScope==='INTERNATIONAL'&&(await import('@/lib/sesame')).usesSesameWorkflow(t.commodity.code))throw new Error('Select the shipment BL in Receive payment against a BL');}
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Voucher amount must be positive");
   }

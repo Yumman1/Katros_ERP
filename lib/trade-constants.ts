@@ -1,4 +1,4 @@
-import { isSesameCommodity } from "./sesame";
+import { usesSesameWorkflow } from "./sesame";
 
 export type PaymentType =
   | "DP"
@@ -57,6 +57,7 @@ export function isCornCommodity(code: string | undefined | null): boolean {
 
 /** Commodity codes that always use the grain warehouse division (sq ft / MT). */
 const GRAIN_COMMODITY_CODES = new Set([
+  "PKE",
   "CRN",
   "CORN",
   "WHT",
@@ -170,7 +171,7 @@ export function incotermsForBooking(
     return ["EXW", "Delivered"];
   }
   const terms = incotermsForDirection(direction);
-  return isSesameCommodity(commodityCode, commodityName) ? [...terms, "CNF"] : terms;
+  return usesSesameWorkflow(commodityCode, commodityName) ? [...terms, "CNF"] : terms;
 }
 
 export function defaultIncotermForBooking(

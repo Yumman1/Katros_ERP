@@ -6,15 +6,15 @@ import {isDeepStrictEqual} from 'node:util';
 import {prisma} from '@/server/db';
 import {nextSerial,SERIALS} from '@/server/db/serials';
 import {tradeEntity,internalEntity} from '@/lib/sesame-entity';
-import {isSesameCommodity} from '@/lib/sesame';
+import {usesSesameWorkflow} from '@/lib/sesame';
 import {addExportContainers,directGateInput} from './sesame-export';
 export const fzcoIntakeInput=directGateInput.omit({tradeRef:true}).extend({counterpartyId:z.string().min(1),side:z.enum(['BUY','SELL']),commodityCode:z.string().min(1),triparty:z.boolean().default(false)});
 export async function directChoices(code?:string){
  const rows=await prisma.trade.findMany({where:{directSettled:false,tradeStatus:{in:['LOCKED','CONFIRMED','EXECUTED']},contract:{openQtyMt:{gt:0}},commodity:{code}},include:{commodity:true,counterparty:true,contract:true}});
- return rows.filter(t=>isSesameCommodity(t.commodity.code)&&tradeEntity(t.tradeParams)==='FZCO'&&!internalEntity(t.tradeParams)&&t.currency==='USD').map(t=>({tradeRef:t.tradeRef,side:t.direction,counterpartyId:t.counterpartyId,counterparty:t.counterparty.name,commodityCode:t.commodity.code,commodity:t.commodity.name,grade:sesameGrade(t.tradeParams),openMt:Number(t.contract?.openQtyMt??0)}));
+ return rows.filter(t=>usesSesameWorkflow(t.commodity.code)&&tradeEntity(t.tradeParams)==='FZCO'&&!internalEntity(t.tradeParams)&&t.currency==='USD').map(t=>({tradeRef:t.tradeRef,side:t.direction,counterpartyId:t.counterpartyId,counterparty:t.counterparty.name,commodityCode:t.commodity.code,commodity:t.commodity.name,grade:sesameGrade(t.tradeParams),openMt:Number(t.contract?.openQtyMt??0)}));
 }
 export async function logFzcoIntake(input:z.input<typeof fzcoIntakeInput>,actor:string){
- const parsed=fzcoIntakeInput.parse({...input,triparty:true});if(parsed.side!=='SELL')throw new Error('Third-party movements use Triparty sale. Purchases are recorded automatically against the supplier.');if(!isSesameCommodity(parsed.commodityCode))throw new Error('Choose Sesame');
+ const parsed=fzcoIntakeInput.parse({...input,triparty:true});if(parsed.side!=='SELL')throw new Error('Third-party movements use Triparty sale. Purchases are recorded automatically against the supplier.');if(!usesSesameWorkflow(parsed.commodityCode))throw new Error('Choose Sesame');
  if(parsed.triparty&&parsed.side!=='SELL')throw new Error('Triparty gate-out requires Sale movement');
  if(parsed.triparty&&parsed.containers.some(c=>!c.containerNo.trim()||!c.croNo.trim()))throw new Error('Enter container and CRO numbers for every triparty container');
  const payload=JSON.parse(JSON.stringify(parsed));

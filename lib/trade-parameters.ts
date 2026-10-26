@@ -104,6 +104,7 @@ export const COMMODITY_PARAM_TEMPLATES: Record<string, TradeParamDefinition[]> =
   WHEAT: GRAIN_QUALITY,
   SES: SESAME_FIELDS,
   SESAME: SESAME_FIELDS,
+  PKE: SESAME_FIELDS,
   CTN: [
     { key: "pakkaSta", label: "Pakka / STA", type: "select", group: "contract", options: ["Pakka", "STA"] },
     { key: "cropYear", label: "Crop year (CY)", type: "text", group: "quality", placeholder: "2025-2026" },

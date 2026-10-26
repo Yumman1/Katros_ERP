@@ -1,5 +1,5 @@
 import { deskCounterpartyLabel, deskSide, internalEntity, paperTrade, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
-import { isSesameCommodity, normalizeSesameParams, SESAME_FIELDS } from "@/lib/sesame";
+import { usesSesameWorkflow, normalizeSesameParams, SESAME_FIELDS } from "@/lib/sesame";
 import { qualitySummaryFromParams } from "@/lib/trade-parameters";
 import { TradeDirection, TradeStatus } from "@prisma/client";
 import type { KycStatus, QualityTolerances } from "@/lib/trade-constants";
@@ -156,7 +156,7 @@ function assertOpenTrade(t: MockTraderTrade, tradeRef: string): void {
 }
 
 function toSummary(t: MockTraderTrade, asEntity?: SesameEntity): OpenTradeSummary {
-  const lockOnThisDesk = !asEntity || !isSesameCommodity(t.commodity.code) || tradeEntity(t.tradeParams) === asEntity;
+  const lockOnThisDesk = !asEntity || !usesSesameWorkflow(t.commodity.code) || tradeEntity(t.tradeParams) === asEntity;
   const direction = asEntity
     ? (deskSide(t.commodity.code, t.direction, t.tradeParams, asEntity) as typeof t.direction)
     : t.direction;
@@ -293,7 +293,7 @@ async function applyPatchToTrade(
   patch: OpenTradePatch,
   meta: { editedBy: string; notifyTrader: boolean; editNote?: string | null },
 ): Promise<MockTraderTrade> {
-  if (trade.tradeStatus === "LOCKED" && isSesameCommodity(trade.commodity.code) && patch.tradeParams) {
+  if (trade.tradeStatus === "LOCKED" && usesSesameWorkflow(trade.commodity.code) && patch.tradeParams) {
     const next = { ...trade.tradeParams, ...patch.tradeParams };
     if (tradeEntity(next) !== tradeEntity(trade.tradeParams) || internalEntity(next) !== internalEntity(trade.tradeParams)) throw new Error("Trading entities cannot change after a Sesame trade is locked");
   }
@@ -391,7 +391,7 @@ async function applyPatchToTrade(
     }
     // Warehouse qty split always requires explicit head approval — never auto-approve here.
   }
-  if (isSesameCommodity(trade.commodity.code, trade.commodity.name)) {
+  if (usesSesameWorkflow(trade.commodity.code, trade.commodity.name)) {
     nextParams = normalizeSesameParams(nextParams, trade.paymentType);
     trade.paymentTerms = paymentTypeLabel(trade.paymentType, Number(nextParams.creditDays) || undefined, Number(nextParams.paymentPercentage) || undefined);
     trade.qualityTolerances = qualitySummaryFromParams(nextParams, SESAME_FIELDS);

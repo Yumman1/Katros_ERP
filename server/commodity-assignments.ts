@@ -36,7 +36,7 @@ export async function initializeCommodityAssignment(
 ) {
   const sesame = ["SES", "SESAME"].includes(commodity.code.trim().toUpperCase()) ||
     /^sesame(?:\s+seeds?)?$/i.test(commodity.name.trim());
-  const email = sesame ? SESAME_TRADER_EMAIL : isCornCommodity(commodity.code) ? CORN_TRADER_EMAIL : null;
+  const email = commodity.code.trim().toUpperCase() === "PKE" ? "sami.qureshi@kastros.co" : sesame ? SESAME_TRADER_EMAIL : isCornCommodity(commodity.code) ? CORN_TRADER_EMAIL : null;
   const trader = email
     ? await db.user.findFirst({ where: { email: { equals: email, mode: "insensitive" }, role: "TRADER", disabled: false } })
     : requesterId

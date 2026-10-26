@@ -2,7 +2,7 @@
 import {useState} from 'react';
 import {trpc} from '@/lib/trpc/client';
 import {PROCESSING_ROUTES,pakistanDate} from '@/lib/sesame-processing';
-import {isSesameCommodity} from '@/lib/sesame';
+import {usesSesameWorkflow} from '@/lib/sesame';
 import {useExecutionCommodityDesk} from './commodity-desk-provider';
 import {SesameGradeStock} from './sesame-grade-stock';
 const fmt=(v:number)=>v.toLocaleString('en-PK',{maximumFractionDigits:3});
@@ -10,7 +10,7 @@ const inputClass='kastros-input block w-full mt-1';
 const cell='p-3 text-left whitespace-nowrap';
 export function ProcessedGoods(){
  const {active,entity}=useExecutionCommodityDesk();
- if(!isSesameCommodity(active.code)||entity==='FZCO')return <p>Open the Pakistan Sesame desk to process goods.</p>;
+ if(!usesSesameWorkflow(active.code)||entity==='FZCO')return <p>Open the Pakistan Sesame desk to process goods.</p>;
  return <WarehouseProcessing key={active.code}/>;
 }
 function WarehouseProcessing(){

@@ -1,7 +1,7 @@
 import { postTruckLedgerDebit } from "@/server/finance/ledger";
 import { kgToQuantityUnit } from "@/lib/unit-conversion";
 import { KG_PER_MAUND } from "@/lib/trade-constants";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { tradeEntity } from "@/lib/sesame-entity";
@@ -25,7 +25,7 @@ export async function recordTruckQuality(input: {truckId:string;tradeRef:string;
     if (spot && input.deductionKg !== 0) throw new Error("Spot purchases cannot have weight deductions");
     const base = Number(spot ? truck.weightAsPerBuiltyKg : truck.warehouseWeightKg);
     if (!(base > 0) || !Number.isFinite(input.deductionKg) || input.deductionKg < 0 || input.deductionKg >= base) throw new Error("Enter the received weight and a deduction below that weight");
-    const keys = isSesameCommodity(truck.commodityCode) ? ["purity","ffa","moisture","oilContent","admixture"] : ["moisturePct","damagePct","brokenPct","fungusPct","foreignMatterPct"];
+    const keys = usesSesameWorkflow(truck.commodityCode) ? ["purity","ffa","moisture","oilContent","admixture"] : ["moisturePct","damagePct","brokenPct","fungusPct","foreignMatterPct"];
     for (const key of keys) if (!input.readings[key]?.trim() || !Number.isFinite(Number(input.readings[key])) || Number(input.readings[key]) < 0 || Number(input.readings[key]) > 100) throw new Error(`Enter ${key} between 0 and 100%`);
     const specs = {damagePct:Number(input.readings.damagePct)||0,brokenPct:Number(input.readings.brokenPct)||0,fungusPct:Number(input.readings.fungusPct)||0,foreignMatterPct:Number(input.readings.foreignMatterPct)||0,moisturePct:Number(input.readings.moisturePct ?? input.readings.moisture)||0};
     const invoiceNo = `INV-${truck.gatepassNo}`;

@@ -2,7 +2,7 @@
 import {InternalTradePayments} from "@/components/execution/internal-trade-payments";
 import {InternationalPurchaseVoucher} from "@/components/execution/international-purchase-voucher";
 import {useExecutionCommodityDesk} from "@/components/execution/commodity-desk-provider";
-import {isSesameCommodity} from "@/lib/sesame";
+import {usesSesameWorkflow} from "@/lib/sesame";
 import {SesameExportShipments} from "@/components/execution/sesame-export-shipments";
 import { downloadPurchaseVoucher } from "@/lib/purchase-voucher-pdf";
 
@@ -57,7 +57,7 @@ export default function ExecutionVouchersPage() {
   const { data: vouchers, isLoading } = trpc.execution.vouchers.useQuery(undefined);
 
   const {active,entity}=useExecutionCommodityDesk();
-  const fzco=isSesameCommodity(active.code)&&entity==="FZCO";
+  const fzco=usesSesameWorkflow(active.code)&&entity==="FZCO";
   const [purchaseIntl,setPurchaseIntl]=useState(false);
   const [internal,setInternal]=useState(false);
   const [international,setInternational]=useState(false);
@@ -214,8 +214,8 @@ export default function ExecutionVouchersPage() {
                   {s === "INTERNATIONAL" ? (fzco ? "Sale" : "International Sale") : s === "SELL" ? "Sale" : "Purchase"}
                 </button>
               ))}
-              {isSesameCommodity(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",!internal&&purchaseIntl&&"exec-segment-active")} onClick={()=>{setInternal(false);setPurchaseIntl(true);setInternational(false);setSide("BUY");clearAgainst();}}>{fzco ? "Purchase" : "International Purchase"}</button>}
-              {isSesameCommodity(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",internal&&"exec-segment-active")} onClick={()=>{setInternal(true);setPurchaseIntl(false);setInternational(false);}}>Internal Trade</button>}
+              {usesSesameWorkflow(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",!internal&&purchaseIntl&&"exec-segment-active")} onClick={()=>{setInternal(false);setPurchaseIntl(true);setInternational(false);setSide("BUY");clearAgainst();}}>{fzco ? "Purchase" : "International Purchase"}</button>}
+              {usesSesameWorkflow(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",internal&&"exec-segment-active")} onClick={()=>{setInternal(true);setPurchaseIntl(false);setInternational(false);}}>Internal Trade</button>}
             </div>
             <span className="text-xs text-subtle">
               {internal ? "One Trader approval, then one Finance payment for both desks." : side === "SELL"
@@ -224,7 +224,7 @@ export default function ExecutionVouchersPage() {
             </span>
           </div>
 
-          {internal&&isSesameCommodity(active.code)?<InternalTradePayments/>:purchaseIntl?<InternationalPurchaseVoucher/>:(international||fzco)?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
+          {internal&&usesSesameWorkflow(active.code)?<InternalTradePayments/>:purchaseIntl?<InternationalPurchaseVoucher/>:(international||fzco)?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Counterparty
@@ -440,7 +440,7 @@ export default function ExecutionVouchersPage() {
               <span className="text-xs text-success">Voucher submitted — pending finance.</span>
             )}
           </div>
-          {side==="BUY"&&!isSesameCommodity(active.code)&&<SesameExportShipments mode="voucher" embedded sideFilter="BUY"/>}
+          {side==="BUY"&&!usesSesameWorkflow(active.code)&&<SesameExportShipments mode="voucher" embedded sideFilter="BUY"/>}
           </>}
         </div>
 

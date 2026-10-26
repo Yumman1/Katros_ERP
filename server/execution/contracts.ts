@@ -1,5 +1,5 @@
 import {quantityUnitToKg} from "@/lib/unit-conversion";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { canonicalizeInternalPakSale, closesOnPayment, deskCounterpartyLabel, deskSide, paperTrade, shouldCloseOnFullPayment, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
 import { entityCounterparty } from "@/server/finance/internal-payments";
 import { sesameSettlementFx } from "@/lib/execution-settlement";
@@ -598,7 +598,7 @@ export async function allocateContractWarehouse(
 ): Promise<ExecutionContract> {
   return prisma.$transaction(async (tx) => {
     const desk=await tx.executionContract.findUnique({where:{tradeRef},select:{commodityCode:true}});
-    if(desk && isSesameCommodity(desk.commodityCode)) {
+    if(desk && usesSesameWorkflow(desk.commodityCode)) {
       const {lockSesameOwnership}=await import("./sesame-stock");await lockSesameOwnership(tx,desk.commodityCode);
     }
     await tx.$queryRaw`SELECT "id" FROM "ExecutionContract" WHERE "tradeRef" = ${tradeRef} FOR UPDATE`;
@@ -609,7 +609,7 @@ export async function allocateContractWarehouse(
     if (!row) throw new Error("Locked contract not found: " + tradeRef);
     const normalized = normalizeContract(contractRowToRuntime(row));
     assertCanEditWarehouseAllocation(normalized);
-    if(isSesameCommodity(row.commodityCode)) {
+    if(usesSesameWorkflow(row.commodityCode)) {
       const {guardProcessingSale}=await import("./warehouse-processing");
       const t=await tx.trade.findUniqueOrThrow({where:{tradeRef},select:{tradeParams:true}});
       await guardProcessingSale(tx,{code:row.commodityCode,direction:row.direction,params:t.tradeParams,quantity:Number(row.openQtyMt),unit:row.quantityUnit,tradeRef,allocations:warehouseName?[{warehouseName,openQtyMt:Number(row.openQtyMt)}]:[]});
@@ -658,7 +658,7 @@ export async function allocateContractWarehousesSplit(
 ): Promise<ExecutionContract> {
   return prisma.$transaction(async (tx) => {
     const desk=await tx.executionContract.findUnique({where:{tradeRef},select:{commodityCode:true}});
-    if(desk && isSesameCommodity(desk.commodityCode)) {
+    if(desk && usesSesameWorkflow(desk.commodityCode)) {
       const {lockSesameOwnership}=await import("./sesame-stock");await lockSesameOwnership(tx,desk.commodityCode);
     }
     await tx.$queryRaw`SELECT "id" FROM "ExecutionContract" WHERE "tradeRef" = ${tradeRef} FOR UPDATE`;
@@ -683,7 +683,7 @@ export async function allocateContractWarehousesSplit(
       }
       seen.add(key);
     }
-    if(isSesameCommodity(row.commodityCode)) {
+    if(usesSesameWorkflow(row.commodityCode)) {
       const {lockSesameOwnership}=await import("./sesame-stock");
       const {guardProcessingSale}=await import("./warehouse-processing");
       await lockSesameOwnership(tx,row.commodityCode);
@@ -780,7 +780,7 @@ export async function lockTradeInStore(
 
   // Execution invoices and ledgers settle in PKR. Snapshot the configured FX
   // once; subsequent market-rate changes must never reprice this contract.
-  if (isSesameCommodity(trade.commodity.code, trade.commodity.name) && trade.currency === "USD") {
+  if (usesSesameWorkflow(trade.commodity.code, trade.commodity.name) && trade.currency === "USD") {
     const configured = await prisma.positionMarketInput.findUnique({
       where: { commodityCode_season: { commodityCode: trade.commodity.code, season: trade.season ?? "SUMMER" } },
       select: { fxRate: true },
@@ -879,7 +879,7 @@ export async function lockTradeInStore(
     const contract = await tx.executionContract.create({
       data: {
         tradeRef: trade.tradeRef,
-        executionEntity: isSesameCommodity(trade.commodity.code) ? tradeEntity(trade.tradeParams) : "PAK",
+        executionEntity: usesSesameWorkflow(trade.commodity.code) ? tradeEntity(trade.tradeParams) : "PAK",
         paperOwnership,
         closeOnPayment,
         tradeId: trade.id,
@@ -1070,7 +1070,7 @@ export async function getLockedContracts(filter?: {
   warehouseUnallocated?: boolean;
 }): Promise<ExecutionContractView[]> {
   const where: Prisma.ExecutionContractWhereInput = filter?.commodityCode ? { commodityCode: filter.commodityCode } : {};
-  if (filter?.executionEntity && isSesameCommodity(filter.commodityCode)) {
+  if (filter?.executionEntity && usesSesameWorkflow(filter.commodityCode)) {
     const refs = await executionDeskTradeRefs(filter.commodityCode, prisma, filter.executionEntity);
     where.tradeRef = { in: refs ?? [] };
   }
@@ -1181,7 +1181,7 @@ export async function getDeskSummary(commodityCode?: string, executionEntity?: S
   const refs = await executionDeskTradeRefs(commodityCode, prisma, executionEntity);
   const tradeWhere = refs ? { tradeRef: { in: refs } } : {};
   const contractWhere = commodityCode ? { commodityCode, ...(refs ? { tradeRef: { in: refs } } : {}) } : {};
-  const truckWhere = commodityCode ? { commodityCode, ...(executionEntity && isSesameCommodity(commodityCode) ? { executionEntity } : {}) } : {};
+  const truckWhere = commodityCode ? { commodityCode, ...(executionEntity && usesSesameWorkflow(commodityCode) ? { executionEntity } : {}) } : {};
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const [

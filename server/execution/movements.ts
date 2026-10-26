@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { pakistanAvailable } from "./sesame-stock";
 import { assertOwnershipWrite } from "./ownership-guards";
 import { KG_PER_MAUND, type QualityTolerances } from "@/lib/trade-constants";
@@ -738,7 +738,7 @@ export async function getAvailableOutboundStockMt(
   commodityCode: string,
   exclude?: { truckId?: string; dispatchId?: string },
 ): Promise<number> {
-  if (isSesameCommodity(commodityCode)) return Math.max(0, await pakistanAvailable(prisma, commodityCode, warehouseName, exclude?.truckId, exclude?.dispatchId));
+  if (usesSesameWorkflow(commodityCode)) return Math.max(0, await pakistanAvailable(prisma, commodityCode, warehouseName, exclude?.truckId, exclude?.dispatchId));
   let available = await getWarehouseCommodityStockMt(warehouseName, commodityCode, {
     outboundId: exclude?.dispatchId,
   });

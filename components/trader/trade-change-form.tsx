@@ -1,5 +1,5 @@
 "use client";
-import { isSesameCommodity, sesameFields, isPercentagePayment, normalizeSesameParams } from "@/lib/sesame";
+import { usesSesameWorkflow, sesameFields, isPercentagePayment, normalizeSesameParams } from "@/lib/sesame";
 import { TradeParametersFields } from "@/components/trader/trade-parameters-fields";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -64,7 +64,7 @@ export function TradeChangeForm({
   const mode = modeProp ?? (isTraderDraft(trade) ? "direct" : "ceo");
   const utils = trpc.useUtils();
   const tradeRef = trade.tradeRef;
-  const isSesame = isSesameCommodity(trade.commodity.code, trade.commodity.name);
+  const isSesame = usesSesameWorkflow(trade.commodity.code, trade.commodity.name);
   const isCorn = isCornCommodity(trade.commodity.code);
   const tradeScope = trade.tradeScope ?? "LOCAL";
 

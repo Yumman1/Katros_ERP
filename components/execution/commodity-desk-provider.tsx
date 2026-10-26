@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import superjson from "superjson";
 import { trpc } from "@/lib/trpc/client";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { ENTITY_NAMES, type SesameEntity } from "@/lib/sesame-entity";
 
 type Desk = { id: string; code: string; name: string };
@@ -35,7 +35,7 @@ export function ExecutionCommodityDeskProvider({ children }: { children: ReactNo
   const list = desks.data ?? [];
   const active = list.find(d => d.code === (target.data?.code ?? selected)) ?? list[0];
   if (!active) return <p className="p-6">No commodities have been registered.</p>;
-  const entity: SesameEntity = isSesameCommodity(active.code) ? (target.data?.entity ?? selectedEntity) : "PAK";
+  const entity: SesameEntity = usesSesameWorkflow(active.code) ? (target.data?.entity ?? selectedEntity) : "PAK";
   const selectEntity = (next: SesameEntity, destination = "/execution") => {
     try { localStorage.setItem("sesame-execution-entity", next); } catch { /* optional storage */ }
     setSelectedEntity(next);
@@ -57,7 +57,7 @@ function ScopedExecutionClient({ code, entity, children }: { code: string; entit
   // Separate caches and fixed headers prevent late responses or mutations from
   // one desk from being displayed in, or sent on behalf of, another desk.
   const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: true } } }));
-  const [client] = useState(() => trpc.createClient({ links: [httpBatchLink({ url: "/api/trpc", transformer: superjson, headers: { "x-execution-commodity": code, ...(isSesameCommodity(code) ? { "x-execution-entity": entity } : {}) } })] }));
+  const [client] = useState(() => trpc.createClient({ links: [httpBatchLink({ url: "/api/trpc", transformer: superjson, headers: { "x-execution-commodity": code, ...(usesSesameWorkflow(code) ? { "x-execution-entity": entity } : {}) } })] }));
   return <trpc.Provider client={client} queryClient={queryClient}><QueryClientProvider client={queryClient}>{children}</QueryClientProvider></trpc.Provider>;
 }
 
@@ -74,6 +74,6 @@ export function ExecutionCommoditySwitcher() {
     <select id="execution-commodity" className="kastros-select w-full" value={active.code} onChange={e => select(e.target.value)}>
       {desks.map(d => <option key={d.id} value={d.code}>{d.name} — {d.code}</option>)}
     </select>
-    {isSesameCommodity(active.code) && <fieldset className="mt-4"><legend className="mb-2 text-xs text-muted-foreground">Sesame execution</legend><div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">{(["PAK", "FZCO"] as const).map(value => <button key={value} type="button" aria-pressed={entity === value} onClick={() => selectEntity(value)} className={`rounded-md px-2 py-2 text-xs ${entity === value ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}>{value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}</button>)}</div></fieldset>}
+    {usesSesameWorkflow(active.code) && <fieldset className="mt-4"><legend className="mb-2 text-xs text-muted-foreground">Sesame execution</legend><div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">{(["PAK", "FZCO"] as const).map(value => <button key={value} type="button" aria-pressed={entity === value} onClick={() => selectEntity(value)} className={`rounded-md px-2 py-2 text-xs ${entity === value ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}>{value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}</button>)}</div></fieldset>}
   </div>;
 }

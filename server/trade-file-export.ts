@@ -1,6 +1,6 @@
 import { calendarDay } from "@/lib/record-filters";
 import { tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { mockAllTraderTrades } from "@/server/dummy-data";
 import type { MockTraderTrade } from "@/server/dummy-data";
 
@@ -45,7 +45,7 @@ export function filterTradesForTradeFile(
   if (!filter) return trades;
   const to = filter.to ? endOfDay(filter.to) : null;
   return trades.filter((t) => {
-    if (filter.executionEntity && isSesameCommodity(t.commodity.code) && tradeEntity(t.tradeParams) !== filter.executionEntity) return false;
+    if (filter.executionEntity && usesSesameWorkflow(t.commodity.code) && tradeEntity(t.tradeParams) !== filter.executionEntity) return false;
     const booked = new Date(t.tradeDate);
     const day = calendarDay(t.tradeDate);
     if (filter.fromDay && (!day || day < filter.fromDay)) return false;

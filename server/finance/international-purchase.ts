@@ -1,6 +1,6 @@
 import { prisma } from "@/server/db";
 import { nextSerial, SERIALS } from "@/server/db/serials";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { ENTITY_NAMES, internalPakSale, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
 import { entityCounterparty } from "./internal-payments";
 import { assertTripartyPakistanPayment } from "./triparty-pakistan-payment";
@@ -19,7 +19,7 @@ export async function internationalPurchaseTrades(code: string, entity: SesameEn
     include: { commodity: true, counterparty: true, contract: true },
   });
   return trades.flatMap((t) => {
-    if (!isSesameCommodity(t.commodity.code)) return [];
+    if (!usesSesameWorkflow(t.commodity.code)) return [];
     const internal = internalPakSale(t.commodity.code, t.direction, t.tradeParams);
     const own = tradeEntity(t.tradeParams);
     const fx = n((t.tradeParams as Record<string, unknown> | null)?.executionFxPkrPerUsd);
@@ -83,7 +83,7 @@ export async function createInternationalPurchase(input: {
   return prisma.$transaction(async (db) => {
     await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`purchase-payment:${input.tradeRef}`}))::text`;
     const t = await db.trade.findUniqueOrThrow({ where: { tradeRef: input.tradeRef }, include: { commodity: true, contract: true } });
-    if (!isSesameCommodity(t.commodity.code) || t.commodity.code !== input.code) throw new Error("Select a Sesame trade on this desk");
+    if (!usesSesameWorkflow(t.commodity.code) || t.commodity.code !== input.code) throw new Error("Select a Sesame trade on this desk");
     if(!t.contract||!["LOCKED","CONFIRMED","EXECUTED"].includes(t.tradeStatus))throw new Error("Select a locked purchase trade");
     const internal = internalPakSale(t.commodity.code, t.direction, t.tradeParams);
     if (internal) throw new Error("Use the shared Internal Trade voucher category for Pakistan–FZCO settlements");

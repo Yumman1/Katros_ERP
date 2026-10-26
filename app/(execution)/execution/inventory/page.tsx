@@ -3,11 +3,11 @@
 import { useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
 import { InventoryStatistics } from "@/components/execution/inventory-statistics";
 import { SesameInventoryView, SesamePakistanInventoryExtras } from "@/components/execution/sesame-entity-panels";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 
 export default function ExecutionInventoryPage() {
   const { active, entity } = useExecutionCommodityDesk();
-  const sesame = isSesameCommodity(active.code);
+  const sesame = usesSesameWorkflow(active.code);
   if (sesame && entity === "FZCO") {
     return <SesameInventoryView commodityCode={active.code} entity="FZCO" />;
   }

@@ -1,5 +1,5 @@
 "use client";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { internalPakSale } from "@/lib/sesame-entity";
 
 import { TRADE_SCOPE_LABELS, executionIncotermLabel, paymentTypeLabel } from "@/lib/trade-constants";
@@ -262,7 +262,7 @@ export default function TradeDetailPage() {
 
       <DetailCard title="Product specifications">
         <Row label="Commodity" value={`${trade.commodity.code} — ${trade.commodity.name}`} />
-        {!isSesameCommodity(trade.commodity.code, trade.commodity.name) && <Row label="Season" value={trade.season === "WINTER" ? "Winter" : trade.season === "SUMMER" ? "Summer" : "—"} />}
+        {!usesSesameWorkflow(trade.commodity.code, trade.commodity.name) && <Row label="Season" value={trade.season === "WINTER" ? "Winter" : trade.season === "SUMMER" ? "Summer" : "—"} />}
         <Row label="Exact grade" value={trade.grade} />
         <Row label="Product origin" value={trade.productOrigin} />
         {trade.maxMoisturePct != null && (
@@ -413,7 +413,7 @@ export default function TradeDetailPage() {
       </div>
 
       {trade.tradeParams && Object.keys(trade.tradeParams).length > 0 && (() => {
-        const defs = resolveAllTradeParameters(isSesameCommodity(trade.commodity.code, trade.commodity.name) ? "SESAME" : trade.commodity.code, null);
+        const defs = resolveAllTradeParameters(usesSesameWorkflow(trade.commodity.code, trade.commodity.name) ? "SESAME" : trade.commodity.code, null);
         const labelOf = (key: string) => defs.find((d) => d.key === key)?.label ?? key.replace(/_/g, " ");
         const universalKeys = new Set([
           ...UNIVERSAL_TRADE_FIELDS.map((d) => d.key),

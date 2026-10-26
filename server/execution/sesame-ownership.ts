@@ -3,7 +3,7 @@ import { sesameGrade } from "@/lib/sesame-processing";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { tradeEntity, internalEntity, sesameBookQty, FZCO_NO_PAKISTAN_WAREHOUSE, type SesameEntity } from "@/lib/sesame-entity";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { getSeasonNetPositions } from "@/server/net-position";
 import { lockSesameOwnership, reservedFzco, physicalStock } from "./sesame-stock";
 import { freeToSellQty } from "@/lib/warehouse-stock-utils";
@@ -69,7 +69,7 @@ export async function sesameBook(code: string) {
 /** FZCO does not load trucks from Pakistan warehouses. Use triparty or a third-party movement. */
 export async function loadFzcoTruck(input: { tradeRef: string; truckNo: string; weightKg: number; transporterName: string; actor: string }) {
   const t = await prisma.trade.findUniqueOrThrow({ where: { tradeRef: input.tradeRef }, include: { commodity: true, contract: true } });
-  if (!t.contract || !isSesameCommodity(t.commodity.code) || t.tradeStatus !== "LOCKED" || tradeEntity(t.tradeParams) !== "FZCO" || internalEntity(t.tradeParams) || t.direction !== "SELL") throw new Error("Choose a locked external FZCO sale");
+  if (!t.contract || !usesSesameWorkflow(t.commodity.code) || t.tradeStatus !== "LOCKED" || tradeEntity(t.tradeParams) !== "FZCO" || internalEntity(t.tradeParams) || t.direction !== "SELL") throw new Error("Choose a locked external FZCO sale");
   if (t.tradeScope === "INTERNATIONAL") throw new Error("Use the warehouse gatepass link to add international Sesame containers as a shipment group");
   throw new Error(FZCO_NO_PAKISTAN_WAREHOUSE);
 }

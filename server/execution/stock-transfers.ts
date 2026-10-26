@@ -23,7 +23,7 @@ import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 
 import type { Prisma } from "@prisma/client";
 import { StockTransferStatus } from "@prisma/client";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { lockSesameOwnership, pakistanAvailable } from "./sesame-stock";
 import { assertGradeAvailable } from "./sesame-processing";
 import { prisma } from "@/server/db";
@@ -200,13 +200,13 @@ export async function createStockTransfer(input: {
   const qty = input.dispatchedQtyMt;
   if([from,to].some(w=>w&&!warehouseAllowedForCommodity(w,input.commodityCode)))throw new Error("Faqir Warehouse is not available for Sesame");
   if (input.purpose === "PROCESSING" && !["Raw","Machine Cleaned"].includes(input.sesameType ?? "Machine Cleaned")) throw new Error("Only Raw or Machine Cleaned stock can be sent for processing");
-  if (isSesameCommodity(input.commodityCode)) {
+  if (usesSesameWorkflow(input.commodityCode)) {
     const names = [from,to].filter((v): v is string=>Boolean(v));
     const locations = await prisma.location.findMany({where:{type:"WAREHOUSE",name:{in:names}}});
     if (locations.length !== new Set(names).size) throw new Error("Register the source and processing warehouse before moving stock");
   }
 
-  if (input.purpose === "PROCESSING" && (!from || !isSesameCommodity(input.commodityCode))) throw new Error("Processing requires a Sesame source warehouse");
+  if (input.purpose === "PROCESSING" && (!from || !usesSesameWorkflow(input.commodityCode))) throw new Error("Processing requires a Sesame source warehouse");
   if (!to) throw new Error("A destination warehouse is required");
   if (!from && !origin) {
     throw new Error(
@@ -275,7 +275,7 @@ export async function dispatchStockTransfer(
     const qty = overrideQtyMt ?? num(t.dispatchedQtyMt);
     if (!Number.isFinite(qty) || qty <= 0) throw new Error("Quantity must be greater than zero");
 
-    if (isSesameCommodity(t.commodityCode)) {
+    if (usesSesameWorkflow(t.commodityCode)) {
       await lockSesameOwnership(tx, t.commodityCode);
       if (t.fromWarehouseName) await assertGradeAvailable(tx, t.commodityCode, t.fromWarehouseName, t.sesameType, qty);
       if (t.fromWarehouseName && await pakistanAvailable(tx, t.commodityCode, t.fromWarehouseName) + TRANSIT_TOLERANCE_MT < qty) throw new Error("Insufficient physical sesame stock at the source warehouse");

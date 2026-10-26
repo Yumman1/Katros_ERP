@@ -5,7 +5,7 @@ import {TRPCError} from '@trpc/server';
 import {router,roleProcedure,headProcedure} from '@/server/trpc/trpc';
 import {prisma} from '@/server/db';
 import {traderNamesMatch} from '@/lib/trader-identity';
-import {isSesameCommodity} from '@/lib/sesame';
+import {usesSesameWorkflow} from '@/lib/sesame';
 import {internalEntity} from '@/lib/sesame-entity';
 import {tradeEntity} from '@/lib/sesame-entity';
 import {exportRows,exportView,exportAction,exportReceipt,addExportContainers,directGateInput} from '@/server/execution/sesame-export';
@@ -26,7 +26,7 @@ async function access(ctx:Context,id:string,financial=false){
 const actor=(ctx:Context)=>ctx.session!.user.name??ctx.session!.user.id;
 async function action<T>(fn:()=>Promise<T>){try{return await fn();}catch(e){if(e instanceof TRPCError)throw e;throw new TRPCError({code:'BAD_REQUEST',message:e instanceof Error?e.message:'Shipment action failed'});}}
 async function fzcoAccess(ctx:Context){
- if(ctx.executionEntity!=='FZCO'||!ctx.executionCommodityCode||!isSesameCommodity(ctx.executionCommodityCode))throw new TRPCError({code:'FORBIDDEN',message:'Open FZCO execution'});
+ if(ctx.executionEntity!=='FZCO'||!ctx.executionCommodityCode||!usesSesameWorkflow(ctx.executionCommodityCode))throw new TRPCError({code:'FORBIDDEN',message:'Open FZCO execution'});
  const u=await prisma.user.findUniqueOrThrow({where:{id:ctx.session!.user.id}});if(u.disabled)throw new TRPCError({code:'FORBIDDEN'});
 }
 export const sesameExportRouter=router({
@@ -38,7 +38,7 @@ export const sesameExportRouter=router({
  }),
  usdLedger:roleProcedure(['EXECUTION','TRADER','FINANCE']).query(async({ctx})=>{
   const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
-  const trades=(await prisma.trade.findMany({include:{commodity:true,counterparty:true},where:{commodity:ctx.executionCommodityCode?{code:ctx.executionCommodityCode}:undefined}})).filter(t=>isSesameCommodity(t.commodity.code)&&(tradeEntity(t.tradeParams)==='FZCO'||internalEntity(t.tradeParams)==='FZCO')&&(ctx.session.user.role!=='TRADER'||traderNamesMatch(t.traderName,ctx.session.user.name??'')));
+  const trades=(await prisma.trade.findMany({include:{commodity:true,counterparty:true},where:{commodity:ctx.executionCommodityCode?{code:ctx.executionCommodityCode}:undefined}})).filter(t=>usesSesameWorkflow(t.commodity.code)&&(tradeEntity(t.tradeParams)==='FZCO'||internalEntity(t.tradeParams)==='FZCO')&&(ctx.session.user.role!=='TRADER'||traderNamesMatch(t.traderName,ctx.session.user.name??'')));
   const records=await prisma.counterpartyLedgerEntry.findMany({where:{tradeRef:{in:trades.map(t=>t.tradeRef)}},include:{exportShipment:true,voucher:{include:{exportShipment:true}}},orderBy:{entryDate:'desc'}});
   return trades.map(t=>{
    const params=t.tradeParams as Record<string,unknown>|null;
@@ -72,7 +72,7 @@ export const sesameExportRouter=router({
  receipt:roleProcedure(['EXECUTION']).input(z.object({id:z.string(),amountPkr:z.number().finite().positive().multipleOf(.01),method:z.enum(['Bank transfer','Cheque','Cash','Other']),reference:z.string().trim().max(120),bankName:z.string().trim().max(120).optional(),requestKey:z.string().uuid()})).mutation(async({ctx,input})=>{await access(ctx,input.id,true);return action(()=>exportReceipt(input.id,actor(ctx),input));}),
  purchaseTrades:roleProcedure(['EXECUTION']).input(z.object({counterpartyId:z.string().min(1)})).query(async({ctx,input})=>{
   const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
-  if(!ctx.executionCommodityCode||!isSesameCommodity(ctx.executionCommodityCode))throw new TRPCError({code:'BAD_REQUEST',message:'Open the Sesame desk'});
+  if(!ctx.executionCommodityCode||!usesSesameWorkflow(ctx.executionCommodityCode))throw new TRPCError({code:'BAD_REQUEST',message:'Open the Sesame desk'});
   return internationalPurchaseTrades(ctx.executionCommodityCode,ctx.executionEntity??'PAK',input.counterpartyId);
  }),
  purchaseBls:roleProcedure(['EXECUTION']).input(z.object({tradeRef:z.string().min(1)})).query(async({ctx,input})=>{
@@ -88,7 +88,7 @@ export const sesameExportRouter=router({
   note:z.string().trim().max(1000).optional(),
  })).mutation(async({ctx,input})=>{
   const code=ctx.executionCommodityCode;
-  if(!code||!isSesameCommodity(code))throw new TRPCError({code:'BAD_REQUEST',message:'Open the Sesame desk'});
+  if(!code||!usesSesameWorkflow(code))throw new TRPCError({code:'BAD_REQUEST',message:'Open the Sesame desk'});
   return action(()=>createInternationalPurchase({...input,entity:ctx.executionEntity??'PAK',actor:actor(ctx),userId:ctx.session.user.id,code}));
  }),
 });

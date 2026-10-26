@@ -1,6 +1,6 @@
 "use client";
 
-import { isSesameCommodity, sesameFields, SESAME_DEFAULTS, SESAME_TYPES, SESAME_TRADING_ENTITIES, sesameTradingEntity, sesameNetPrice, isPercentagePayment } from "@/lib/sesame";
+import { usesSesameWorkflow, sesameFields, SESAME_DEFAULTS, SESAME_TYPES, SESAME_TRADING_ENTITIES, sesameTradingEntity, sesameNetPrice, isPercentagePayment } from "@/lib/sesame";
 import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -406,7 +406,7 @@ function BookTradeForm() {
   );
 
   const isCorn = isCornCommodity(selectedCommodity?.code);
-  const isSesame = isSesameCommodity(selectedCommodity?.code, selectedCommodity?.name);
+  const isSesame = usesSesameWorkflow(selectedCommodity?.code, selectedCommodity?.name);
   const fzcoBooking = isSesame && sesameTradingEntity(tradeParams) === "Kastros FZCO";
   const bookingEntity = fzcoBooking ? "FZCO" : "PAK";
   const counterpartyOptions = allCounterparties.filter((cp) =>
@@ -830,7 +830,7 @@ function BookTradeForm() {
               <SearchableSelect
                 {...register("commodityId", { onChange: e => {
                   const commodity = commodities.find(c => c.id === e.target.value);
-                  setTradeParams(isSesameCommodity(commodity?.code, commodity?.name) ? { ...SESAME_DEFAULTS, quantityToleranceMode: "percent" } : { quantityToleranceMode: "percent" });
+                  setTradeParams(usesSesameWorkflow(commodity?.code, commodity?.name) ? { ...SESAME_DEFAULTS, quantityToleranceMode: "percent" } : { quantityToleranceMode: "percent" });
                   setSessionParamDefs([]);
                   if (commodity) desk.select(commodity.id);
                 } })}
@@ -1105,7 +1105,7 @@ function BookTradeForm() {
 
             {isSesame ? (
               <>
-                <Field label="Sesame type">
+                <Field label={`${selectedCommodity?.name ?? "Commodity"} type`}>
                   <SearchableSelect value={String(tradeParams.sesameType ?? "Machine Cleaned")} onChange={e => setTradeParams(p => ({ ...p, sesameType: e.target.value, colour: e.target.value === "Sortex" ? p.colour ?? "" : "" }))} className="kastros-select w-full">
                     {SESAME_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
                   </SearchableSelect>

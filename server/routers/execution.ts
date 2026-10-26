@@ -2,7 +2,7 @@ import { recordTruckQuality } from "@/server/execution/quality-review";
 import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 import { purchaseAdvancePercentage } from "@/lib/purchase-advance";
 import { createInternalGateAccess } from "@/server/execution/internal-gate-access";
-import { isSesameCommodity } from "@/lib/sesame";
+import { usesSesameWorkflow } from "@/lib/sesame";
 import { applyAdvance } from "@/server/finance/purchase-advances";
 import { tradeEntity } from "@/lib/sesame-entity";
 import { executionDeskTradeRefs, filterDeskRows, filterDeskTradeRows } from "@/server/execution/desk-scope";
@@ -1131,7 +1131,7 @@ export const executionRouter = router({
             ? // Money on a purchase only arrives through settlement.
               { direction: "BUY", OR: [
                 { directSettled: true, settlementClosedAt: null },
-                ...(isSesameCommodity(ctx.executionCommodityCode) && ctx.executionEntity !== "FZCO" ? [{ directSettled: false, tradeStatus: { in: ["LOCKED", "CONFIRMED"] as ("LOCKED" | "CONFIRMED")[] } }] : []),
+                ...(usesSesameWorkflow(ctx.executionCommodityCode) && ctx.executionEntity !== "FZCO" ? [{ directSettled: false, tradeStatus: { in: ["LOCKED", "CONFIRMED"] as ("LOCKED" | "CONFIRMED")[] } }] : []),
               ] }
             : {
                 OR: [
