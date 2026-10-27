@@ -1,5 +1,5 @@
 import { deskCounterpartyLabel, deskSide, internalEntity, paperTrade, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
-import { usesSesameWorkflow, normalizeSesameParams, SESAME_FIELDS } from "@/lib/sesame";
+import { usesSesameWorkflow, normalizeSesameParams, sesameFields } from "@/lib/sesame";
 import { qualitySummaryFromParams } from "@/lib/trade-parameters";
 import { TradeDirection, TradeStatus } from "@prisma/client";
 import type { KycStatus, QualityTolerances } from "@/lib/trade-constants";
@@ -392,9 +392,9 @@ async function applyPatchToTrade(
     // Warehouse qty split always requires explicit head approval — never auto-approve here.
   }
   if (usesSesameWorkflow(trade.commodity.code, trade.commodity.name)) {
-    nextParams = normalizeSesameParams(nextParams, trade.paymentType);
+    nextParams = normalizeSesameParams(nextParams, trade.paymentType, trade.commodity.code);
     trade.paymentTerms = paymentTypeLabel(trade.paymentType, Number(nextParams.creditDays) || undefined, Number(nextParams.paymentPercentage) || undefined);
-    trade.qualityTolerances = qualitySummaryFromParams(nextParams, SESAME_FIELDS);
+    trade.qualityTolerances = qualitySummaryFromParams(nextParams, sesameFields(nextParams, trade.commodity.code));
     trade.maxMoisturePct = Number(nextParams.moisture);
   }
   trade.tradeParams = Object.keys(nextParams).length ? nextParams : null;

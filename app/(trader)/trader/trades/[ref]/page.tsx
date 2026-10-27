@@ -413,7 +413,7 @@ export default function TradeDetailPage() {
       </div>
 
       {trade.tradeParams && Object.keys(trade.tradeParams).length > 0 && (() => {
-        const defs = resolveAllTradeParameters(usesSesameWorkflow(trade.commodity.code, trade.commodity.name) ? "SESAME" : trade.commodity.code, null);
+        const defs = resolveAllTradeParameters(trade.commodity.code === "PKE" ? "PKE" : usesSesameWorkflow(trade.commodity.code, trade.commodity.name) ? "SESAME" : trade.commodity.code, null);
         const labelOf = (key: string) => defs.find((d) => d.key === key)?.label ?? key.replace(/_/g, " ");
         const universalKeys = new Set([
           ...UNIVERSAL_TRADE_FIELDS.map((d) => d.key),

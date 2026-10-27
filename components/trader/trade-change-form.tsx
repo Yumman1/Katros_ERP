@@ -1,5 +1,5 @@
 "use client";
-import { usesSesameWorkflow, sesameFields, isPercentagePayment, normalizeSesameParams } from "@/lib/sesame";
+import { usesSesameWorkflow, sesameFields, isPercentagePayment, normalizeSesameParams, workflowDefaults } from "@/lib/sesame";
 import { TradeParametersFields } from "@/components/trader/trade-parameters-fields";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -127,7 +127,7 @@ export function TradeChangeForm({
     setGrade(trade.grade ?? "");
     setNotes(trade.notes ?? "");
     setCornSpecs(trade.qualityTolerancesDetail ?? defaultCornSpecifications());
-    const params: TradeParamValues = {};
+    const params: TradeParamValues = trade.commodity.code === "PKE" ? { ...workflowDefaults("PKE") } : {};
     for (const [k, v] of Object.entries(trade.tradeParams ?? {})) {
       if (
         v != null &&
@@ -187,7 +187,7 @@ export function TradeChangeForm({
       cleanedParams.creditDays = parseInt(creditDays, 10);
     }
 
-    if (isSesame) Object.assign(cleanedParams, normalizeSesameParams(tradeParams, paymentType as PaymentType));
+    if (isSesame) Object.assign(cleanedParams, normalizeSesameParams(tradeParams, paymentType as PaymentType, trade.commodity.code));
 
     const commission =
       commissionAmount.trim() !== "" ? parseNumericString(commissionAmount) : null;
@@ -455,7 +455,7 @@ export function TradeChangeForm({
         </div>
       </Section>
 
-      {isSesame && <Section title="Sesame specifications and route"><TradeParametersFields definitions={sesameFields(tradeParams)} values={tradeParams} onChange={(key, value) => setTradeParams(p => ({ ...p, [key]: value }))} /></Section>}
+      {isSesame && <Section title={`${trade.commodity.name} specifications and route`}><TradeParametersFields definitions={sesameFields(tradeParams, trade.commodity.code)} values={tradeParams} onChange={(key, value) => setTradeParams(p => ({ ...p, [key]: value }))} /></Section>}
       {isCorn && (
         <Section title="Corn specifications">
           <CornSpecificationFields values={cornSpecs} onChange={setCornSpecs} />

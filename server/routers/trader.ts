@@ -934,10 +934,10 @@ export const traderRouter = router({
       }
 
       const sesame = usesSesameWorkflow(c.code, c.name);
-      const paramDefs = resolveAllTradeParameters(sesame ? "SESAME" : c.code, c.tradeParameterDefs);
+      const paramDefs = resolveAllTradeParameters(c.code === "PKE" ? "PKE" : sesame ? "SESAME" : c.code, c.tradeParameterDefs);
       let tradeParams = input.tradeParams ?? {};
       if (sesame) {
-        try { tradeParams = normalizeSesameParams(tradeParams, input.paymentType); }
+        try { tradeParams = normalizeSesameParams(tradeParams, input.paymentType, c.code); }
         catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invalid Sesame terms" }); }
       }
       if (input.incoterms === "CNF" && (!sesame || input.tradeScope !== "INTERNATIONAL")) {

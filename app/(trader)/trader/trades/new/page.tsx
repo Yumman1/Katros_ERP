@@ -1,6 +1,6 @@
 "use client";
 
-import { usesSesameWorkflow, sesameFields, SESAME_DEFAULTS, SESAME_TYPES, SESAME_TRADING_ENTITIES, sesameTradingEntity, sesameNetPrice, isPercentagePayment } from "@/lib/sesame";
+import { usesSesameWorkflow, sesameFields, workflowDefaults, SESAME_TYPES, SESAME_TRADING_ENTITIES, sesameTradingEntity, sesameNetPrice, isPercentagePayment } from "@/lib/sesame";
 import { useCommodityDesk } from "@/components/trader/commodity-desk-provider";
 
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -448,7 +448,7 @@ function BookTradeForm() {
     }
   }, [fzcoBooking, selectedCounterparty?.code, tradeParams.internalCounterpartyEntity]);
   useEffect(() => {
-    if (isSesame) setTradeParams(current => ({ ...SESAME_DEFAULTS, ...current, tradingEntity: sesameTradingEntity(current) }));
+    if (isSesame) setTradeParams(current => ({ ...workflowDefaults(selectedCommodity?.code), ...current, tradingEntity: sesameTradingEntity(current) }));
   }, [isSesame, selectedCommodity?.id]);
   const warehouseStorageDivision = useMemo(
     () =>
@@ -516,7 +516,7 @@ function BookTradeForm() {
   }, [refData.data?.units]);
 
   const commodityParamDefs = useMemo(() => {
-    const base = isSesame ? sesameFields(tradeParams).filter(d => d.group === "quality") : resolveCommoditySpecificParameters(
+    const base = isSesame ? sesameFields(tradeParams, selectedCommodity?.code).filter(d => d.group === "quality") : resolveCommoditySpecificParameters(
       selectedCommodity?.code,
       selectedCommodity?.tradeParameterDefs ?? null,
     );
@@ -528,7 +528,7 @@ function BookTradeForm() {
   const allParamDefs = useMemo(
     () =>
       resolveAllTradeParameters(
-        isSesame ? "SESAME" : selectedCommodity?.code,
+        selectedCommodity?.code === "PKE" ? "PKE" : isSesame ? "SESAME" : selectedCommodity?.code,
         selectedCommodity?.tradeParameterDefs ?? null,
         sessionParamDefs,
       ),
@@ -830,7 +830,7 @@ function BookTradeForm() {
               <SearchableSelect
                 {...register("commodityId", { onChange: e => {
                   const commodity = commodities.find(c => c.id === e.target.value);
-                  setTradeParams(usesSesameWorkflow(commodity?.code, commodity?.name) ? { ...SESAME_DEFAULTS, quantityToleranceMode: "percent" } : { quantityToleranceMode: "percent" });
+                  setTradeParams(usesSesameWorkflow(commodity?.code, commodity?.name) ? { ...workflowDefaults(commodity?.code), quantityToleranceMode: "percent" } : { quantityToleranceMode: "percent" });
                   setSessionParamDefs([]);
                   if (commodity) desk.select(commodity.id);
                 } })}
@@ -1103,7 +1103,7 @@ function BookTradeForm() {
               {fzcoBooking && <p className="mt-1 text-[11px] text-subtle">Dubai FZCO books international trades only.</p>}
             </Field>
 
-            {isSesame ? (
+            {isSesame ? (selectedCommodity?.code === "PKE" ? null : (
               <>
                 <Field label={`${selectedCommodity?.name ?? "Commodity"} type`}>
                   <SearchableSelect value={String(tradeParams.sesameType ?? "Machine Cleaned")} onChange={e => setTradeParams(p => ({ ...p, sesameType: e.target.value, colour: e.target.value === "Sortex" ? p.colour ?? "" : "" }))} className="kastros-select w-full">
@@ -1111,7 +1111,7 @@ function BookTradeForm() {
                   </SearchableSelect>
                 </Field>
               </>
-            ) : (
+            )) : (
               <Field label="Season" error={errors.season?.message}>
                 <SearchableSelect {...register("season")} className="kastros-select w-full">
                   <option value="SUMMER">Summer</option><option value="WINTER">Winter</option>

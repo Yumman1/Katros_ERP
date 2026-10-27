@@ -40,19 +40,36 @@ export const SESAME_FIELDS: TradeParamDefinition[] = [
   ...[["purity", "Purity"], ["ffa", "FFA"], ["moisture", "Moisture"], ["oilContent", "Oil Content"], ["admixture", "Admixture"]].map(([key, label]): TradeParamDefinition => ({ key, label, type: "percent", unit: "%", group: "quality", required: true })),
   { key: "colour", label: "Color", type: "text", group: "quality", placeholder: "Type a color" },
 ];
-export function sesameFields(values: TradeParamValues) {
+export const PKE_DEFAULTS: TradeParamValues = {
+  tradingEntity: "Kastros PAK", profat: 21, fibre: 20, moisture: 12, sandSilica: 3,
+};
+export const PKE_FIELDS: TradeParamDefinition[] = [
+  ...SESAME_FIELDS.filter(d => d.key === "tradingEntity" || d.key === "internalCounterpartyEntity"),
+  { key: "profat", label: "Profat (min)", type: "percent", unit: "%", group: "quality", required: true },
+  { key: "fibre", label: "Fibre (max)", type: "percent", unit: "%", group: "quality", required: true },
+  { key: "moisture", label: "Moisture (max)", type: "percent", unit: "%", group: "quality", required: true },
+  { key: "sandSilica", label: "Sand and/or Silica (max)", type: "percent", unit: "%", group: "quality", required: true },
+];
+export function workflowDefaults(code?: string | null) {
+  return code?.toUpperCase() === "PKE" ? PKE_DEFAULTS : SESAME_DEFAULTS;
+}
+export function sesameFields(values: TradeParamValues, code?: string | null) {
+  if (code?.toUpperCase() === "PKE") return PKE_FIELDS;
   return SESAME_FIELDS.filter(d => d.key !== "colour" || values.sesameType === "Sortex");
 }
 export function isPercentagePayment(type: string) {
   return type === "ADVANCE_100" || type === "AFTER_DELIVERY_100";
 }
 /** Validate at the server boundary as well as the form. Never retain a hidden Sortex color. */
-export function normalizeSesameParams(values: TradeParamValues, paymentType: PaymentType): Record<string, string | number | null> {
+export function normalizeSesameParams(values: TradeParamValues, paymentType: PaymentType, code?: string | null): Record<string, string | number | null> {
+  const pke = code?.toUpperCase() === "PKE";
   const params: Record<string, string | number | null> = {};
   for (const [key, value] of Object.entries(values)) {
     if (value !== undefined) params[key] = value;
   }
-  if (!(SESAME_TYPES as readonly unknown[]).includes(params.sesameType)) throw new Error("Select a Sesame type");
+  if (pke) {
+    for (const key of ["sesameType", "purity", "ffa", "oilContent", "admixture", "colour"]) delete params[key];
+  } else if (!(SESAME_TYPES as readonly unknown[]).includes(params.sesameType)) throw new Error("Select a Sesame type");
   params.tradingEntity = sesameTradingEntity(values);
   if (!(SESAME_TRADING_ENTITIES as readonly unknown[]).includes(params.tradingEntity)) throw new Error("Select Kastros FZCO or Kastros PAK as the trading entity");
   delete params.tradeRoute;
@@ -60,9 +77,10 @@ export function normalizeSesameParams(values: TradeParamValues, paymentType: Pay
     if (!["PAK", "FZCO"].includes(String(params.internalCounterpartyEntity))) throw new Error("Invalid internal counterparty entity");
     if ((params.tradingEntity === "Kastros FZCO" ? "FZCO" : "PAK") === params.internalCounterpartyEntity) throw new Error("An internal trade must be between Pakistan and FZCO");
   } else delete params.internalCounterpartyEntity;
-  for (const key of ["purity", "ffa", "moisture", "oilContent", "admixture"]) {
+  const qualityFields = (pke ? PKE_FIELDS : SESAME_FIELDS).filter(d => d.group === "quality" && d.type === "percent");
+  for (const {key, label} of qualityFields) {
     const value = params[key];
-    if (value == null || String(value).trim() === "" || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100) throw new Error(`${SESAME_FIELDS.find(d => d.key === key)?.label} must be between 0 and 100%`);
+    if (value == null || String(value).trim() === "" || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100) throw new Error(`${label} must be between 0 and 100%`);
     params[key] = Number(value);
   }
   if (params.sesameType !== "Sortex") delete params.colour;

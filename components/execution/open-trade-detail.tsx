@@ -691,7 +691,7 @@ export function OpenTradeDetail({
           </div>
         </Section>
 
-        {isSesame && <Section title="Sesame specifications and entity"><div className="grid gap-3 sm:grid-cols-2">{sesameFields(tradeParams).map(def => <Field key={def.key} label={def.label}><input readOnly value={`${tradeParams[def.key] ?? "—"}${def.type === "percent" ? "%" : ""}`} className={`${inputClass} opacity-80`} /></Field>)}</div></Section>}
+        {isSesame && <Section title={`${trade.commodity.name} specifications and entity`}><div className="grid gap-3 sm:grid-cols-2">{sesameFields(tradeParams, trade.commodity.code).map(def => <Field key={def.key} label={def.label}><input readOnly value={`${tradeParams[def.key] ?? "—"}${def.type === "percent" ? "%" : ""}`} className={`${inputClass} opacity-80`} /></Field>)}</div></Section>}
 
         {/* ── 5. Specification (corn) ── */}
         {isCorn && (
