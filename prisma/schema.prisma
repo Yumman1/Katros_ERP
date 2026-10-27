@@ -947,6 +947,19 @@ model PendingTruck {
 
 /// Uploaded gatepass files (builty, weigh slips, photos) — binary lives in
 /// Supabase Storage; this row is the metadata + storage key.
+model PkeImportFile {
+  id String @id @default(cuid())
+  purchaseTradeRef String
+  title String
+  stage Int @default(0)
+  revision Int @default(0)
+  payload Json
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([purchaseTradeRef])
+}
+
 model GatepassDocument {
   id         String       @id @default(cuid())
   gatepassNo String
