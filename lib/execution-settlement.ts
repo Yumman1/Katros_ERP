@@ -4,7 +4,7 @@ import { currencyToBaseFactor } from "./price-units";
 export function sesameSettlementFx(trade: { commodity: { code: string; name?: string }; currency?: string; tradeParams?: Record<string, unknown> | null }): number {
   if (!usesSesameWorkflow(trade.commodity.code, trade.commodity.name) || trade.currency !== "USD") return 1;
   const fx = Number(trade.tradeParams?.executionFxPkrPerUsd);
-  if (!Number.isFinite(fx) || fx <= 0) throw new Error("Set the Sesame USD/PKR rate in Positions before locking this trade");
+  if (!Number.isFinite(fx) || fx <= 0) throw new Error(`Set the ${trade.commodity.name || trade.commodity.code} USD/PKR rate in Positions before locking this trade`);
   return fx;
 }
 
