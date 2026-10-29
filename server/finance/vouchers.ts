@@ -426,9 +426,9 @@ export async function approveVoucher(
     if(current.voucherKind === "INTERNAL_TRADE" && current.tradeRef) {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`internal-payment:${current.tradeRef}`}))::text`;
       const t=await tx.trade.findUniqueOrThrow({where:{tradeRef:current.tradeRef},include:{commodity:true,contract:true}});
-      const {internalPakSale}=await import("@/lib/sesame-entity");
+      const {internalTrade}=await import("@/lib/sesame-entity");
       const {internalCommitted}=await import("./internal-payments");
-      if(!internalPakSale(t.commodity.code,t.direction,t.tradeParams)||!t.contract||!["LOCKED","CONFIRMED","EXECUTED"].includes(t.tradeStatus))throw new Error("Internal trade is no longer payable");
+      if(!internalTrade(t.commodity.code,t.direction,t.tradeParams)||!t.contract||!["LOCKED","CONFIRMED","EXECUTED"].includes(t.tradeStatus))throw new Error("Internal trade is no longer payable");
       const total=quantityUnitToKg(num(t.quantity),t.quantityUnit??"MT")*num(t.contract.ratePerKg);
       if(await internalCommitted(tx,t.tradeRef,true,current.id)+num(current.amountPkr)>total+.005)throw new Error("Payment exceeds the remaining internal trade amount");
     }
@@ -493,12 +493,13 @@ export async function approveVoucher(
     if(row?.internalPaymentRef||row?.exportShipmentId||row?.voucherKind)await tx.counterpartyLedgerEntry.updateMany({where:{voucherId},data:{executionEntity:row.executionEntity,paymentFxRate:row.paymentFxRate,exportShipmentId:row.exportShipmentId}});
     if((row?.voucherKind==="INTL_PURCHASE"||row?.voucherKind==="INTERNAL_TRADE")&&row.tradeRef){
       const trade=await tx.trade.findUnique({where:{tradeRef:row.tradeRef},include:{commodity:true}});
-      if(trade&&(await import("@/lib/sesame-entity")).internalPakSale(trade.commodity.code,trade.direction,trade.tradeParams)){
+      if(trade&&(await import("@/lib/sesame-entity")).internalTrade(trade.commodity.code,trade.direction,trade.tradeParams)){
         const {entityCounterparty}=await import("@/server/finance/internal-payments");
-        const fzco=await entityCounterparty(tx,"FZCO",trade.createdById);
+        const mirrorEntity=row.executionEntity==="PAK"?"FZCO":"PAK";
+        const fzco=await entityCounterparty(tx,row.executionEntity==="PAK"?"PAK":"FZCO",trade.createdById);
         await tx.counterpartyLedgerEntry.create({
           data:{
-            executionEntity:"PAK",
+            executionEntity:mirrorEntity,
             paymentFxRate:row.paymentFxRate,
             exportShipmentId:row.exportShipmentId,
             counterpartyId:fzco.id,

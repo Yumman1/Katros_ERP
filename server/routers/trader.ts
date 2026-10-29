@@ -9,7 +9,7 @@ import { isBaleCommodity } from "@/lib/warehouse-utilization";
 import { filterDeskRows } from "@/server/execution/desk-scope";
 import { requireTraderCommodity, traderCommodityDesks } from "@/server/trader-commodity-access";
 import { usesSesameWorkflow, normalizeSesameParams, sesameNetPrice, sesameTradingEntity } from "@/lib/sesame";
-import { belongsToSesameDesk, canonicalizeInternalPakSale, deskCounterpartyLabel, deskSide, internalPakSale, internalEntity, presentTraderBook } from "@/lib/sesame-entity";
+import { belongsToSesameDesk, canonicalizeInternalPakSale, deskCounterpartyLabel, deskSide, internalPakSale, pkeImportSale, internalTrade, internalEntity, presentTraderBook } from "@/lib/sesame-entity";
 import { entityCounterparty } from "@/server/finance/internal-payments";
 import { commercialReportInput, getCommercialReport } from "@/server/reports/commercial";
 import { z } from "zod";
@@ -952,10 +952,10 @@ export const traderRouter = router({
       if (bookingEntity === "FZCO" && input.tradeScope === "LOCAL") {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Dubai FZCO can book international trades only" });
       }
-      if (sesame && bookingEntity === "FZCO" && internalEntity(tradeParams) === "PAK" && input.direction === "SELL") {
+      if (sesame && c.code !== "PKE" && bookingEntity === "FZCO" && internalEntity(tradeParams) === "PAK" && input.direction === "SELL") {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Book this as a purchase from Kastros Pakistan. Pakistan execution locks the warehouse sale and ships triparty." });
       }
-      if (sesame && bookingEntity === "PAK" && internalEntity(tradeParams) === "FZCO" && input.direction === "BUY") {
+      if (sesame && c.code !== "PKE" && bookingEntity === "PAK" && internalEntity(tradeParams) === "FZCO" && input.direction === "BUY") {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Pakistan books the internal as a sale to Dubai FZCO" });
       }
       let cp = await getCounterpartyById(input.counterpartyId);
@@ -963,7 +963,12 @@ export const traderRouter = router({
       tradeParams = canonical.params as typeof tradeParams;
       const direction = canonical.direction as TradeDirection;
       const internalSale = sesame && canonical.internalPakSale;
-      let tradeScope = internalSale || bookingEntity === "FZCO" ? "INTERNATIONAL" as const : input.tradeScope;
+      const pkeImport = c.code === "PKE" && direction === "BUY" && internalEntity(tradeParams) === "FZCO";
+      if (pkeImport) {
+        const interco = await entityCounterparty(prisma, "FZCO", ctx.session.user.id);
+        cp = await getCounterpartyById(interco.id);
+      }
+      let tradeScope = internalSale || pkeImport || bookingEntity === "FZCO" ? "INTERNATIONAL" as const : input.tradeScope;
       if (internalSale) {
         const interco = await entityCounterparty(prisma, "FZCO", ctx.session.user.id);
         cp = await getCounterpartyById(interco.id);
@@ -971,7 +976,7 @@ export const traderRouter = router({
       if (!cp) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid counterparty" });
       }
-      if (!internalSale && !(cp.tradingEntities ?? ["PAK"]).includes(bookingEntity)) {
+      if (!internalSale && !pkeImport && !(cp.tradingEntities ?? ["PAK"]).includes(bookingEntity)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "This counterparty is not registered with the selected trading entity" });
       }
 
@@ -1285,7 +1290,7 @@ export const traderRouter = router({
       })
       .map((c) => {
         const t = bookByRef.get(c.tradeRef);
-        const shownEntity = entity ?? (t && internalPakSale(c.commodityCode,c.direction,t.tradeParams) ? "FZCO" : undefined);
+        const shownEntity = entity ?? (t && internalTrade(c.commodityCode,c.direction,t.tradeParams) ? "FZCO" : undefined);
         const direction = shownEntity && t ? deskSide(c.commodityCode, c.direction, t.tradeParams, shownEntity) : c.direction;
         const counterpartyName = shownEntity && t
           ? deskCounterpartyLabel(c.commodityCode, t.tradeParams, c.counterpartyName, shownEntity)
@@ -1631,10 +1636,10 @@ export const traderRouter = router({
             .at(-1) ?? null;
         return {
           tradeRef: t.tradeRef,
-          direction: internalPakSale(t.commodity.code,t.direction,t.tradeParams) ? "BUY" as const : t.direction,
+          direction: internalTrade(t.commodity.code,t.direction,t.tradeParams) ? deskSide(t.commodity.code,t.direction,t.tradeParams,"FZCO") : t.direction,
           commodityName: t.commodity.name,
           commodityCode: t.commodity.code,
-          counterpartyName: internalPakSale(t.commodity.code,t.direction,t.tradeParams) ? "Kastros Pakistan" : t.counterparty.name,
+          counterpartyName: internalTrade(t.commodity.code,t.direction,t.tradeParams) ? "Kastros Pakistan" : t.counterparty.name,
           quantity: t.quantity,
           quantityUnit: t.quantityUnit,
           editedBy: t.executionLastEditedBy ?? lastEdit?.actorName ?? null,

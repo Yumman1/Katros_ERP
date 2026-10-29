@@ -107,7 +107,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         { href: "/execution/movements", label: "Truck Movements", icon: <Truck className="h-4 w-4" /> },
         { href: "/execution/shifting", label: "Internal Shifting", icon: <MoveRight className="h-4 w-4" /> },
         ...(!fzco ? [{href:"/execution/quality",label:"Quality and Invoice",icon:<Warehouse className="h-4 w-4" />}]:[]),
-        ...(sesame && !fzco ? [{ href: "/execution/processed-goods", label: "Processed Goods", icon: <Warehouse className="h-4 w-4" /> }] : []),
+        ...(sesame && active.code !== "PKE" && !fzco ? [{ href: "/execution/processed-goods", label: "Processed Goods", icon: <Warehouse className="h-4 w-4" /> }] : []),
         { href: "/execution/vouchers", label: "Vouchers", icon: <Receipt className="h-4 w-4" /> },
         { href: "/execution/ledgers", label: "Ledgers", icon: <BookOpen className="h-4 w-4" /> },
         { href: "/execution/warehouses", label: "Warehouses", icon: <MapPin className="h-4 w-4" /> },
@@ -158,6 +158,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
   let content = children;
   if (sesame && pathname === "/execution/positions") content = <div className="kastros-desk-page"><SesamePositions /></div>;
   if (fzco && pathname === "/execution") content = <FzcoOverview />;
+  if (active.code === "PKE" && pathname === "/execution/processed-goods") content = <p className="p-6">PKE does not require processing.</p>;
   if (active.code === "PKE" && pathname === "/execution") content = <PkeImportDashboard />;
   if (fzco && pathname === "/execution/movements") content = <FzcoTrucks />;
   if (fzco && (pathname === "/execution/contracts" || /^\/execution\/(purchase-delivered|purchase-spot|sales)\//.test(pathname))) content = <div className="kastros-desk-page"><FzcoBook commodityCode={active.code} /></div>;

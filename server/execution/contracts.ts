@@ -82,6 +82,8 @@ async function computeFulfilledQty(
   direction: TradeDirection,
   quantityUnit: string,
 ): Promise<number> {
+  const pkeReceipts = await db.pkeTripartyReceipt.aggregate({where:{purchaseTradeRef:tradeRef},_sum:{quantityMt:true}});
+  const pkeReceived = num(pkeReceipts._sum.quantityMt);
   const ownership = await db.sesameOwnershipEntry.aggregate({ where: { tradeRef, truckId: null }, _sum: { quantityMt: true } });
   const direct = await db.sesameExportShipment.aggregate({where:{tradeRef,directThirdParty:true,status:{in:["RELEASED","BL_RECORDED"]}},_sum:{totalWeightKg:true}});
   const paperQty = num(ownership._sum.quantityMt) + kgToQuantityUnit(num(direct._sum.totalWeightKg),quantityUnit);
@@ -103,7 +105,7 @@ async function computeFulfilledQty(
   const spotWeightKg = spot ? num(spot.warehouseReceiveWeightKg) : 0;
   const spotQty =
     spot?.state === "RECEIVED" && spotWeightKg ? kgToQuantityUnit(spotWeightKg, quantityUnit) : 0;
-  return num(agg._sum.allocatedQtyMt) + spotQty + paperQty;
+  return num(agg._sum.allocatedQtyMt) + spotQty + paperQty + pkeReceived;
 }
 
 async function getFulfillmentByWarehouse(

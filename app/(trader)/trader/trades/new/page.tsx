@@ -413,10 +413,16 @@ function BookTradeForm() {
     (cp.tradingEntities ?? ["PAK"]).includes(isSesame ? bookingEntity : "PAK"),
   );
   const selectedCounterparty = counterpartyOptions.find((cp) => cp.id === counterpartyId);
-  const fzcoPakPurchase = isSesame && fzcoBooking && (tradeParams.internalCounterpartyEntity === "PAK" || selectedCounterparty?.code === "INTERCO-PAK");
+  const fzcoPakPurchase = selectedCommodity?.code !== "PKE" && isSesame && fzcoBooking && (tradeParams.internalCounterpartyEntity === "PAK" || selectedCounterparty?.code === "INTERCO-PAK");
   const internalPakSale = isSesame && !fzcoBooking && tradeParams.internalCounterpartyEntity === "FZCO" && direction === "SELL";
   const sesameInternational = isSesame && (tradeScope === "INTERNATIONAL" || internalPakSale || fzcoBooking);
-  const paperOwnership = isSesame && fzcoBooking && !fzcoPakPurchase && !tradeParams.internalCounterpartyEntity;
+  const pkeImportSale = selectedCommodity?.code === "PKE" && ((fzcoBooking && tradeParams.internalCounterpartyEntity === "PAK" && direction === "SELL") || (!fzcoBooking && tradeParams.internalCounterpartyEntity === "FZCO" && direction === "BUY"));
+  useEffect(() => {
+    if (!pkeImportSale) return;
+    const cp = allCounterparties.find(c => c.code === (fzcoBooking ? "INTERCO-PAK" : "INTERCO-FZCO"));
+    setValue("counterpartyId", cp?.id ?? "pending-interco");
+  }, [pkeImportSale, fzcoBooking, allCounterparties, setValue]);
+  const paperOwnership = isSesame && fzcoBooking && (selectedCommodity?.code === "PKE" || (!fzcoPakPurchase && !tradeParams.internalCounterpartyEntity));
   useEffect(() => {
     if ((internalPakSale || fzcoBooking) && tradeScope !== "INTERNATIONAL") setValue("tradeScope", "INTERNATIONAL", { shouldValidate: true });
   }, [internalPakSale, fzcoBooking, tradeScope, setValue]);
@@ -925,7 +931,7 @@ function BookTradeForm() {
                       setValue("tradeScope", "INTERNATIONAL", { shouldValidate: true });
                     }
                     if (value === "PAK") {
-                      setValue("direction", TradeDirection.BUY, { shouldValidate: true });
+                      setValue("direction", selectedCommodity?.code === "PKE" ? TradeDirection.SELL : TradeDirection.BUY, { shouldValidate: true });
                       setValue("tradeScope", "INTERNATIONAL", { shouldValidate: true });
                     }
                   }} className="kastros-select w-full">
@@ -941,7 +947,7 @@ function BookTradeForm() {
               <SearchableSelect
                 searchable
                 {...register("counterpartyId")}
-                disabled={internalPakSale || fzcoPakPurchase}
+                disabled={internalPakSale || fzcoPakPurchase || pkeImportSale}
                 className="kastros-select w-full"
               >
                 <option value="">Select…</option>
@@ -1564,7 +1570,7 @@ function BookTradeForm() {
                       : "Select a commodity to see spare storage capacity for its division."}
               </p>
             </Field>}
-            {paperOwnership && <p className="text-sm text-muted-foreground">FZCO trades have no warehouse allocation. Purchases stay open until FZCO pays the supplier or Kastros Pakistan. Sales stay open until the buyer pays FZCO.</p>}
+            {paperOwnership && <p className="text-sm text-muted-foreground">{selectedCommodity?.code === "PKE" ? "The vessel goes directly to Pakistan. Triparty gate-in closes the related Dubai open quantities; payments are tracked separately." : "FZCO trades have no warehouse allocation. Purchases stay open until FZCO pays the supplier or Kastros Pakistan. Sales stay open until the buyer pays FZCO."}</p>}
           </div>
         </Section>
 

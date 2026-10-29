@@ -36,6 +36,11 @@ export function canonicalizeInternalPakSale(
   counterpartyCode?: string | null,
 ): { direction: "BUY" | "SELL"; params: Record<string, unknown>; internalPakSale: boolean } {
   const next: Record<string, unknown> = { ...(params ?? {}) };
+  if (code === "PKE" && ((direction === "SELL" && tradeEntity(next) === "FZCO" && (internalEntity(next) === "PAK" || counterpartyCode === "INTERCO-PAK")) || pkeImportSale(code, direction, next))) {
+    next.tradingEntity = "Kastros PAK";
+    next.internalCounterpartyEntity = "FZCO";
+    return {direction:"BUY", params:next, internalPakSale:false};
+  }
   if (internalPakSale(code, direction, next) || isFzcoBuyFromPakistan(code, direction, next, counterpartyCode)) {
     next.tradingEntity = "Kastros PAK";
     next.internalCounterpartyEntity = "FZCO";
@@ -55,6 +60,9 @@ export function paperTrade(
 ): boolean {
   if (isFzcoBuyFromPakistan(code, extra?.direction ?? "", params, extra?.counterpartyCode)) return false;
   return usesSesameWorkflow(code) && tradeEntity(params) === "FZCO" && internalEntity(params) === null;
+}
+export function pkeImportSale(code: string, direction: string, params: unknown): boolean {
+  return code === "PKE" && direction === "BUY" && tradeEntity(params) === "PAK" && internalEntity(params) === "FZCO";
 }
 /** Pakistan sells, Dubai FZCO buys — the only supported internal trade shape. */
 export function internalPakSale(code: string, direction: string, params: unknown): boolean {
@@ -95,7 +103,7 @@ export function presentTraderBook<T extends {
   return trades
     .filter((t) => !entity || belongsToSesameDesk(t.commodity.code, t.tradeParams, entity))
     .map((t) => {
-      const shownEntity = entity ?? (internalPakSale(t.commodity.code, t.direction, t.tradeParams) ? "FZCO" : tradeEntity(t.tradeParams));
+      const shownEntity = entity ?? ((internalPakSale(t.commodity.code, t.direction, t.tradeParams) || pkeImportSale(t.commodity.code, t.direction, t.tradeParams)) ? "FZCO" : tradeEntity(t.tradeParams));
       return {
         ...t,
         direction: deskSide(t.commodity.code, t.direction, t.tradeParams, shownEntity) as T["direction"],
@@ -111,6 +119,7 @@ export function presentTraderBook<T extends {
  * internals close when FZCO pays Kastros Pakistan.
  */
 export function closesOnPayment(code: string, direction: string, tradeScope: string | null | undefined, params: unknown): boolean {
+  if (code === "PKE" && (pkeImportSale(code, direction, params) || (tradeEntity(params) === "FZCO" && internalEntity(params) === null))) return false;
   if (!usesSesameWorkflow(code)) return false;
   if (internalPakSale(code, direction, params)) return true;
   return tradeEntity(params) === "FZCO" && internalEntity(params) === null;
@@ -150,4 +159,9 @@ export function sesameBookQty(input: {
   if (!input.internal || !input.closeOnPayment) return input.openMt;
   if (input.asEntity === "FZCO") return input.quantityMt;
   return input.quantityMt;
+}
+
+/** Internal PKE imports reverse the existing sesame intercompany direction. */
+export function internalTrade(code:string,direction:string,params:unknown):boolean {
+  return internalPakSale(code,direction,params)||pkeImportSale(code,direction,params);
 }

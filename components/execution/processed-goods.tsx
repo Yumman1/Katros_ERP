@@ -10,7 +10,7 @@ const inputClass='kastros-input block w-full mt-1';
 const cell='p-3 text-left whitespace-nowrap';
 export function ProcessedGoods(){
  const {active,entity}=useExecutionCommodityDesk();
- if(!usesSesameWorkflow(active.code)||entity==='FZCO')return <p>Open the Pakistan Sesame desk to process goods.</p>;
+ if(active.code==="PKE"||!usesSesameWorkflow(active.code)||entity==='FZCO')return <p>Open the Pakistan Sesame desk to process goods.</p>;
  return <WarehouseProcessing key={active.code}/>;
 }
 function WarehouseProcessing(){

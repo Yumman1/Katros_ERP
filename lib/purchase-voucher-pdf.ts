@@ -4,7 +4,7 @@ export async function downloadPurchaseVoucher(v:VoucherView){
   const money=(n:number|null)=>n==null?"Not recorded":`${n.toLocaleString("en-PK")} PKR`;
   const state=v.status==="APPROVED"?"COMPLETED":v.status==="REJECTED"?"REJECTED":v.traderApprovalRequired&&!v.traderApprovedAt?"PENDING-TRADER":"PENDING-FINANCE";
   if(v.voucherKind === 'INTERNAL_TRADE') return downloadPurchaseDocument('INTERNAL TRADE SETTLEMENT',v.voucherNo,v.voucherDate,[
-    ['Status',state],['Buyer','Dubai FZCO'],['Seller','Kastros Pakistan'],['Commodity',v.commodityCode??'-'],['Trade reference',v.tradeRef??'-'],
+    ['Status',state],['Buyer',v.executionEntity==='PAK'?'Kastros Pakistan':'Dubai FZCO'],['Seller',v.executionEntity==='PAK'?'Dubai FZCO':'Kastros Pakistan'],['Commodity',v.commodityCode??'-'],['Trade reference',v.tradeRef??'-'],
     ['Agreed trade value',money(v.agreedTradeAmountPkr)],['Payment amount',v.amountUsd!=null?`${v.amountUsd.toFixed(2)} USD`:money(v.amountPkr)],
     ['PKR equivalent',money(v.amountPkr)],['Prepared by',v.enteredByName],['Trader approval',v.traderApprovedBy??'Pending'],
     ['Payment method',v.method??'Pending Finance'],['Bank',v.bankName??'-'],['Payment reference',v.reference??'Pending Finance'],['Finance approval',v.resolvedByName??'Pending'],

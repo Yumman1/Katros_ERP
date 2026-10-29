@@ -317,6 +317,8 @@ enum TradeSeason {
 }
 
 model Trade {
+  pkeSupplierReceipts PkeTripartyReceipt[] @relation("PkeSupplierReceipt")
+  pkeSaleReceipts PkeTripartyReceipt[] @relation("PkeSaleReceipt")
  thirdPartySourceShipments SesameExportShipment[] @relation("ThirdPartySourcePurchase")
   exportShipments SesameExportShipment[]
   fzcoSaleShipments SesameExportShipment[] @relation("FzcoSaleShipments")
@@ -948,6 +950,7 @@ model PendingTruck {
 /// Uploaded gatepass files (builty, weigh slips, photos) — binary lives in
 /// Supabase Storage; this row is the metadata + storage key.
 model PkeImportFile {
+  receipts PkeTripartyReceipt[]
   id String @id @default(cuid())
   purchaseTradeRef String
   title String
@@ -984,6 +987,7 @@ enum InboundReceiptStatus {
 
 /// Warehouse receiving record for PURCHASE_DELIVERED fulfillment.
 model InboundReceipt {
+  pkeTripartyReceipt PkeTripartyReceipt?
   advanceAllocations PurchaseAdvanceAllocation[]
   id    String @id @default(cuid())
   kcsNo String @unique
@@ -1877,4 +1881,21 @@ model SesameExportGateIntake {
  createdAt DateTime @default(now())
  assignedAt DateTime?
  @@index([commodityCode,shipmentId])
+}
+
+model PkeTripartyReceipt {
+  id String @id @default(cuid())
+  importFileId String
+  importFile PkeImportFile @relation(fields:[importFileId],references:[id],onDelete:Restrict)
+  receiptId String @unique
+  receipt InboundReceipt @relation(fields:[receiptId],references:[id],onDelete:Restrict)
+  purchaseTradeRef String
+  purchaseTrade Trade @relation("PkeSupplierReceipt",fields:[purchaseTradeRef],references:[tradeRef],onDelete:Restrict)
+  saleTradeRef String
+  saleTrade Trade @relation("PkeSaleReceipt",fields:[saleTradeRef],references:[tradeRef],onDelete:Restrict)
+  quantityMt Decimal @db.Decimal(20,6)
+  createdAt DateTime @default(now())
+  createdBy String
+  @@index([purchaseTradeRef])
+  @@index([saleTradeRef])
 }

@@ -26,18 +26,22 @@ export const sesameExecutionRouter = router({
   }),
   warehouseProcessing: roleProcedure(["EXECUTION","FINANCE"]).query(({ctx}) => warehouseProcessing(codeOf(ctx.executionCommodityCode))),
   createProcessingPlan: roleProcedure(["EXECUTION"]).input(processingPlanInput).mutation(({ctx,input}) => {
+    if(ctx.executionCommodityCode === "PKE") throw new TRPCError({code:"BAD_REQUEST",message:"PKE does not require processing"});
     if(ctx.executionEntity === "FZCO") throw new TRPCError({code:"FORBIDDEN",message:"Open Pakistan processing"});
     return action(()=>createProcessingPlan(codeOf(ctx.executionCommodityCode),ctx.session.user.name??ctx.session.user.id,input));
   }),
   recordProduction: roleProcedure(["EXECUTION"]).input(dailyProcessingInput).mutation(({ctx,input}) => {
+    if(ctx.executionCommodityCode === "PKE") throw new TRPCError({code:"BAD_REQUEST",message:"PKE does not require processing"});
     if(ctx.executionEntity === "FZCO") throw new TRPCError({code:"FORBIDDEN",message:"Open Pakistan processing"});
     return action(()=>recordWarehouseProduction(codeOf(ctx.executionCommodityCode),ctx.session.user.name??ctx.session.user.id,input));
   }),
   editProduction: roleProcedure(["EXECUTION"]).input(editProcessingInput).mutation(({ctx,input}) => {
+    if(ctx.executionCommodityCode === "PKE") throw new TRPCError({code:"BAD_REQUEST",message:"PKE does not require processing"});
     if(ctx.executionEntity === "FZCO") throw new TRPCError({code:"FORBIDDEN",message:"Open Pakistan processing"});
     return action(()=>editWarehouseProduction(codeOf(ctx.executionCommodityCode),ctx.session.user.name??ctx.session.user.id,input));
   }),
   updateProcessingPlan: roleProcedure(["EXECUTION"]).input(z.object({id:z.string(),dailyCapacityKg:z.number().finite().positive().multipleOf(.001).optional(),expectedYieldRatio:z.number().finite().min(0).max(1).optional(),cancel:z.boolean().optional()})).mutation(({ctx,input}) => {
+    if(ctx.executionCommodityCode === "PKE") throw new TRPCError({code:"BAD_REQUEST",message:"PKE does not require processing"});
     if(ctx.executionEntity === "FZCO") throw new TRPCError({code:"FORBIDDEN",message:"Open Pakistan processing"});
     return action(()=>updateProcessingPlan(codeOf(ctx.executionCommodityCode),input));
   }),
@@ -49,6 +53,7 @@ export const sesameExecutionRouter = router({
   }),
   recordProcessing: roleProcedure(["EXECUTION"]).input(z.object({transferId:z.string(),toType:z.enum(["Machine Cleaned","Sortex"]),inputKg:z.number().finite().positive(),yieldRatio:z.number().finite().min(0).max(1),requestKey:z.string().uuid()})).mutation(({ctx,input}) => {
     const code = codeOf(ctx.executionCommodityCode);
+    if (code === "PKE") throw new TRPCError({code:"BAD_REQUEST",message:"PKE does not require processing"});
     if (ctx.executionEntity === "FZCO") throw new TRPCError({code:"BAD_REQUEST",message:"Processing is managed in the Pakistan desk"});
     return action(()=>recordProcessing({...input,code,actor:ctx.session.user.name ?? ctx.session.user.id}));
   }),

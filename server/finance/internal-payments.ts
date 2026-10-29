@@ -1,6 +1,6 @@
 import {prisma} from '@/server/db';
 import type {Prisma} from '@prisma/client';
-import {internalPakSale,ENTITY_NAMES,type SesameEntity} from '@/lib/sesame-entity';
+import {internalPakSale,pkeImportSale,internalTrade,deskSide,ENTITY_NAMES,type SesameEntity} from '@/lib/sesame-entity';
 import {quantityUnitToKg} from '@/lib/unit-conversion';
 import {nextSerial,SERIALS} from '@/server/db/serials';
 const n=(v:unknown)=>Number(v??0);
@@ -26,12 +26,12 @@ export async function internalCommitted(db: Prisma.TransactionClient, tradeRef: 
 }
 export async function internalPaymentRows(code:string,entity:SesameEntity){
  const trades=(await prisma.trade.findMany({where:{commodity:{code},tradeStatus:{notIn:['CANCELLED']}},include:{contract:true,commodity:true}}))
-  .filter(t=>internalPakSale(t.commodity.code,t.direction,t.tradeParams));
+  .filter(t=>internalTrade(t.commodity.code,t.direction,t.tradeParams));
  return Promise.all(trades.map(async t=>{
   const amountPkr=quantityUnitToKg(n(t.quantity),t.quantityUnit ?? 'MT')*n(t.contract?.ratePerKg);
   const committed=await internalCommitted(prisma,t.tradeRef);
   const paid=await internalCommitted(prisma,t.tradeRef,true);
-  return {tradeRef:t.tradeRef,side:entity==='FZCO'?'BUY':'SELL',currency:t.currency,
+  return {tradeRef:t.tradeRef,side:deskSide(t.commodity.code,t.direction,t.tradeParams,entity),description:pkeImportSale(t.commodity.code,t.direction,t.tradeParams)?'Dubai sale / Pakistan purchase':'Dubai purchase / Pakistan sale',currency:t.currency,
    fxRate:n((t.tradeParams as Record<string,unknown>)?.executionFxPkrPerUsd), quantityMt:n(t.quantity),amountPkr,
    outstandingPkr:Math.max(0,amountPkr-paid),availablePkr:Math.max(0,amountPkr-committed),
    locked:!!t.contract&&['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus)};
@@ -41,7 +41,7 @@ export async function createInternalPayment(input:{tradeRef:string;requestKey:st
  return prisma.$transaction(async db=>{
   await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`internal-payment:${input.tradeRef}`}))::text`;
   const t=await db.trade.findUniqueOrThrow({where:{tradeRef:input.tradeRef},include:{commodity:true,contract:true}});
-  if(t.commodity.code!==input.code||!internalPakSale(t.commodity.code,t.direction,t.tradeParams)||!t.contract||!['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus))throw new Error('Select a locked Pakistan–FZCO internal trade');
+  if(t.commodity.code!==input.code||!internalTrade(t.commodity.code,t.direction,t.tradeParams)||!t.contract||!['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus))throw new Error('Select a locked Pakistan–FZCO internal trade');
   if(!Number.isFinite(input.amountPkr)||input.amountPkr<=0)throw new Error('Enter a positive amount');
   const old=await db.voucher.findUnique({where:{id:input.requestKey}});
   if(old){if(old.tradeRef!==t.tradeRef||old.voucherKind!=='INTERNAL_TRADE'||Math.abs(n(old.amountPkr)-input.amountPkr)>.005)throw new Error('Request already used');return {voucherNo:old.voucherNo};}
@@ -51,13 +51,14 @@ export async function createInternalPayment(input:{tradeRef:string;requestKey:st
   if(input.amountPkr+await internalCommitted(db,t.tradeRef)>total+.005)throw new Error('Voucher exceeds the remaining internal trade amount');
   const fx=n((t.tradeParams as Record<string,unknown>)?.executionFxPkrPerUsd);
   if(t.currency==='USD'&&fx<=0)throw new Error('Lock a USD / PKR exchange rate on the trade first');
-  const cp=await entityCounterparty(db,'PAK',input.userId);
+  const reverse=pkeImportSale(t.commodity.code,t.direction,t.tradeParams);
+  const cp=await entityCounterparty(db,reverse?'FZCO':'PAK',input.userId);
   const voucherNo=await nextSerial(SERIALS.VOUCHER,db);
   await db.voucher.create({data:{id:input.requestKey,voucherNo,tradeRef:t.tradeRef,
-   voucherKind:'INTERNAL_TRADE',internalPaymentRef:input.requestKey,executionEntity:'FZCO',commodityCode:input.code,
+   voucherKind:'INTERNAL_TRADE',internalPaymentRef:input.requestKey,executionEntity:reverse?'PAK':'FZCO',commodityCode:input.code,
    counterpartyId:cp.id,side:'BUY',amountPkr:input.amountPkr,paymentFxRate:fx>0?fx:null,
    agreedTradeAmountPkr:total,traderApprovalRequired:true,
-   note:`Internal settlement · Dubai FZCO purchase / Kastros Pakistan sale · Prepared from ${ENTITY_NAMES[input.entity]}`,
+   note:`Internal settlement · ${reverse?"Pakistan purchase / Dubai FZCO sale":"Dubai FZCO purchase / Kastros Pakistan sale"} · Prepared from ${ENTITY_NAMES[input.entity]}`,
    enteredByName:input.actor}});
   return {voucherNo};
  });
