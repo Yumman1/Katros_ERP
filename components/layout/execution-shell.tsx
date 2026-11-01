@@ -100,7 +100,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
     {
       label: "Operations",
       items: [
-        ...(active.code === "PKE" ? [{ href: "/execution/pke-imports", label: "Import Files", icon: <FileSpreadsheet className="h-4 w-4" /> }] : []),
+        ...(active.code === "PKE" && fzco ? [{ href: "/execution/pke-imports", label: "Import Files", icon: <FileSpreadsheet className="h-4 w-4" /> }] : []),
         { href: "/execution/prices", label: "Daily Prices", icon: <TrendingUp className="h-4 w-4" /> },
         { href: "/execution/inventory", label: "Inventory", icon: <Warehouse className="h-4 w-4" /> },
         { href: "/execution/positions", label: "Positions", icon: <LineChart className="h-4 w-4" /> },
@@ -159,7 +159,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
   if (sesame && pathname === "/execution/positions") content = <div className="kastros-desk-page"><SesamePositions /></div>;
   if (fzco && pathname === "/execution") content = <FzcoOverview />;
   if (active.code === "PKE" && pathname === "/execution/processed-goods") content = <p className="p-6">PKE does not require processing.</p>;
-  if (active.code === "PKE" && pathname === "/execution") content = <PkeImportDashboard />;
+  if (active.code === "PKE" && fzco && pathname === "/execution") content = <PkeImportDashboard />;
   if (fzco && pathname === "/execution/movements") content = <FzcoTrucks />;
   if (fzco && (pathname === "/execution/contracts" || /^\/execution\/(purchase-delivered|purchase-spot|sales)\//.test(pathname))) content = <div className="kastros-desk-page"><FzcoBook commodityCode={active.code} /></div>;
   if (fzco && ["/execution/prices", "/execution/shifting", "/execution/warehouses"].includes(pathname)) content = <div className="kastros-desk-page"><p>This page is managed in the Pakistan Sesame desk.</p><button className="kastros-btn-primary" onClick={() => selectEntity("PAK", pathname === "/execution/ledgers" ? "/execution/ledgers?entity=FZCO" : pathname)}>Open Pakistan desk</button></div>;

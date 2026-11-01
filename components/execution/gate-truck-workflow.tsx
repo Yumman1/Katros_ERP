@@ -1,5 +1,7 @@
 "use client";
 
+import { usePkeMovementReferences } from "./pke-movement-references";
+import { useQueryClient } from "@tanstack/react-query";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import Link from "next/link";
@@ -127,6 +129,10 @@ export function GateTruckWorkflow({
 // ─── Step 1 · Trade assignment ────────────────────────────────────────────────
 
 function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: WorkflowContract[] }) {
+  const pkeReferences=usePkeMovementReferences(truck.commodityCode==="PKE"&&truck.movementType==="INBOUND");
+  const [pkeImportFileId,setPkeImportFileId]=useState("");
+  const cache=useQueryClient();
+
   const utils = trpc.useUtils();
   const inbound = truck.movementType === "INBOUND";
   const overStage = inbound ? truck.overDeliveryStage ?? null : null;
@@ -135,8 +141,9 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
     overStage === "APPROVED" ? truck.overDeliveryTradeRef ?? "" : "",
   );
 
+  const isTriparty=pkeReferences.data?.sales.some(s=>s.tradeRef===tradeRef)??false;
   const assign = trpc.execution.assignTruckToTrade.useMutation({
-    onSuccess: () => invalidateGateOpsCaches(utils),
+    onSuccess: () => { invalidateGateOpsCaches(utils); void cache.invalidateQueries({queryKey:["pke-movement-references"]}); },
   });
   const requestOver = trpc.execution.requestInboundOverDelivery.useMutation({
     onSuccess: () => invalidateGateOpsCaches(utils),
@@ -165,6 +172,7 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
         <span className="font-mono text-xs font-semibold text-foreground">
           {truck.assignedTradeRef}
         </span>
+        {pkeReferences.data?.files.flatMap(f=>f.receipts.filter(r=>r.receipt.gatepassNo===truck.gatepassNo).map(r=><span key={r.receiptId} className="block text-xs">Triparty · Supplier purchase {f.purchaseTradeRef} · Dubai sale {r.saleTradeRef}</span>))}
         {inbound && <span className="block text-xs text-subtle">Quality deduction: {truck.totalDeductionsKg ?? 0} kg</span>}
       </StepPanel>
     );
@@ -210,11 +218,13 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
         </span>
       )}
       {inbound && truck.status === "PENDING" && <a href="/execution/quality" className="text-xs underline">{"Quality and Invoice follows allocation"}</a>}
+      {showAssignControl && isTriparty && <label className="block text-xs">Triparty gate-in · Dubai supplier purchase<select className="kastros-select w-full mt-1" value={pkeImportFileId} onChange={e=>setPkeImportFileId(e.target.value)}><option value="">Select purchase / import file</option>{pkeReferences.data?.files.filter(f=>!f.payload.references["Dubai sale trade reference"]||f.payload.references["Dubai sale trade reference"]===tradeRef).map(f=><option key={f.id} value={f.id}>{f.purchaseTradeRef} · {f.title}</option>)}</select><span className="block mt-1">Dubai sale / Pakistan purchase: {tradeRef}. Assignment closes the received quantity on both Dubai trades.</span></label>}
+      {pkeReferences.error&&<p role="alert" className="text-destructive">{pkeReferences.error.message}</p>}
       {showAssignControl && (
         <div className="flex items-center gap-2">
           <SearchableSelect
             value={tradeRef}
-            onChange={(e) => setTradeRef(e.target.value)}
+            onChange={(e) => {setTradeRef(e.target.value);setPkeImportFileId("");}}
             className="kastros-input kastros-input-sm min-w-0 flex-1 py-1.5 text-[11px]"
             aria-label="Trade to assign"
           >
@@ -235,8 +245,8 @@ function TradeStep({ truck, contracts }: { truck: WorkflowTruck; contracts: Work
           </SearchableSelect>
           <button
             type="button"
-            disabled={!tradeRef || assign.isPending}
-            onClick={() => assign.mutate({ truckId: truck.id, tradeRef })}
+            disabled={!tradeRef || assign.isPending || (isTriparty&&!pkeImportFileId)}
+            onClick={() => assign.mutate({ truckId: truck.id, tradeRef, pkeImportFileId:isTriparty?pkeImportFileId:undefined })}
             className="kastros-btn-primary shrink-0 px-3 py-1.5 text-[11px] disabled:opacity-50"
           >
             {assign.isPending ? "Assigning…" : "Assign"}

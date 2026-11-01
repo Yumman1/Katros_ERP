@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {canonicalizeInternalPakSale,deskSide,closesOnPayment,presentTraderBook,internalTrade} from './sesame-entity';
-import {normalizePkeReferences,PKE_UPLOAD_FIELDS,pkeRemaining,pkeReceiptProgress} from './pke-import';
+import {normalizePkeReferences,PKE_IMPORT_STAGES,canApprovePkeLcBypass,lcBypassBlocksPayment,emptyPkeImport,PKE_UPLOAD_FIELDS,pkeRemaining,pkeReceiptProgress} from './pke-import';
 test('PKE Dubai resale mirrors as one Pakistan purchase and stays a sale for trader',()=>{
  const c=canonicalizeInternalPakSale('PKE','SELL',{tradingEntity:'Kastros FZCO',internalCounterpartyEntity:'PAK'});
  assert.equal(c.direction,'BUY');assert.equal(c.internalPakSale,false);
@@ -23,7 +23,8 @@ test('phyto reference always follows permit; documents exclude generated contrac
  assert.equal(normalizePkeReferences({'Pakistan import permit':'IP-32','Phytosanitary certificate':'old'})['Phytosanitary certificate'],'IP-32');
  assert.ok(PKE_UPLOAD_FIELDS.includes('Certificate of origin'));
  assert.ok(PKE_UPLOAD_FIELDS.includes('Bill of lading'));
- assert.ok(!PKE_UPLOAD_FIELDS.some(f=>/invoice|contract/i.test(f)));
+ assert.ok(PKE_UPLOAD_FIELDS.includes("Supplier sales contract"));
+ assert.ok(!PKE_UPLOAD_FIELDS.some(f=>/invoice/i.test(f)));
 });
 
 test('partial receipts preserve the remainder and reject over-receipt',()=>{
@@ -33,4 +34,32 @@ test('partial receipts preserve the remainder and reject over-receipt',()=>{
  assert.throws(()=>pkeReceiptProgress(100,100,1),/exceeds/);
  assert.throws(()=>pkeReceiptProgress(100,0,0),/positive/);
  assert.throws(()=>pkeReceiptProgress(100,0,NaN),/positive/);
+});
+
+test('Dubai import stages exclude Pakistan receipt, clearance and local delivery',()=>{
+ assert.equal(PKE_IMPORT_STAGES.length,4);
+ assert.ok(!PKE_IMPORT_STAGES.some(s=>/clearance|gate-in|local delivery/i.test(s.title)));
+});
+test('only an active execution head can approve LC bypass',()=>{
+ assert.equal(canApprovePkeLcBypass({role:'EXECUTION',isHead:true}),true);
+ for(const role of ['TRADER','FINANCE','CEO','ADMIN'])assert.equal(canApprovePkeLcBypass({role,isHead:true}),false);
+ assert.equal(canApprovePkeLcBypass({role:'EXECUTION',isHead:false}),false);
+ assert.equal(canApprovePkeLcBypass({role:'EXECUTION',isHead:true,disabled:true}),false);
+});
+test('LC bypass requires approval, preserves multiple-LC checks and invalidates changed terms',()=>{
+ const payload=emptyPkeImport();
+ const lc={id:'lc1',side:'DUBAI_SUPPLIER' as const,reference:'LC1',bank:'Bank',currency:'USD',amount:'1000'};
+ payload.lcs=[lc];
+ assert.equal(lcBypassBlocksPayment(payload),false);
+ payload.bypasses=[{id:'request1',lcId:lc.id,lcSnapshot:{...lc},requirements:'Missing certificate',reason:'Reviewed',status:'PENDING',requestedById:'exec',requestedBy:'Execution',requestedAt:'2026-11-02'}];
+ assert.equal(lcBypassBlocksPayment(payload),true);
+ payload.bypasses[0].status='REJECTED';assert.equal(lcBypassBlocksPayment(payload),true);
+ payload.bypasses[0].status='APPROVED';assert.equal(lcBypassBlocksPayment(payload),false);
+ payload.lcs[0]={...lc,amount:'2000'};assert.equal(lcBypassBlocksPayment(payload),true);
+ payload.lcs[0]=lc;
+ payload.bypasses.push({...payload.bypasses[0],id:'request2',status:'PENDING'});
+ assert.equal(lcBypassBlocksPayment(payload),true);
+ payload.bypasses[1].status='APPROVED';assert.equal(lcBypassBlocksPayment(payload),false);
+ payload.bypasses.push({...payload.bypasses[0],id:'request3',lcId:'lc2',status:'PENDING'});
+ assert.equal(lcBypassBlocksPayment(payload),true);
 });

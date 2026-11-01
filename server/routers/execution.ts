@@ -803,10 +803,11 @@ export const executionRouter = router({
         truckId: z.string(),
         tradeRef: z.string(),
         overrideWeightKg: z.number().positive().optional(),
+        pkeImportFileId: z.string().optional(),
         totalDeductionsKg: z.number().finite().nonnegative().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
         // Physical gate receipt — record fulfilment even if booked delivery window has not opened yet.
         return await assignTruckToTrade(
@@ -815,6 +816,8 @@ export const executionRouter = router({
           input.overrideWeightKg,
           true,
           input.totalDeductionsKg,
+          input.pkeImportFileId,
+          ctx.session.user.name ?? ctx.session.user.id,
         );
       } catch (e) {
         throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Failed" });

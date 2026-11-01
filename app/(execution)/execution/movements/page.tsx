@@ -1,4 +1,5 @@
 "use client";
+import {PkeExistingReceiptReferences} from "@/components/execution/pke-movement-references";
 import {ExportGateAssignment} from "@/components/execution/export-gate-assignment";
 import {SesameExportShipments} from "@/components/execution/sesame-export-shipments";
 
@@ -432,6 +433,7 @@ function ExternalTruckMovements() {
 
       {/* Everything below the header scrolls as one vertical column. */}
       <div className="kastros-desk-scroll flex flex-col gap-4">
+        <PkeExistingReceiptReferences />
         {/* ── KPI tiles ── */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Kpi icon={<Truck className="h-5 w-5" />} label="Vehicles Today" value={vehiclesToday} variant="accent" />

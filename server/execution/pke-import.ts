@@ -1,12 +1,15 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { pkeImportSale, tradeEntity, internalEntity } from "@/lib/sesame-entity";
-import { pkeReceiptProgress, type PkeImportPayload } from "@/lib/pke-import";
+import { lcBypassBlocksPayment, pkeReceiptProgress, type PkeImportPayload } from "@/lib/pke-import";
 /** A physical receipt exists once, in Pakistan. This link fulfills only the supplier book. */
-export async function linkPkeTripartyReceipt(input:{id:string;revision:number;receiptId:string;saleTradeRef:string},actor:string){
- return prisma.$transaction(async tx=>{
+export async function linkPkeTripartyReceipt(input:{id:string;revision?:number;receiptId:string;saleTradeRef:string},actor:string){
+ return prisma.$transaction(tx=>linkPkeTripartyReceiptTx(tx,input,actor));
+}
+export async function linkPkeTripartyReceiptTx(tx:Prisma.TransactionClient,input:{id:string;revision?:number;receiptId:string;saleTradeRef:string},actor:string){
   await tx.$queryRaw`SELECT id FROM "PkeImportFile" WHERE id=${input.id} FOR UPDATE`;
   const file=await tx.pkeImportFile.findUniqueOrThrow({where:{id:input.id}});
-  if(file.revision!==input.revision)throw new Error("This import file changed. Refresh and retry");
+  if(input.revision!==undefined && file.revision!==input.revision)throw new Error("This import file changed. Refresh and retry");
   // Lock both contracts in consistent order, including across different shipment files.
   const refs=[file.purchaseTradeRef,input.saleTradeRef].sort();
   for(const ref of refs)await tx.$queryRaw`SELECT id FROM "ExecutionContract" WHERE "tradeRef"=${ref} FOR UPDATE`;
@@ -31,6 +34,19 @@ export async function linkPkeTripartyReceipt(input:{id:string;revision:number;re
   payload.references["Dubai sale trade reference"]=sale.tradeRef;
   payload.history.push({at:new Date().toISOString(),actor,action:`Triparty gate-in ${receipt.gatepassNo}: ${qty} MT · Supplier purchase ${purchase.tradeRef} · Dubai sale / Pakistan purchase ${sale.tradeRef}. Payment balances unchanged.`});
   await tx.pkeImportFile.update({where:{id:file.id},data:{payload:JSON.parse(JSON.stringify(payload)),revision:{increment:1}}});
+  const saleReceived=await tx.inboundReceipt.aggregate({where:{tradeRef:sale.tradeRef,status:{not:"DRAFT"}},_sum:{allocatedQtyMt:true}});
+  const saleQty=Number(saleReceived._sum.allocatedQtyMt??0),saleOpen=Math.max(0,Number(sale.contract.contractualQtyMt)-saleQty);
+  await tx.executionContract.update({where:{id:sale.contract.id},data:{receivedQtyMt:saleQty,openQtyMt:saleOpen,closeOnPayment:false,contractStatus:saleOpen<=0.000001?"Close":"Open"}});
+  if(saleOpen<=0.000001)await tx.trade.update({where:{id:sale.id},data:{tradeStatus:"EXECUTED"}});
   return {ok:true};
- });
+}
+export async function assertPkeLcPaymentAllowed(tx:Prisma.TransactionClient,tradeRef:string){
+ const trade=await tx.trade.findUnique({where:{tradeRef},include:{commodity:true}});
+ if(trade?.commodity.code!=="PKE")return;
+ const files=await tx.pkeImportFile.findMany({where:{OR:[{purchaseTradeRef:tradeRef},{payload:{path:["references","Dubai sale trade reference"],equals:tradeRef}}]}});
+ for(const candidate of files) {
+  await tx.$queryRaw`SELECT id FROM "PkeImportFile" WHERE id=${candidate.id} FOR UPDATE`;
+  const file=await tx.pkeImportFile.findUniqueOrThrow({where:{id:candidate.id}});
+  if(lcBypassBlocksPayment(file.payload as unknown as PkeImportPayload))throw new Error(`LC document bypass for ${file.title} requires execution-head approval before payment. Changed LC terms require a new request.`);
+ }
 }

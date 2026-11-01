@@ -1,3 +1,5 @@
+import { linkPkeTripartyReceiptTx } from "./pke-import";
+import { pkeImportSale } from "@/lib/sesame-entity";
 import {purchaseAdvancePercentage} from "@/lib/purchase-advance";
 import { warehouseAllowedForCommodity } from "@/lib/warehouse-eligibility";
 import { claimAdvance, applyTruckAdvance } from "@/server/finance/purchase-advances";
@@ -666,6 +668,8 @@ export async function assignTruckToTrade(
   overrideWeightKg?: number,
   allowOutsideWindow = false,
   totalDeductionsKg?: number,
+  pkeImportFileId?: string,
+  actor = "Execution",
 ): Promise<{
   truck: PendingTruck;
   receipt?: InboundReceipt;
@@ -674,6 +678,11 @@ export async function assignTruckToTrade(
 }> {
   const financePolicy = await getFinancePolicy();
   const result = await prisma.$transaction(async (tx) => {
+    if(pkeImportFileId){
+      await tx.$queryRaw`SELECT id FROM "PkeImportFile" WHERE id=${pkeImportFileId} FOR UPDATE`;
+      const file=await tx.pkeImportFile.findUniqueOrThrow({where:{id:pkeImportFileId}});
+      for(const ref of [file.purchaseTradeRef,tradeRef].sort())await tx.$queryRaw`SELECT id FROM "ExecutionContract" WHERE "tradeRef"=${ref} FOR UPDATE`;
+    }
     // Row locks — two operators cannot double-assign the same truck or race the
     // same contract's open quantity.
     await tx.$queryRaw`SELECT "id" FROM "PendingTruck" WHERE "id" = ${truckId} FOR UPDATE`;
@@ -697,6 +706,11 @@ export async function assignTruckToTrade(
     if (!contractRow) throw new Error("Locked contract not found: " + tradeRef);
     if (contractRow.paperOwnership || truckRow.executionEntity === "FZCO") throw new Error("Use the FZCO truck workflow for this trade");
     const contract = normalizeContract(contractRowToRuntime(contractRow));
+    const assignedTrade=await tx.trade.findUniqueOrThrow({where:{tradeRef},select:{direction:true,tradeParams:true}});
+    const isPkeTriparty=pkeImportSale(contract.commodityCode,assignedTrade.direction,assignedTrade.tradeParams);
+    if(isPkeTriparty&&!pkeImportFileId)throw new Error("Select the PKE supplier purchase / import file in Truck Movements for this triparty gate-in");
+    if(pkeImportFileId&&(!isPkeTriparty||truck.movementType!=="INBOUND"||truckRow.executionEntity!=="PAK"))throw new Error("PKE triparty gate-in must use a Pakistan inbound truck and Dubai sale / Pakistan purchase");
+
     if (truck.movementType === "INBOUND") {
       await pinSpotPurchaseWarehouse(tx, {
         id: contractRow.id,
@@ -927,6 +941,7 @@ export async function assignTruckToTrade(
         include: TRUCK_INCLUDE,
       });
 
+      if(pkeImportFileId)await linkPkeTripartyReceiptTx(tx,{id:pkeImportFileId,receiptId:receiptRow.id,saleTradeRef:tradeRef},actor);
       return {
         truck: truckRowToRuntime(updatedTruck),
         receipt: inboundRowToRuntime(receiptRow),

@@ -1,3 +1,4 @@
+import { assertPkeLcPaymentAllowed } from "./pke-import";
 import type { Prisma } from "@prisma/client";
 import { KG_PER_MAUND, type ExecutionProfile } from "@/lib/trade-constants";
 import { prisma } from "@/server/db";
@@ -158,6 +159,7 @@ export async function approvePayment(
   return prisma.$transaction(async (tx) => {
     const pr = await tx.paymentRequest.findUnique({ where: { requestRef: paymentId } });
     if (!pr) throw new Error("Payment request not found");
+    await assertPkeLcPaymentAllowed(tx,pr.tradeRef);
     if (pr.sourceType === "INBOUND" && !paymentReference?.trim()) throw new Error("Enter the payment slip reference before approving this invoice");
     // Guarded transition — only PENDING requests can be approved.
     const updated = await tx.paymentRequest.updateMany({
