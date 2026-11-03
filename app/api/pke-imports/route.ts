@@ -47,8 +47,8 @@ export async function GET(request: Request) {
     const sales=trades.filter(t=>pkeImportSale("PKE",t.direction,t.tradeParams));
     const receipts=await prisma.inboundReceipt.findMany({where:{tradeRef:{in:sales.map(t=>t.tradeRef)},status:{not:"DRAFT"},gatepassNo:{not:null},pkeTripartyReceipt:{is:null}},select:{id:true,tradeRef:true,gatepassNo:true,truckNo:true,allocatedQtyMt:true}});
     return NextResponse.json({canApproveBypasses:canApprovePkeLcBypass(viewer),files:await prisma.pkeImportFile.findMany({include:{receipts:{include:{receipt:{select:{gatepassNo:true,truckNo:true}}}}},orderBy:{updatedAt:"desc"}}),
-      purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency})),
-      sales:sales.map(t=>({tradeRef:t.tradeRef,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity)})),receipts});
+      purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency,paymentType:t.paymentType})),
+      sales:sales.map(t=>({tradeRef:t.tradeRef,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),paymentType:t.paymentType,currency:t.currency})),receipts});
   } catch(error) { return failure(error); }
 }
 const lc=z.object({id:z.string().uuid(),side:z.enum(["PAK_DUBAI","DUBAI_SUPPLIER"]),reference:z.string().max(200),bank:z.string().max(200),currency:z.enum(["USD","PKR","AED"]),amount:z.string().refine(v=>v===""||(Number.isFinite(Number(v))&&Number(v)>=0),"LC limit must be a nonnegative amount")});
@@ -128,6 +128,39 @@ export async function POST(request: Request) {
       const current=await tx.pkeImportFile.findUniqueOrThrow({where:{id:data.id}});
       if(current.revision!==data.revision)throw new Error("This file changed. Refresh before saving");
       const before=current.payload as unknown as PkeImportPayload;
+      const supplier=await tx.trade.findUniqueOrThrow({where:{tradeRef:current.purchaseTradeRef},include:{contract:true}});
+      for(const ref of [current.purchaseTradeRef,saleRef].filter(Boolean).sort())await tx.$queryRaw`SELECT id FROM "ExecutionContract" WHERE "tradeRef"=${ref} FOR UPDATE`;
+      const related=await tx.pkeImportFile.findMany({where:{purchaseTradeRef:current.purchaseTradeRef,id:{not:current.id}}});
+      const blQty=Number(payload.references['BL quantity MT']||0),arrived=Number(payload.references['Vessel received MT']||0);
+      if(!Number.isFinite(blQty)||blQty<0||!Number.isFinite(arrived)||arrived<0||arrived>blQty+.000001)throw new Error('Vessel quantity must be positive and no more than the BL quantity');
+      if(arrived>0&&(!/^\d{4}-\d{2}-\d{2}$/.test(payload.references['Vessel arrival date']??'')||!Number.isFinite(Date.parse(payload.references['Vessel arrival date']))))throw new Error('Enter a valid vessel arrival date');
+      if(arrived>0&&(!payload.references['Vessel name']?.trim()||!payload.references['Arrival port']?.trim()||!payload.references['Vessel arrival date']||!payload.references['Bill of lading']?.trim()||!saleRef))throw new Error('Record vessel, port, arrival date, BL number and linked Dubai sale before receiving stock at port');
+      const otherQty=related.reduce((sum,f)=>sum+Number((f.payload as unknown as PkeImportPayload).references['BL quantity MT']||0),0);
+      if(otherQty+blQty>Number(supplier.quantity)+.000001)throw new Error('Combined BL quantities exceed the supplier purchase contract');
+      if(saleRef){
+        await tx.$queryRaw`SELECT id FROM "ExecutionContract" WHERE "tradeRef"=${saleRef} FOR UPDATE`;
+        const sale=await tx.trade.findUniqueOrThrow({where:{tradeRef:saleRef}});
+        const saleFiles=await tx.pkeImportFile.findMany({where:{id:{not:current.id},payload:{path:['references','Dubai sale trade reference'],equals:saleRef}}});
+        if(saleFiles.reduce((sum,f)=>sum+Number((f.payload as unknown as PkeImportPayload).references['BL quantity MT']||0),0)+blQty>Number(sale.quantity)+.000001)throw new Error('Combined BL quantities exceed the Dubai sale contract');
+      }
+      const movementCount=await tx.pkePortMovement.count({where:{importFileId:current.id}})+await tx.trade.count({where:{tradeStatus:{not:'CANCELLED'},tradeParams:{path:['pkePortFileId'],equals:current.id}}});
+      if(movementCount)for(const key of ['Vessel name','Arrival port','Vessel arrival date','Vessel received MT','BL quantity MT','Bill of lading','Dubai sale trade reference'])if(before.references[key]!==payload.references[key])throw new Error('Cannot change vessel or BL quantity references after a port movement');
+      const siblings=await tx.pkeImportFile.findMany({where:{id:{not:current.id},OR:[{purchaseTradeRef:current.purchaseTradeRef},...(saleRef?[{payload:{path:['references','Dubai sale trade reference'],equals:saleRef}}]:[])]}});
+      for(const lc of payload.lcs??[]){
+        if(!lc.reference.trim())continue;
+        for(const sibling of siblings){
+          const other=sibling.payload as unknown as PkeImportPayload;
+          const sameTrade=lc.side==='DUBAI_SUPPLIER'?sibling.purchaseTradeRef===current.purchaseTradeRef:other.references['Dubai sale trade reference']===saleRef;
+          if(!sameTrade)continue;
+          const existing=other.lcs?.find(l=>l.side===lc.side&&l.reference===lc.reference);
+          if(existing&&(existing.currency!==lc.currency||Number(existing.amount)!==Number(lc.amount)||existing.bank!==lc.bank))throw new Error('The same LC across BL files must use the same currency, bank and total limit');
+        }
+      }
+      const allowedSides=new Set<string>();
+      if(supplier.paymentType==='LC')allowedSides.add('DUBAI_SUPPLIER');
+      if(saleRef&&(await tx.trade.findUniqueOrThrow({where:{tradeRef:saleRef}})).paymentType==='LC')allowedSides.add('PAK_DUBAI');
+      for(const lc of payload.lcs??[])if(!allowedSides.has(lc.side)&&JSON.stringify(before.lcs?.find(l=>l.id===lc.id))!==JSON.stringify(lc))throw new Error('Remove LC entries for trades with CAD or other non-LC payment terms');
+
       const payments=await tx.voucher.findMany({where:{status:{not:"REJECTED"},pkePayment:{path:["fileId"],equals:data.id}},select:{pkePayment:true}});
       for(const v of payments){
         const payment=v.pkePayment as {bl:boolean;lcId?:string;side:string};

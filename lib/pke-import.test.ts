@@ -8,14 +8,14 @@ test('PKE Dubai resale mirrors as one Pakistan purchase and stays a sale for tra
  assert.equal(deskSide('PKE',c.direction,c.params,'FZCO'),'SELL');
  assert.equal(deskSide('PKE',c.direction,c.params,'PAK'),'BUY');
  assert.equal(internalTrade('PKE',c.direction,c.params),true);
- assert.equal(closesOnPayment('PKE',c.direction,'INTERNATIONAL',c.params),false);
+ assert.equal(closesOnPayment('PKE',c.direction,'INTERNATIONAL',c.params),true);
  const [shown]=presentTraderBook([{commodity:{code:'PKE'},direction:c.direction,tradeParams:c.params,counterparty:{name:'Dubai FZCO'}}]);
  assert.equal(shown.direction,'SELL');assert.equal(shown.counterparty.name,'Kastros Pakistan');
  assert.deepEqual(canonicalizeInternalPakSale('PKE',c.direction,c.params),c);
 });
-test('PKE supplier quantities close on receipt; sesame retains payment closure',()=>{
+test('PKE and sesame financial books close on payment, not receipt',()=>{
  const params={tradingEntity:'Kastros FZCO'};
- assert.equal(closesOnPayment('PKE','BUY','INTERNATIONAL',params),false);
+ assert.equal(closesOnPayment('PKE','BUY','INTERNATIONAL',params),true);
  assert.equal(closesOnPayment('SES','BUY','INTERNATIONAL',params),true);
  assert.equal(pkeRemaining(100,40),60);assert.equal(pkeRemaining(100,100),0);
 });

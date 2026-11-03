@@ -422,6 +422,9 @@ function BookTradeForm() {
     const cp = allCounterparties.find(c => c.code === (fzcoBooking ? "INTERCO-PAK" : "INTERCO-FZCO"));
     setValue("counterpartyId", cp?.id ?? "pending-interco");
   }, [pkeImportSale, fzcoBooking, allCounterparties, setValue]);
+  const [pkePorts,setPkePorts]=useState<{id:string;vessel:string;port:string;blNo:string;freeMt:number;quantityMt:number}[]>([]);
+  useEffect(()=>{if(selectedCommodity?.code!=="PKE")return;let cancelled=false;fetch('/api/pke-port').then(r=>r.ok?r.json():Promise.reject()).then(data=>{if(!cancelled)setPkePorts(data.files??[]);}).catch(()=>{if(!cancelled)setPkePorts([]);});return()=>{cancelled=true;};},[selectedCommodity?.code]);
+  const portSale=selectedCommodity?.code==='PKE'&&direction==='SELL'&&!fzcoBooking&&Boolean(tradeParams.pkePortFileId);
   const paperOwnership = isSesame && fzcoBooking && (selectedCommodity?.code === "PKE" || (!fzcoPakPurchase && !tradeParams.internalCounterpartyEntity));
   useEffect(() => {
     if ((internalPakSale || fzcoBooking) && tradeScope !== "INTERNATIONAL") setValue("tradeScope", "INTERNATIONAL", { shouldValidate: true });
@@ -757,11 +760,13 @@ function BookTradeForm() {
         if (data.paymentType === "CREDIT" && data.creditDays) {
           cleanedParams.creditDays = data.creditDays;
         }
-        if (selectedWarehouses.length && !paperOwnership) {
+        if (selectedWarehouses.length && !paperOwnership && !portSale) {
           cleanedParams[TRADER_WAREHOUSE_SELECTIONS_KEY] = serializeTraderWarehouseSelections(
             selectedWarehouses,
           );
         }
+        if(!portSale)delete cleanedParams.pkePortFileId;
+        else delete cleanedParams[TRADER_WAREHOUSE_SELECTIONS_KEY];
         delete cleanedParams.warehouse;
         const mtQty = toMt(data.quantity, data.quantityUnit, unitRegistry);
         const isMaundPrice = /MAUND/i.test(data.priceWeightUnit);
@@ -1534,7 +1539,8 @@ function BookTradeForm() {
                 />
               </Field>
             )}
-            {!paperOwnership && <Field label="Warehouses (optional)">
+            {selectedCommodity?.code==='PKE'&&direction==='SELL'&&!fzcoBooking&&tradeScope==='LOCAL'&&<Field label="Stock source"><select className="kastros-select w-full" value={String(tradeParams.pkePortFileId??'')} onChange={e=>{setTradeParams(p=>({...p,pkePortFileId:e.target.value}));setSelectedWarehouses([]);}}><option value="">Warehouse</option>{pkePorts.filter(f=>f.vessel&&f.quantityMt>0).map(f=><option key={f.id} value={f.id}>Port: {f.port} · {f.vessel} · BL {f.blNo} · {f.freeMt} MT unbooked</option>)}</select></Field>}
+            {!paperOwnership && !portSale && <Field label="Warehouses (optional)">
               <WarehouseMultiSelect
                 warehouses={warehouseOptions}
                 value={selectedWarehouses}
@@ -1570,7 +1576,7 @@ function BookTradeForm() {
                       : "Select a commodity to see spare storage capacity for its division."}
               </p>
             </Field>}
-            {paperOwnership && <p className="text-sm text-muted-foreground">{selectedCommodity?.code === "PKE" ? "The vessel goes directly to Pakistan. Triparty gate-in closes the related Dubai open quantities; payments are tracked separately." : "FZCO trades have no warehouse allocation. Purchases stay open until FZCO pays the supplier or Kastros Pakistan. Sales stay open until the buyer pays FZCO."}</p>}
+            {paperOwnership && <p className="text-sm text-muted-foreground">{selectedCommodity?.code === "PKE" ? "The vessel goes directly to Pakistan. Dubai open purchases and sales close only when their payments are cleared." : "FZCO trades have no warehouse allocation. Purchases stay open until FZCO pays the supplier or Kastros Pakistan. Sales stay open until the buyer pays FZCO."}</p>}
           </div>
         </Section>
 

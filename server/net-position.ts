@@ -88,7 +88,7 @@ export async function getSeasonNetPositions(): Promise<SeasonNetPosition[]> {
     }),
     prisma.outboundDispatch.groupBy({
       by: ["tradeRef"],
-      where: { status: { in: ["WEIGHED", "FINANCE_PENDING", "RELEASED"] } },
+      where: { status: { in: ["WEIGHED", "FINANCE_PENDING", "RELEASED"] }, NOT: {warehouseName:{startsWith:"Port: "}} },
       _sum: { allocatedQtyMt: true },
     }),
     prisma.stockTransfer.findMany({

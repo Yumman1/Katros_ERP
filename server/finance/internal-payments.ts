@@ -68,6 +68,7 @@ export async function createInternalPayment(input:{pkePayment?:PkePaymentSelecti
 /** Finance settles the shared financial book without fabricating physical deliveries. */
 export async function closeInternalSettlement(db:Prisma.TransactionClient,tradeRef:string){
  const t=await db.trade.findUniqueOrThrow({where:{tradeRef},include:{commodity:true,contract:true}});
+ if(pkeImportSale(t.commodity.code,t.direction,t.tradeParams)){await (await import("./pke-settlement")).settlePkeTrade(db,tradeRef);return;}
  if(!internalPakSale(t.commodity.code,t.direction,t.tradeParams)||!t.contract)return;
  const total=quantityUnitToKg(n(t.quantity),t.quantityUnit??'MT')*n(t.contract.ratePerKg);
  if(total<=0||await internalCommitted(db,tradeRef,true)+.005<total)return;

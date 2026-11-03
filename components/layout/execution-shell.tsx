@@ -104,6 +104,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
         { href: "/execution/prices", label: "Daily Prices", icon: <TrendingUp className="h-4 w-4" /> },
         { href: "/execution/inventory", label: "Inventory", icon: <Warehouse className="h-4 w-4" /> },
         { href: "/execution/positions", label: "Positions", icon: <LineChart className="h-4 w-4" /> },
+        ...(active.code === "PKE" ? [{href:"/execution/pke-port",label:"Port & Triparty Gate-in",icon:<Truck className="h-4 w-4"/>}] : []),
         { href: "/execution/movements", label: "Truck Movements", icon: <Truck className="h-4 w-4" /> },
         { href: "/execution/shifting", label: "Internal Shifting", icon: <MoveRight className="h-4 w-4" /> },
         ...(!fzco ? [{href:"/execution/quality",label:"Quality and Invoice",icon:<Warehouse className="h-4 w-4" />}]:[]),

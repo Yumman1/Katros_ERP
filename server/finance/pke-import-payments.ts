@@ -21,16 +21,22 @@ export async function pkePaymentOptions(tradeRef:string, db:Prisma.TransactionCl
   const rows=allocations.filter(v=>v.payment?.fileId===file.id&&v.payment.side===side);
   const blAmount=number(payload.references[internal?'Dubai BL invoice amount':'Supplier BL invoice amount']);
   const blUsed=rows.filter(v=>v.payment?.bl).reduce((s,v)=>s+number(v.payment?.amount),0);
-  return {fileId:file.id,title:file.title,side,currency:trade.currency,blNo:payload.references['Bill of lading']||null,blAmount,
+  return {fileId:file.id,title:file.title,side,paymentType:trade.paymentType,currency:trade.currency,blNo:payload.references['Bill of lading']||null,blAmount,
    blAvailable:round(Math.max(0,blAmount-blUsed)),
-   lcs:(payload.lcs??[]).filter(l=>l.side===side).map(l=>{
-    const used=rows.filter(v=>v.payment?.lcId===l.id).reduce((s,v)=>s+number(v.payment?.amount),0);
-    const paid=rows.filter(v=>v.payment?.lcId===l.id&&v.status==='APPROVED').reduce((s,v)=>s+number(v.payment?.amount),0);
+   lcs:(payload.lcs??[]).filter(l=>l.side===side&&trade.paymentType==='LC').map(l=>{
+    const lcRows=allocations.filter(v=>v.payment?.side===side&&(v.payment.lcReference===l.reference||(v.payment.fileId===file.id&&v.payment.lcId===l.id)));
+    const used=lcRows.reduce((s,v)=>s+number(v.payment?.amount),0);
+    const paid=lcRows.filter(v=>v.status==='APPROVED').reduce((s,v)=>s+number(v.payment?.amount),0);
     return {...l,used:round(used),paid:round(paid),available:round(Math.max(0,number(l.amount)-used))};
    })};
  });
 }
 export async function reservePkePayment(db:Prisma.TransactionClient,tradeRef:string,selection:PkePaymentSelection|undefined,amountPkr:number,fx:number,excludeId?:string) {
+ const paymentTrade=await db.trade.findUnique({where:{tradeRef},include:{commodity:true}});
+ if(paymentTrade?.commodity.code==='PKE'){
+  if(paymentTrade.paymentType==='LC'&&!selection?.lcId)throw new Error('Select an LC for this Letter of Credit trade');
+  if(paymentTrade.paymentType!=='LC'&&selection?.lcId)throw new Error('LC allocation is only available for Letter of Credit terms; CAD requires no LC');
+ }
  if(!selection)return undefined;
  // Lock the document row too: LC edits and payment reservations must not race.
  await db.$queryRaw`SELECT id FROM "PkeImportFile" WHERE id=${selection.fileId} FOR UPDATE`;

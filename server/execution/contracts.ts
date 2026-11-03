@@ -83,7 +83,8 @@ async function computeFulfilledQty(
   quantityUnit: string,
 ): Promise<number> {
   const pkeReceipts = await db.pkeTripartyReceipt.aggregate({where:{purchaseTradeRef:tradeRef},_sum:{quantityMt:true}});
-  const pkeReceived = num(pkeReceipts._sum.quantityMt);
+  const portSold=await db.pkePortMovement.aggregate({where:{kind:'PORT_SALE',importFile:{OR:[{purchaseTradeRef:tradeRef},{payload:{path:['references','Dubai sale trade reference'],equals:tradeRef}}]}},_sum:{quantityMt:true}});
+  const pkeReceived = num(pkeReceipts._sum.quantityMt)+num(portSold._sum.quantityMt);
   const ownership = await db.sesameOwnershipEntry.aggregate({ where: { tradeRef, truckId: null }, _sum: { quantityMt: true } });
   const direct = await db.sesameExportShipment.aggregate({where:{tradeRef,directThirdParty:true,status:{in:["RELEASED","BL_RECORDED"]}},_sum:{totalWeightKg:true}});
   const paperQty = num(ownership._sum.quantityMt) + kgToQuantityUnit(num(direct._sum.totalWeightKg),quantityUnit);
@@ -235,6 +236,8 @@ export async function closeOnFullPayment(tradeRef: string): Promise<boolean> {
       include: { trade: { select: { tradeStatus: true, tradeParams:true } } },
     });
     if (!row || !row.closeOnPayment || row.contractStatus === "Close") return false;
+    const pke=await tx.trade.findUnique({where:{tradeRef},include:{commodity:true}});
+    if(pke?.commodity.code==="PKE")return (await import("../finance/pke-settlement")).settlePkeTrade(tx,tradeRef);
     if (![TradeStatus.LOCKED, TradeStatus.CONFIRMED, TradeStatus.EXECUTED].includes(row.trade.tradeStatus as typeof TradeStatus.LOCKED)) return false;
     const paymentSide=row.direction;
     const fzco=tradeEntity(row.trade.tradeParams)==="FZCO";
@@ -815,7 +818,7 @@ export async function lockTradeInStore(
     const match = companyWarehouses.find((w) => normWarehouse(w.name) === key);
     return match?.name ?? null;
   };
-  const paperOwnership = paperTrade(trade.commodity.code, trade.tradeParams);
+  const paperOwnership = paperTrade(trade.commodity.code, trade.tradeParams) || (trade.commodity.code === "PKE" && Boolean((trade.tradeParams as Record<string,unknown>|null)?.pkePortFileId));
   const closeOnPayment = closesOnPayment(trade.commodity.code, trade.direction, trade.tradeScope, trade.tradeParams);
   const requiresWarehouse = !paperOwnership && (profile === "PURCHASE_DELIVERED" || profile === "SALE_EX_WAREHOUSE");
   const allocationLines = lockWarehouseAllocationLines({

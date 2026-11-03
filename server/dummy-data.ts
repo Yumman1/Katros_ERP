@@ -635,8 +635,9 @@ export async function upsertBookedTrade(trade: MockTraderTrade): Promise<void> {
       const {lockSesameOwnership}=await import("./execution/sesame-stock");
       const {guardProcessingSale}=await import("./execution/warehouse-processing");
       await lockSesameOwnership(tx,trade.commodity.code);
-      await guardProcessingSale(tx,{code:trade.commodity.code,direction:trade.direction,params:trade.tradeParams,quantity:trade.quantity,unit:trade.quantityUnit,tradeRef:trade.tradeRef,status:trade.tradeStatus});
+      if(!(trade.commodity.code==="PKE"&&(trade.tradeParams as Record<string,unknown>|null)?.pkePortFileId))await guardProcessingSale(tx,{code:trade.commodity.code,direction:trade.direction,params:trade.tradeParams,quantity:trade.quantity,unit:trade.quantityUnit,tradeRef:trade.tradeRef,status:trade.tradeStatus});
     }
+    await (await import("./execution/pke-port")).guardPkePortBooking(tx,{code:trade.commodity.code,direction:trade.direction,params:trade.tradeParams,quantity:trade.quantity,tradeScope:trade.tradeScope,excludeRef:trade.tradeRef});
     const existing = await tx.trade.findUnique({
       where: { tradeRef: trade.tradeRef },
       select: { id: true },
@@ -925,8 +926,9 @@ export async function mockBookTrade(input: {
       const {lockSesameOwnership}=await import("./execution/sesame-stock");
       const {guardProcessingSale}=await import("./execution/warehouse-processing");
       await lockSesameOwnership(tx,input.commodityCode);
-      await guardProcessingSale(tx,{code:input.commodityCode,direction:input.direction,params:input.tradeParams,quantity:quantityMt,unit:"MT"});
+      if(!(input.commodityCode==="PKE"&&input.tradeParams?.pkePortFileId))await guardProcessingSale(tx,{code:input.commodityCode,direction:input.direction,params:input.tradeParams,quantity:quantityMt,unit:"MT"});
     }
+    await (await import("./execution/pke-port")).guardPkePortBooking(tx,{code:input.commodityCode,direction:input.direction,params:input.tradeParams,quantity:quantityMt,tradeScope:input.tradeScope});
     return tx.trade.create({
     include: TRADE_INCLUDE,
     data: {

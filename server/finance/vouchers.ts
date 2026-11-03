@@ -437,6 +437,13 @@ export async function approveVoucher(
       const total=quantityUnitToKg(num(t.quantity),t.quantityUnit??"MT")*num(t.contract.ratePerKg);
       if(await internalCommitted(tx,t.tradeRef,true,current.id)+num(current.amountPkr)>total+.005)throw new Error("Payment exceeds the remaining internal trade amount");
     }
+    if(current.voucherKind==='PKE_PORT_SALE'&&current.tradeRef){
+      const trade=await tx.trade.findUniqueOrThrow({where:{tradeRef:current.tradeRef},include:{contract:true}});
+      const due=await tx.counterpartyLedgerEntry.aggregate({where:{tradeRef:current.tradeRef,side:'SELL',entryType:'DEBIT'},_sum:{amountPkr:true}});
+      const paid=await tx.voucher.aggregate({where:{tradeRef:current.tradeRef,side:'SELL',status:'APPROVED',id:{not:current.id}},_sum:{amountPkr:true}});
+      const total=Math.max(num(due._sum.amountPkr),num(trade.quantity)*1000*num(trade.contract?.ratePerKg));
+      if(num(paid._sum.amountPkr)+num(current.amountPkr)>total+.005)throw new Error('Receipt exceeds the remaining PKE local sale amount');
+    }
     if(current.executionEntity==='FZCO'&&current.side==='BUY'&&current.tradeRef){
       const purchase=await tx.trade.findUnique({where:{tradeRef:current.tradeRef},include:{contract:true}});
       if(purchase?.direction==='BUY'&&purchase.contract){

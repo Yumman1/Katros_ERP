@@ -58,6 +58,7 @@ export function paperTrade(
   params: unknown,
   extra?: { direction?: string; counterpartyCode?: string | null },
 ): boolean {
+  if(code === "PKE" && Boolean((params as Record<string,unknown>|null)?.pkePortFileId))return true;
   if (isFzcoBuyFromPakistan(code, extra?.direction ?? "", params, extra?.counterpartyCode)) return false;
   return usesSesameWorkflow(code) && tradeEntity(params) === "FZCO" && internalEntity(params) === null;
 }
@@ -119,7 +120,7 @@ export function presentTraderBook<T extends {
  * internals close when FZCO pays Kastros Pakistan.
  */
 export function closesOnPayment(code: string, direction: string, tradeScope: string | null | undefined, params: unknown): boolean {
-  if (code === "PKE" && (pkeImportSale(code, direction, params) || (tradeEntity(params) === "FZCO" && internalEntity(params) === null))) return false;
+  if (code === "PKE" && (pkeImportSale(code, direction, params) || (tradeEntity(params) === "FZCO" && internalEntity(params) === null))) return true;
   if (!usesSesameWorkflow(code)) return false;
   if (internalPakSale(code, direction, params)) return true;
   return tradeEntity(params) === "FZCO" && internalEntity(params) === null;

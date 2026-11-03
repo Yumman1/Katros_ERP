@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import type {Prisma} from '@prisma/client';
 import {pkePaymentOptions,reservePkePayment,validatePkePaymentApproval} from './pke-import-payments';
 function fixture(internal=false){
- const trade={commodity:{code:'PKE'},direction:'BUY',currency:'USD',tradeParams:internal?{tradingEntity:'Kastros PAK',internalCounterpartyEntity:'FZCO'}:{tradingEntity:'Kastros FZCO'}};
+ const trade={commodity:{code:'PKE'},direction:'BUY',paymentType:'LC',currency:'USD',tradeParams:internal?{tradingEntity:'Kastros PAK',internalCounterpartyEntity:'FZCO'}:{tradingEntity:'Kastros FZCO'}};
  const side=internal?'PAK_DUBAI':'DUBAI_SUPPLIER';
  const payload={references:{'Bill of lading':'BL-1','Supplier BL invoice amount':'1000','Dubai BL invoice amount':'1200'},lcs:[{id:'lc1',reference:'LC1',side,currency:'USD',amount:'800'}]};
  const payments:{id:string;status:string;pkePayment:Record<string,unknown>}[]=[];
@@ -17,7 +17,7 @@ test('supplier reservation uses frozen trade FX and separate BL / LC limits',asy
  const payment=await reservePkePayment(f.db,'BUY',{fileId:'file',bl:true,lcId:'lc1'},140000,280);
  assert.equal(payment?.amount,500);
  await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true,lcId:'lc1'},140002.8,280),/LC limit/);
- await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true},196002.8,280),/BL balance/);
+ f.payload.lcs[0].amount='2000';await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true,lcId:'lc1'},196002.8,280),/BL balance/);
 });
 test('approved and pending consume limits, rejected reservations are released',async()=>{
  const f=fixture();f.add(300,'APPROVED');f.add(200,'PENDING_FINANCE','v2');f.add(200,'REJECTED','v3');
@@ -27,8 +27,8 @@ test('shared internal voucher selects Pakistan-to-Dubai LC and its own invoice v
  const f=fixture(true);const [option]=await pkePaymentOptions('SALE',f.db);assert.equal(option.side,'PAK_DUBAI');assert.equal(option.blAmount,1200);assert.equal(option.lcs.length,1);
 });
 test('wrong file, LC side, missing BL amount and unsupported currency are rejected',async()=>{
- const f=fixture();await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'other',bl:true},280,280),/does not belong/);
- f.payload.references['Supplier BL invoice amount']='';await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true},280,280),/invoice amount/);
+ const f=fixture();await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'other',bl:true,lcId:'lc1'},280,280),/does not belong/);
+ f.payload.references['Supplier BL invoice amount']='';await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true,lcId:'lc1'},280,280),/invoice amount/);
  f.payload.lcs[0].side='PAK_DUBAI';await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:false,lcId:'lc1'},280,280),/correct payment side/);
  f.payload.lcs[0].side='DUBAI_SUPPLIER';f.payload.lcs[0].currency='AED';await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:false,lcId:'lc1'},280,280),/currency/);
 });
@@ -52,4 +52,17 @@ test('fully received PKE purchase stays payable until Finance pays, pending rese
  payments[1].status='APPROVED';rows=await internationalPurchaseTrades('PKE','FZCO','supplier',db);assert.equal(rows.length,0);
  await internationalPurchaseTrades('SESAME','FZCO','supplier',db);
  assert.deepEqual((queries[2] as {where:{contract:unknown}}).where.contract,{is:{contractStatus:'Open'}});
+});
+
+test('CAD has no LC, while LC terms require an LC allocation',async()=>{
+ const f=fixture();await assert.rejects(reservePkePayment(f.db,'BUY',undefined,280,280),/Select an LC/);
+ f.trade.paymentType='CAD';assert.equal(await reservePkePayment(f.db,'BUY',undefined,280,280),undefined);
+ assert.equal((await pkePaymentOptions('BUY',f.db))[0].lcs.length,0);
+ await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true,lcId:'lc1'},280,280),/CAD requires no LC/);
+});
+
+test('one LC shared across BL files consumes a single limit',async()=>{
+ const f=fixture();f.add(300);f.payments[0].pkePayment.fileId='another-bl-file';
+ const [option]=await pkePaymentOptions('BUY',f.db);assert.equal(option.blAvailable,1000);assert.equal(option.lcs[0].available,500);
+ await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true,lcId:'lc1'},140002.8,280),/LC limit/);
 });

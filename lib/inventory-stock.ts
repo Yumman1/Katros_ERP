@@ -155,6 +155,7 @@ export function buildLocationCommodityInventory(input: {
   }
 
   for (const d of input.outbound) {
+    if(d.warehouseName.startsWith("Port: "))continue;
     const trade = input.commodityForTradeRef(d.tradeRef);
     if (!trade) continue;
     const row = ensure(d.warehouseName, trade.code, trade.name, trade.unit);
@@ -237,6 +238,7 @@ export function netCommodityStockMt(
     net += inboundStockDelta(r.status, r.allocatedQtyMt);
   }
   for (const d of outbound) {
+    if(d.warehouseName.startsWith("Port: "))continue;
     if (exclude?.outboundId && d.id === exclude.outboundId) continue;
     if (d.warehouseName.trim().toLowerCase() !== wh) continue;
     if (commodityForTradeRef(d.tradeRef) !== code) continue;

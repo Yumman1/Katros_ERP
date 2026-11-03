@@ -317,6 +317,7 @@ enum TradeSeason {
 }
 
 model Trade {
+  pkePortSales PkePortMovement[]
   pkeSupplierReceipts PkeTripartyReceipt[] @relation("PkeSupplierReceipt")
   pkeSaleReceipts PkeTripartyReceipt[] @relation("PkeSaleReceipt")
  thirdPartySourceShipments SesameExportShipment[] @relation("ThirdPartySourcePurchase")
@@ -836,6 +837,7 @@ enum SaleTruckStage {
 
 /// Gatepass entry logged at the warehouse gate (public REST form).
 model PendingTruck {
+  pkePortMovement PkePortMovement?
   exportShipmentId String?
   exportShipment SesameExportShipment? @relation(fields: [exportShipmentId], references: [id], onDelete: Restrict)
   containerNo String?
@@ -950,6 +952,7 @@ model PendingTruck {
 /// Uploaded gatepass files (builty, weigh slips, photos) — binary lives in
 /// Supabase Storage; this row is the metadata + storage key.
 model PkeImportFile {
+  portMovements PkePortMovement[]
   receipts PkeTripartyReceipt[]
   id String @id @default(cuid())
   purchaseTradeRef String
@@ -987,6 +990,7 @@ enum InboundReceiptStatus {
 
 /// Warehouse receiving record for PURCHASE_DELIVERED fulfillment.
 model InboundReceipt {
+  pkePortMovement PkePortMovement?
   pkeTripartyReceipt PkeTripartyReceipt?
   advanceAllocations PurchaseAdvanceAllocation[]
   id    String @id @default(cuid())
@@ -1900,4 +1904,24 @@ model PkeTripartyReceipt {
   createdBy String
   @@index([purchaseTradeRef])
   @@index([saleTradeRef])
+}
+
+/// Physical dispositions from a vessel's BL; quantity is never double counted.
+model PkePortMovement {
+ id String @id @default(cuid())
+ requestKey String @unique
+ importFileId String
+ importFile PkeImportFile @relation(fields:[importFileId],references:[id],onDelete:Restrict)
+ kind String
+ quantityMt Decimal @db.Decimal(20,6)
+ saleTradeRef String?
+ saleTrade Trade? @relation(fields:[saleTradeRef],references:[tradeRef],onDelete:Restrict)
+ receiptId String? @unique
+ receipt InboundReceipt? @relation(fields:[receiptId],references:[id],onDelete:Restrict)
+ truckId String @unique
+ truck PendingTruck @relation(fields:[truckId],references:[id],onDelete:Restrict)
+ createdBy String
+ createdAt DateTime @default(now())
+ @@index([importFileId])
+ @@index([saleTradeRef])
 }
