@@ -1,3 +1,4 @@
+import { reservePkePayment, pkePaymentNote, type PkePaymentSelection } from "./pke-import-payments";
 import {prisma} from '@/server/db';
 import type {Prisma} from '@prisma/client';
 import {internalPakSale,pkeImportSale,internalTrade,deskSide,ENTITY_NAMES,type SesameEntity} from '@/lib/sesame-entity';
@@ -37,14 +38,14 @@ export async function internalPaymentRows(code:string,entity:SesameEntity){
    locked:!!t.contract&&['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus)};
  }));
 }
-export async function createInternalPayment(input:{tradeRef:string;requestKey:string;amountPkr:number;entity:SesameEntity;actor:string;userId:string;code:string}){
+export async function createInternalPayment(input:{pkePayment?:PkePaymentSelection;tradeRef:string;requestKey:string;amountPkr:number;entity:SesameEntity;actor:string;userId:string;code:string}){
  return prisma.$transaction(async db=>{
   await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`internal-payment:${input.tradeRef}`}))::text`;
   const t=await db.trade.findUniqueOrThrow({where:{tradeRef:input.tradeRef},include:{commodity:true,contract:true}});
   if(t.commodity.code!==input.code||!internalTrade(t.commodity.code,t.direction,t.tradeParams)||!t.contract||!['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus))throw new Error('Select a locked Pakistan–FZCO internal trade');
   if(!Number.isFinite(input.amountPkr)||input.amountPkr<=0)throw new Error('Enter a positive amount');
   const old=await db.voucher.findUnique({where:{id:input.requestKey}});
-  if(old){if(old.tradeRef!==t.tradeRef||old.voucherKind!=='INTERNAL_TRADE'||Math.abs(n(old.amountPkr)-input.amountPkr)>.005)throw new Error('Request already used');return {voucherNo:old.voucherNo};}
+  if(old){const saved=old.pkePayment as {fileId:string;bl:boolean;lcId?:string}|null;if(JSON.stringify(saved?{fileId:saved.fileId,bl:saved.bl,lcId:saved.lcId}:undefined)!==JSON.stringify(input.pkePayment))throw new Error('Request already used for another import allocation');if(old.tradeRef!==t.tradeRef||old.voucherKind!=='INTERNAL_TRADE'||Math.abs(n(old.amountPkr)-input.amountPkr)>.005)throw new Error('Request already used');return {voucherNo:old.voucherNo};}
   const pending=await db.voucher.findFirst({where:{tradeRef:t.tradeRef,status:'PENDING_FINANCE',OR:[{internalPaymentRef:{not:null}},{voucherKind:'INTL_PURCHASE',side:'BUY'}]}});
   if(pending)throw new Error(`${pending.voucherNo} is already awaiting approval for this internal trade. Use that shared voucher; do not generate another on the other desk.`);
   const total=quantityUnitToKg(n(t.quantity),t.quantityUnit??'MT')*n(t.contract.ratePerKg);
@@ -53,12 +54,13 @@ export async function createInternalPayment(input:{tradeRef:string;requestKey:st
   if(t.currency==='USD'&&fx<=0)throw new Error('Lock a USD / PKR exchange rate on the trade first');
   const reverse=pkeImportSale(t.commodity.code,t.direction,t.tradeParams);
   const cp=await entityCounterparty(db,reverse?'FZCO':'PAK',input.userId);
+  const pkePayment=await reservePkePayment(db,t.tradeRef,input.pkePayment,input.amountPkr,fx);
   const voucherNo=await nextSerial(SERIALS.VOUCHER,db);
   await db.voucher.create({data:{id:input.requestKey,voucherNo,tradeRef:t.tradeRef,
-   voucherKind:'INTERNAL_TRADE',internalPaymentRef:input.requestKey,executionEntity:reverse?'PAK':'FZCO',commodityCode:input.code,
+   pkePayment,voucherKind:'INTERNAL_TRADE',internalPaymentRef:input.requestKey,executionEntity:reverse?'PAK':'FZCO',commodityCode:input.code,
    counterpartyId:cp.id,side:'BUY',amountPkr:input.amountPkr,paymentFxRate:fx>0?fx:null,
    agreedTradeAmountPkr:total,traderApprovalRequired:true,
-   note:`Internal settlement · ${reverse?"Pakistan purchase / Dubai FZCO sale":"Dubai FZCO purchase / Kastros Pakistan sale"} · Prepared from ${ENTITY_NAMES[input.entity]}`,
+   note:`${pkePayment ? pkePaymentNote(pkePayment)+' · ' : ''}Internal settlement · ${reverse?"Pakistan purchase / Dubai FZCO sale":"Dubai FZCO purchase / Kastros Pakistan sale"} · Prepared from ${ENTITY_NAMES[input.entity]}`,
    enteredByName:input.actor}});
   return {voucherNo};
  });

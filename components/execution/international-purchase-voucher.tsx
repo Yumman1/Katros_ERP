@@ -1,15 +1,18 @@
 "use client";
+import { PkePaymentSelectionFields } from "./pke-payment-selection";
+import type { PkePaymentSelection } from "@/server/finance/pke-import-payments";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { useExecutionCommodityDesk } from "./commodity-desk-provider";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 export function InternationalPurchaseVoucher() {
-  const { entity } = useExecutionCommodityDesk();
+  const { entity, active } = useExecutionCommodityDesk();
   const utils = trpc.useUtils();
   const counterparties = trpc.execution.sellCounterparties.useQuery();
   const [counterpartyId, setParty] = useState("");
   const [tradeRef, setTrade] = useState("");
+  const [pkePayment,setPkePayment]=useState<PkePaymentSelection>();
   const [blId, setBl] = useState("");
   const [amount, setAmount] = useState("");
   const [voucherDate, setDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -27,17 +30,17 @@ export function InternationalPurchaseVoucher() {
   });
   const trade = trades.data?.find((t) => t.tradeRef === tradeRef);
   const bl = bls.data?.find((b) => b.id === blId);
-  const currency = trade?.currency === "USD" || entity === "FZCO" ? "USD" : "PKR";
+  const currency = active.code === "PKE" ? trade?.currency??"USD" : trade?.currency === "USD" || entity === "FZCO" ? "USD" : "PKR";
   const fx = trade?.fxRate ?? 1;
   const scale = currency === "USD" ? (fx || 1) : 1;
-  const outstanding = (bl ? (bl.triparty ? bl.payablePkr : bl.outstandingPkr) : trade?.amountPkr ?? 0) / scale;
+  const outstanding = (bl ? (bl.triparty ? bl.payablePkr : bl.outstandingPkr) : trade?.availablePkr ?? 0) / scale;
   const blocked = Boolean(trade?.internal && (!bl || !bl.buyerPaid));
   return (
     <section className="space-y-4 mt-4">
       <h3 className="font-semibold">International purchase</h3>
       <p className="text-sm text-subtle">
-        Pay a supplier (or Kastros Pakistan on an internal sale) after the BL. Finance prints the voucher, then enters method, bank and reference on approval.
-        {entity === "FZCO" ? " On a triparty sale the buyer pays Dubai FZCO first; FZCO can pay Kastros Pakistan only after that receipt is approved, and only up to the amount received." : ""}
+        Pay an international supplier against the trade, or select a recorded BL / LC. Use Internal Trade for Pakistan–FZCO settlements. Finance prints the voucher, then enters method, bank and reference on approval.
+        {active.code!=="PKE" && entity === "FZCO" ? " On a triparty sale the buyer pays Dubai FZCO first; FZCO can pay Kastros Pakistan only after that receipt is approved, and only up to the amount received." : ""}
       </p>
       <form
         className="grid gap-3 md:grid-cols-3"
@@ -46,6 +49,7 @@ export function InternationalPurchaseVoucher() {
           if (blocked) return;
           if (!window.confirm(`Generate purchase voucher for ${tradeRef}${bl ? `, BL ${bl.blNo}` : ""}?`)) return;
           save.mutate({
+            pkePayment,
             counterpartyId,
             tradeRef,
             exportShipmentId: blId || undefined,
@@ -56,35 +60,36 @@ export function InternationalPurchaseVoucher() {
         }}
       >
         <label>Counterparty
-          <SearchableSelect required className="kastros-select w-full" value={counterpartyId} onChange={(e) => { setParty(e.target.value); setTrade(""); setBl(""); }}>
+          <SearchableSelect required className="kastros-select w-full" value={counterpartyId} onChange={(e) => { setParty(e.target.value); setTrade(""); setBl(""); setPkePayment(undefined); }}>
             <option value="">Select counterparty</option>
             {(counterparties.data ?? []).map((cp) => <option key={cp.id} value={cp.id}>{cp.code} — {cp.name}</option>)}
           </SearchableSelect>
         </label>
         <label>Trade
-          <select required className="kastros-select w-full" value={tradeRef} onChange={(e) => { setTrade(e.target.value); setBl(""); }}>
+          <select required className="kastros-select w-full" value={tradeRef} onChange={(e) => { setTrade(e.target.value); setBl(""); setPkePayment(undefined); }}>
             <option value="">Select purchase</option>
-            {(trades.data ?? []).map((t) => <option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.openMt.toFixed(3)} MT open</option>)}
+            {(trades.data ?? []).map((t) => <option key={t.tradeRef} value={t.tradeRef}>{t.tradeRef} · {t.openMt.toFixed(3)} MT awaiting receipt · {(t.availablePkr/(t.currency==="USD"?(t.fxRate||1):1)).toLocaleString()} {t.currency} available to pay</option>)}
           </select>
         </label>
-        <label>BL number {trade?.internal ? "(required)" : "(optional)"}
-          <select required={!!trade?.internal} className="kastros-select w-full" value={blId} onChange={(e) => setBl(e.target.value)}>
+        {active.code!=="PKE"&&<label>BL number {trade?.internal ? "(required)" : "(optional)"}
+          <select required={!!trade?.internal} className="kastros-select w-full" value={blId} onChange={(e) => {setBl(e.target.value);setPkePayment(undefined);}}>
             <option value="">{trade?.internal ? "Select BL after the buyer pays FZCO" : "No BL — pay against the trade"}</option>
             {(bls.data ?? []).map((b) => <option key={b.id} value={b.id} disabled={b.triparty && !b.buyerPaid}>BL {b.blNo}{b.triparty && !b.buyerPaid ? " · awaiting buyer payment" : ""} · {(b.triparty ? b.payablePkr : b.outstandingPkr).toLocaleString()} PKR open</option>)}
           </select>
-        </label>
+        </label>}
+        <PkePaymentSelectionFields tradeRef={tradeRef} value={pkePayment} onChange={v=>{setPkePayment(v);setBl("");}}/>
         <label>Voucher date
           <input required type="date" className="kastros-input w-full" value={voucherDate} onChange={(e) => setDate(e.target.value)} />
         </label>
         <label>Amount ({currency})
-          <input required type="number" min="0.01" step="0.01" max={outstanding || undefined} className="kastros-input w-full" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input required type="number" min="0.01" step="0.01" max={outstanding} className="kastros-input w-full" value={amount} onChange={(e) => setAmount(e.target.value)} />
         </label>
         <label>Note (optional)
           <input maxLength={1000} className="kastros-input w-full" value={note} onChange={(e) => setNote(e.target.value)} />
         </label>
         {trade && <p className="text-sm md:col-span-3">Agreed value: {(trade.amountPkr / scale).toLocaleString()} {currency}{currency === "USD" ? ` · FX ${fx} PKR/USD` : ""}{bl ? ` · BL outstanding ${(bl.outstandingPkr / scale).toLocaleString()}` : ""}{bl?.triparty ? ` · Buyer paid FZCO ${(bl.buyerPaidPkr / scale).toLocaleString()}` : ""}</p>}
         {blocked && <p className="text-sm text-destructive md:col-span-3">The buyer must pay Dubai FZCO first. FZCO cannot pay Kastros Pakistan until that receipt is approved.</p>}
-        <button className="kastros-btn-primary" disabled={save.isPending || !tradeRef || Number(amount) <= 0 || (currency === "USD" && fx <= 0) || blocked}>Generate purchase voucher</button>
+        <button className="kastros-btn-primary" disabled={save.isPending || !tradeRef || Number(amount) <= 0 || (currency === "USD" && fx <= 0) || blocked || outstanding<=0}>Generate purchase voucher</button>
       </form>
       {message && <p role="status">{message}</p>}
       {(counterparties.error || trades.error || bls.error || save.error) && <p role="alert" className="text-destructive">{counterparties.error?.message || trades.error?.message || bls.error?.message || save.error?.message}</p>}

@@ -1,30 +1,36 @@
+import type { Prisma } from "@prisma/client";
+import { reservePkePayment, pkePaymentNote, type PkePaymentSelection } from "./pke-import-payments";
 import { prisma } from "@/server/db";
 import { nextSerial, SERIALS } from "@/server/db/serials";
 import { usesSesameWorkflow } from "@/lib/sesame";
-import { ENTITY_NAMES, internalPakSale, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
+import { ENTITY_NAMES, internalTrade, tradeEntity, type SesameEntity } from "@/lib/sesame-entity";
 import { entityCounterparty } from "./internal-payments";
 import { assertTripartyPakistanPayment } from "./triparty-pakistan-payment";
 
 const n = (v: unknown) => Number(v ?? 0);
 const money = (v: number) => Math.round(v * 100) / 100;
 
-export async function internationalPurchaseTrades(code: string, entity: SesameEntity, counterpartyId: string) {
-  const cp = await prisma.counterparty.findUniqueOrThrow({ where: { id: counterpartyId } });
-  const trades = await prisma.trade.findMany({
+export async function internationalPurchaseTrades(code: string, entity: SesameEntity, counterpartyId: string, db:Prisma.TransactionClient=prisma) {
+  const cp = await db.counterparty.findUniqueOrThrow({ where: { id: counterpartyId } });
+  const trades = await db.trade.findMany({
     where: {
       commodity: { code },
       tradeStatus: { in: ["LOCKED", "CONFIRMED", "EXECUTED"] },
-      contract: { is: { contractStatus: "Open" } },
+      ...(code === "PKE" ? { contract: { isNot: null } } : { contract: { is: { contractStatus: "Open" } } }),
     },
     include: { commodity: true, counterparty: true, contract: true },
   });
+  const payments = code === "PKE" ? await db.voucher.findMany({where:{tradeRef:{in:trades.map(t=>t.tradeRef)},executionEntity:entity,side:"BUY",status:{not:"REJECTED"}},select:{tradeRef:true,amountPkr:true,status:true}}) : [];
   return trades.flatMap((t) => {
     if (!usesSesameWorkflow(t.commodity.code)) return [];
-    const internal = internalPakSale(t.commodity.code, t.direction, t.tradeParams);
+    const internal = internalTrade(t.commodity.code, t.direction, t.tradeParams);
     const own = tradeEntity(t.tradeParams);
     const fx = n((t.tradeParams as Record<string, unknown> | null)?.executionFxPkrPerUsd);
     const amountPkr = n(t.quantity) * 1000 * n(t.contract?.ratePerKg);
     if (internal) return [];
+    const committed = payments.filter(v=>v.tradeRef===t.tradeRef).reduce((sum,v)=>sum+n(v.amountPkr),0);
+    const paid = payments.filter(v=>v.tradeRef===t.tradeRef&&v.status==="APPROVED").reduce((sum,v)=>sum+n(v.amountPkr),0);
+    if(code==="PKE" && amountPkr-paid<=.005)return [];
     if (!internal && own === entity && t.direction === "BUY" && t.counterpartyId === counterpartyId && t.tradeScope === "INTERNATIONAL") {
       return [{
         tradeRef: t.tradeRef,
@@ -34,6 +40,8 @@ export async function internationalPurchaseTrades(code: string, entity: SesameEn
         fxRate: fx,
         openMt: n(t.contract?.openQtyMt ?? t.quantity),
         amountPkr,
+        availablePkr: Math.max(0,amountPkr-committed),
+        outstandingPkr: Math.max(0,amountPkr-paid),
         internal: false,
       }];
     }
@@ -69,6 +77,7 @@ export async function internationalPurchaseBls(tradeRef: string) {
 }
 
 export async function createInternationalPurchase(input: {
+  pkePayment?: PkePaymentSelection;
   counterpartyId: string;
   tradeRef: string;
   exportShipmentId?: string | null;
@@ -85,7 +94,7 @@ export async function createInternationalPurchase(input: {
     const t = await db.trade.findUniqueOrThrow({ where: { tradeRef: input.tradeRef }, include: { commodity: true, contract: true } });
     if (!usesSesameWorkflow(t.commodity.code) || t.commodity.code !== input.code) throw new Error("Select a Sesame trade on this desk");
     if(!t.contract||!["LOCKED","CONFIRMED","EXECUTED"].includes(t.tradeStatus))throw new Error("Select a locked purchase trade");
-    const internal = internalPakSale(t.commodity.code, t.direction, t.tradeParams);
+    const internal = internalTrade(t.commodity.code, t.direction, t.tradeParams);
     if (internal) throw new Error("Use the shared Internal Trade voucher category for Pakistan–FZCO settlements");
     if (internal && input.entity !== "FZCO") throw new Error("Dubai FZCO pays Kastros Pakistan on the internal sale");
     if (internal && !input.exportShipmentId) throw new Error("Select the BL. FZCO can pay Kastros Pakistan only after the buyer has paid Dubai FZCO");
@@ -109,6 +118,7 @@ export async function createInternationalPurchase(input: {
       throw new Error("Trade does not belong to this counterparty");
     }
 
+    if(input.exportShipmentId && input.pkePayment)throw new Error("Choose either an export BL or a PKE import allocation");
     const shipment = input.exportShipmentId
       ? await db.sesameExportShipment.findUniqueOrThrow({ where: { id: input.exportShipmentId }, include: { vouchers: true } })
       : null;
@@ -120,11 +130,13 @@ export async function createInternationalPurchase(input: {
     }
     if (internal) await assertTripartyPakistanPayment(db, { tradeRef: t.tradeRef, amountPkr });
 
+    const pkePayment = await reservePkePayment(db,t.tradeRef,input.pkePayment,amountPkr,fx);
     const voucherNo = await nextSerial(SERIALS.VOUCHER, db);
     await db.voucher.create({
       data: {
         voucherNo,
         voucherKind: "INTL_PURCHASE",
+        pkePayment,
         voucherDate: input.voucherDate,
         counterpartyId,
         tradeRef: t.tradeRef,
@@ -134,7 +146,7 @@ export async function createInternationalPurchase(input: {
         side: "BUY",
         amountPkr,
         paymentFxRate: fx > 0 ? fx : null,
-        note: [shipment ? `BL ${shipment.blNo}` : null, input.note?.trim()].filter(Boolean).join(" · ") || null,
+        note: [pkePaymentNote(pkePayment), shipment ? `BL ${shipment.blNo}` : null, input.note?.trim()].filter(Boolean).join(" · ") || null,
         enteredByName: input.actor,
       },
     });

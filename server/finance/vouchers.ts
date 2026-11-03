@@ -1,3 +1,4 @@
+import { validatePkePaymentApproval } from "./pke-import-payments";
 import { assertPkeLcPaymentAllowed } from "@/server/execution/pke-import";
 import { traderNamesMatch } from "@/lib/trader-identity";
 import { quantityUnitToKg } from "@/lib/unit-conversion";
@@ -422,6 +423,8 @@ export async function approveVoucher(
   await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('voucher-payment-approval'))::text`;
     const current = await tx.voucher.findUniqueOrThrow({where:{id:voucherId}});
+    if(current.pkePayment && current.tradeRef) await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`${current.voucherKind === "INTERNAL_TRADE" ? "internal-payment" : "purchase-payment"}:${current.tradeRef}`}))::text`;
+    await validatePkePaymentApproval(tx,current);
     if(current.tradeRef)await assertPkeLcPaymentAllowed(tx,current.tradeRef);
     if (current.status !== "PENDING_FINANCE") throw new Error("Voucher not found or already resolved");
     if (current.traderApprovalRequired && !current.traderApprovedAt) throw new Error("The trade’s trader must approve this voucher before Finance can pay it");

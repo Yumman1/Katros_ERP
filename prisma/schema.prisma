@@ -1641,6 +1641,8 @@ model PurchaseAdvanceAllocation {
 }
 
 model Voucher {
+  /// PKE import-file BL / LC allocation snapshot; payment remains in amountPkr.
+  pkePayment Json?
   internalPaymentRef String?
   paymentFxRate Decimal? @db.Decimal(20,8)
   @@unique([tradeRef, executionEntity, internalPaymentRef])

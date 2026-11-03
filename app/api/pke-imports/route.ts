@@ -123,7 +123,27 @@ export async function POST(request: Request) {
     payload.references=normalizePkeReferences(data.references);
     const stage=data.action==="advance"?Math.min(row.stage+1,PKE_IMPORT_STAGES.length):Math.min(row.stage,PKE_IMPORT_STAGES.length);
     payload.history.push({at:new Date().toISOString(),actor:name,action:data.action==="advance"?`Advanced to ${PKE_IMPORT_STAGES[stage]?.title??"Completed"} (testing: document checks optional)`:"Updated references"});
-    const result=await prisma.pkeImportFile.updateMany({where:{id:data.id,revision:data.revision},data:{stage,payload:JSON.parse(JSON.stringify(payload)),revision:{increment:1}}});
+    const result=await prisma.$transaction(async tx=>{
+      await tx.$queryRaw`SELECT id FROM "PkeImportFile" WHERE id=${data.id} FOR UPDATE`;
+      const current=await tx.pkeImportFile.findUniqueOrThrow({where:{id:data.id}});
+      if(current.revision!==data.revision)throw new Error("This file changed. Refresh before saving");
+      const before=current.payload as unknown as PkeImportPayload;
+      const payments=await tx.voucher.findMany({where:{status:{not:"REJECTED"},pkePayment:{path:["fileId"],equals:data.id}},select:{pkePayment:true}});
+      for(const v of payments){
+        const payment=v.pkePayment as {bl:boolean;lcId?:string;side:string};
+        if(before.references["Dubai sale trade reference"]!==payload.references["Dubai sale trade reference"])throw new Error("Cannot change the sale linked to a payment voucher");
+        if(payment.bl){
+          const amountField=payment.side==="PAK_DUBAI"?"Dubai BL invoice amount":"Supplier BL invoice amount";
+          if(before.references["Bill of lading"]!==payload.references["Bill of lading"]||before.references[amountField]!==payload.references[amountField])throw new Error("Cannot change a BL reference or invoice value used by a payment voucher");
+        }
+        if(payment.lcId&&JSON.stringify(before.lcs?.find(l=>l.id===payment.lcId))!==JSON.stringify(payload.lcs?.find(l=>l.id===payment.lcId)))throw new Error("Cannot change an LC used by a payment voucher");
+      }
+      for(const field of ["Supplier BL invoice amount","Dubai BL invoice amount"]){
+        const value=payload.references[field];
+        if(value&&(!Number.isFinite(Number(value))||Number(value)<0))throw new Error("BL invoice amounts must be nonnegative numbers");
+      }
+      return tx.pkeImportFile.updateMany({where:{id:data.id,revision:data.revision},data:{stage,payload:JSON.parse(JSON.stringify(payload)),revision:{increment:1}}});
+    });
     if(!result.count) throw new Error("This file changed. Refresh before saving");
     return NextResponse.json({ok:true});
   } catch(error) { return failure(error); }

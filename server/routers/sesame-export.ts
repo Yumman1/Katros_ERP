@@ -1,3 +1,4 @@
+import { pkePaymentOptions } from "@/server/finance/pke-import-payments";
 import {fzcoIntakeInput,logFzcoIntake,pendingFzcoIntakes,assignFzcoIntake,directChoices} from '@/server/execution/fzco-intake';
 import {pendingExportGates,assignExportGate} from '@/server/execution/export-gate-intake';
 import {z} from 'zod';
@@ -79,10 +80,17 @@ export const sesameExportRouter=router({
   const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
   return internationalPurchaseBls(input.tradeRef);
  }),
+ importPaymentOptions:roleProcedure(['EXECUTION']).input(z.object({tradeRef:z.string().min(1)})).query(async({ctx,input})=>{
+  const user=await prisma.user.findUniqueOrThrow({where:{id:ctx.session.user.id}});
+  if(user.disabled)throw new TRPCError({code:'FORBIDDEN'});
+  if(ctx.executionCommodityCode!=="PKE")return [];
+  return pkePaymentOptions(input.tradeRef);
+ }),
  createPurchase:roleProcedure(['EXECUTION']).input(z.object({
   counterpartyId:z.string().min(1),
   tradeRef:z.string().min(1),
   exportShipmentId:z.string().optional(),
+  pkePayment:z.object({fileId:z.string(),bl:z.boolean(),lcId:z.string().optional()}).optional(),
   amount:z.number().finite().positive().multipleOf(.01),
   voucherDate:z.coerce.date(),
   note:z.string().trim().max(1000).optional(),

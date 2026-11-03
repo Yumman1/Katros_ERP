@@ -1,10 +1,13 @@
 "use client";
+import { PkePaymentSelectionFields } from "./pke-payment-selection";
+import type { PkePaymentSelection } from "@/server/finance/pke-import-payments";
 import {useState} from 'react';
 import {trpc} from '@/lib/trpc/client';
 
 export function InternalTradePayments(){
  const query=trpc.sesameExecution.internalPayments.useQuery();
  const utils=trpc.useUtils();
+ const [pkePayment,setPkePayment]=useState<PkePaymentSelection>();
  const [tradeRef,setTrade]=useState('');
  const [amount,setAmount]=useState('');
  const [requestKey,setRequestKey]=useState('');
@@ -21,14 +24,15 @@ export function InternalTradePayments(){
   <form className="grid gap-3 md:grid-cols-3" onSubmit={e=>{
    e.preventDefault();
    if(window.confirm('Send this shared internal trade voucher to the Trader for approval?'))
-    save.mutate({tradeRef,requestKey,amountPkr:Math.round(Number(amount)*fx*100)/100});
+    save.mutate({tradeRef,requestKey,pkePayment,amountPkr:Math.round(Number(amount)*fx*100)/100});
   }}>
    <label>Trade<select required className="kastros-select w-full" value={tradeRef} onChange={e=>{
     const selected=query.data?.find(t=>t.tradeRef===e.target.value);
-    setTrade(e.target.value);setRequestKey(crypto.randomUUID());setMessage('');
+    setTrade(e.target.value);setPkePayment(undefined);setRequestKey(crypto.randomUUID());setMessage('');
     const rate=selected?.currency==='USD'?selected.fxRate:1;
     setAmount(selected&&rate>0?(selected.availablePkr/rate).toFixed(2):'');
    }}><option value="">Select internal trade</option>{query.data?.filter(t=>t.locked).map(t=><option value={t.tradeRef} key={t.tradeRef} disabled={t.availablePkr<=.005}>{t.tradeRef} · {t.description}{t.availablePkr<=.005?' · paid or already requested':''}</option>)}</select></label>
+   <PkePaymentSelectionFields tradeRef={tradeRef} value={pkePayment} onChange={v=>{setPkePayment(v);setRequestKey(crypto.randomUUID());}}/>
    <label>Amount ({trade?.currency??'USD'})<input required type="number" min="0.01" step="0.01" className="kastros-input w-full" value={amount} onChange={e=>{setAmount(e.target.value);setRequestKey(crypto.randomUUID());}}/></label>
    <button className="kastros-btn-primary self-end" disabled={save.isPending||!trade||fx<=0||Number(amount)<=0}>Generate internal voucher</button>
    {trade&&fx>0&&<p className="text-sm md:col-span-3">Agreed value: {(trade.amountPkr/fx).toLocaleString(undefined,{maximumFractionDigits:2})} {trade.currency} · Unpaid: {(trade.outstandingPkr/fx).toLocaleString(undefined,{maximumFractionDigits:2})} {trade.currency} · Available to request: {(trade.availablePkr/fx).toLocaleString(undefined,{maximumFractionDigits:2})} {trade.currency}</p>}
