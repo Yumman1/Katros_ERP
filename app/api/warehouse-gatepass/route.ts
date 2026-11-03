@@ -1,3 +1,5 @@
+import {z} from "zod";
+import {pkePortRows,recordPkePortMovement} from "@/server/execution/pke-port";
 import {exportGateTrades,tripartyGateTrades} from "@/server/execution/sesame-export";
 import { approvedAdvanceBuiltys } from "@/server/finance/purchase-advances";
 import { NextResponse } from "next/server";
@@ -82,6 +84,7 @@ export async function GET(request: Request) {
     else tripartyCounterparties.push({name:t.counterpartyName,code:t.counterpartyCode,openTradeCount:1,commodities:[{code:t.commodityCode,name:t.commodityName}],trades:[{tradeRef:t.tradeRef,commodityCode:t.commodityCode,profile:'SALE_EX_WAREHOUSE'}]});
   }
   return NextResponse.json({
+    pkeVessels: (await pkePortRows()).filter(f=>f.vessel&&f.arrivalDate&&f.remainingMt>0),
     exportTrades,
     tripartyCounterparties,
     tripartyInternalTrades:triparty.internal,
@@ -94,6 +97,13 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (request.headers.get("content-type")?.includes("application/json")) {
+    const body=await request.clone().json().catch(()=>null);
+    if(body?.action==='pke-triparty-in')try{
+      const data=z.object({fileId:z.string().min(1),warehouse:z.string().trim().min(1),truckNo:z.string().trim().min(1),builty:z.string().trim().min(1),quantityMt:z.number().finite().positive(),recordedByName:z.string().trim().min(1),transporterName:z.string().trim().optional(),requestKey:z.string().uuid()}).parse(body);
+      return NextResponse.json(await recordPkePortMovement({...data,kind:'WAREHOUSE'},data.recordedByName));
+    }catch(e){return NextResponse.json({error:e instanceof Error?e.message:'Unable to record gate-in'},{status:400});}
+  }
   const parsed = await parseGatepassRequest(request);
   if ("error" in parsed) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });

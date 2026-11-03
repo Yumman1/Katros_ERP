@@ -76,3 +76,9 @@ test("payment-close helper waits for BL invoices and shipped quantity", () => {
   assert.equal(shouldCloseOnFullPayment({ invoicedPkr: 100, receivedPkr: 100, contractualQtyMt: 10, fulfilledQtyMt: 9.5, toleranceMt: 0.5 }), true);
   assert.equal(shouldCloseOnFullPayment({ invoicedPkr: 100, receivedPkr: 100.01, contractualQtyMt: 10, fulfilledQtyMt: 10, toleranceMt: 0 }), true);
 });
+
+test('PKE Pakistan payment-open port sale retains its full book quantity after dispatch',()=>{
+ assert.equal(closesOnPayment('PKE','SELL','LOCAL',{tradingEntity:'Kastros Pakistan',pkePortFileId:'vessel'}),true);
+ assert.equal(sesameBookQty({quantityMt:50,openMt:0,receivedMt:50,internal:false,closeOnPayment:true,contractStatus:'Open',asEntity:'PAK'}),50);
+ assert.equal(sesameBookQty({quantityMt:50,openMt:0,receivedMt:50,internal:false,closeOnPayment:true,contractStatus:'Close',asEntity:'PAK'}),0);
+});

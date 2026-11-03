@@ -120,7 +120,7 @@ export function presentTraderBook<T extends {
  * internals close when FZCO pays Kastros Pakistan.
  */
 export function closesOnPayment(code: string, direction: string, tradeScope: string | null | undefined, params: unknown): boolean {
-  if (code === "PKE" && (pkeImportSale(code, direction, params) || (tradeEntity(params) === "FZCO" && internalEntity(params) === null))) return true;
+  if (code === "PKE") return true;
   if (!usesSesameWorkflow(code)) return false;
   if (internalPakSale(code, direction, params)) return true;
   return tradeEntity(params) === "FZCO" && internalEntity(params) === null;
@@ -156,7 +156,7 @@ export function sesameBookQty(input: {
   asEntity: SesameEntity;
 }): number {
   if(input.closeOnPayment && input.contractStatus === "Close")return 0;
-  if(!input.internal && input.asEntity === "FZCO" && input.closeOnPayment)return input.quantityMt;
+  if(input.closeOnPayment)return input.quantityMt;
   if (!input.internal || !input.closeOnPayment) return input.openMt;
   if (input.asEntity === "FZCO") return input.quantityMt;
   return input.quantityMt;

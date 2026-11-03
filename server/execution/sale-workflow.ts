@@ -488,6 +488,7 @@ export async function getDoFinanceApprovals(): Promise<DoApprovalRow[]> {
  */
 export async function requestClearWithoutPayment(truckId: string): Promise<PendingTruck> {
   const row = await saleTruckOrThrow(truckId);
+  if(row.commodityCode==='PKE'&&row.warehouseName.startsWith('Port: '))throw new Error('PKE port sales require payment before the delivery order; release on credit is not available');
   if (row.saleStage !== "AWAITING_BALANCE") {
     throw new Error("Only trucks awaiting balance can be sent for release on credit");
   }

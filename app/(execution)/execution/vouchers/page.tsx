@@ -1,4 +1,5 @@
 "use client";
+import {PkePortReceiptVoucher} from "@/components/execution/pke-port-receipt-voucher";
 import {InternalTradePayments} from "@/components/execution/internal-trade-payments";
 import {InternationalPurchaseVoucher} from "@/components/execution/international-purchase-voucher";
 import {useExecutionCommodityDesk} from "@/components/execution/commodity-desk-provider";
@@ -185,6 +186,7 @@ export default function ExecutionVouchersPage() {
         subtitle="Record payments and purchase advances against trades; finance approval updates the counterparty ledger."
       />
 
+      {active.code === "PKE" && entity === "PAK" && <PkePortReceiptVoucher/>}
       {/* Form stays compact at the top; history grows below and the whole page scrolls. */}
       <div className="exec-panel p-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">

@@ -178,7 +178,7 @@ export async function refreshContract(tradeRef: string): Promise<void> {
       where: { tradeRef },
       include: {
         warehouseAllocations: true,
-        trade: { select: { tradeStatus: true } },
+        trade: { select: { tradeStatus: true, commodity: {select:{code:true}} } },
       },
     });
     if (!row) return;
@@ -214,6 +214,10 @@ export async function refreshContract(tradeRef: string): Promise<void> {
       data: { receivedQtyMt: fulfilled, openQtyMt: open, contractStatus: nextStatus },
     });
 
+    if(row.trade.commodity.code==='PKE'&&['LOCKED','CONFIRMED','EXECUTED'].includes(row.trade.tradeStatus)) {
+      await (await import('../finance/pke-settlement')).settlePkeTrade(tx,tradeRef);
+      return;
+    }
     if (nextStatus === "Close" && row.trade.tradeStatus === TradeStatus.LOCKED) {
       await tx.trade.update({
         where: { tradeRef },
@@ -235,9 +239,10 @@ export async function closeOnFullPayment(tradeRef: string): Promise<boolean> {
       where: { tradeRef },
       include: { trade: { select: { tradeStatus: true, tradeParams:true } } },
     });
-    if (!row || !row.closeOnPayment || row.contractStatus === "Close") return false;
+    if (!row || !row.closeOnPayment) return false;
     const pke=await tx.trade.findUnique({where:{tradeRef},include:{commodity:true}});
     if(pke?.commodity.code==="PKE")return (await import("../finance/pke-settlement")).settlePkeTrade(tx,tradeRef);
+    if (row.contractStatus === "Close") return false;
     if (![TradeStatus.LOCKED, TradeStatus.CONFIRMED, TradeStatus.EXECUTED].includes(row.trade.tradeStatus as typeof TradeStatus.LOCKED)) return false;
     const paymentSide=row.direction;
     const fzco=tradeEntity(row.trade.tradeParams)==="FZCO";

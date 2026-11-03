@@ -48,7 +48,8 @@ export async function physicalStock(db: DB, code: string, excludeDispatchId?: st
   for (const r of ins) add(r.warehouseName, inboundStockDelta(r.status, n(r.allocatedQtyMt)));
   const unassigned = await db.pendingTruck.findMany({ where: { commodityCode: code, executionEntity: "PAK", movementType: "INBOUND", status: { not: "ASSIGNED" } } });
   for (const t of unassigned) add(t.warehouseName, n(t.remainingKg)/1000);
-  for (const r of outs) add(r.warehouseName, outboundStockDelta(r.status, n(r.allocatedQtyMt)));
+  for (const r of outs) if (!(code === "PKE" && r.warehouseName.startsWith("Port: "))) add(r.warehouseName, outboundStockDelta(r.status, n(r.allocatedQtyMt)));
   for (const t of shifts) for (const wh of new Set([t.fromWarehouseName, t.toWarehouseName])) if (wh) add(wh, stockTransferDelta(wh, { ...t, dispatchedQtyMt: n(t.dispatchedQtyMt), receivedQtyMt: t.receivedQtyMt == null ? null : n(t.receivedQtyMt) }));
+  if (code === "PKE") for (const [warehouse, qty] of map) map.set(warehouse, Math.max(0, qty));
   return map;
 }

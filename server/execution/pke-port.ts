@@ -1,3 +1,4 @@
+import {warehouseAllowedForCommodity} from "@/lib/warehouse-eligibility";
 import {prisma} from '@/server/db';
 import type {Prisma} from '@prisma/client';
 import {pkeImportSale,tradeEntity} from '@/lib/sesame-entity';
@@ -30,7 +31,7 @@ export async function guardPkePortBooking(db:Prisma.TransactionClient,input:{cod
  const own=row.sales.find(s=>s.tradeRef===input.excludeRef);
  if(input.quantity>row.freeMt+(own?.quantityMt??0)+.000001)throw new Error('Sale exceeds unbooked PKE stock at this port');
 }
-export async function recordPkePortMovement(input:{fileId:string;kind:'WAREHOUSE'|'PORT_SALE';quantityMt:number;truckNo:string;builty:string;warehouse?:string;saleTradeRef?:string;requestKey:string},actor:string){
+export async function recordPkePortMovement(input:{fileId:string;kind:'WAREHOUSE'|'PORT_SALE';quantityMt:number;truckNo:string;builty:string;warehouse?:string;transporterName?:string;saleTradeRef?:string;requestKey:string},actor:string){
  const policy=await getFinancePolicy();
  const result=await prisma.$transaction(async tx=>{
   await tx.$queryRaw`SELECT id FROM "PkeImportFile" WHERE id=${input.fileId} FOR UPDATE`;
@@ -60,13 +61,13 @@ export async function recordPkePortMovement(input:{fileId:string;kind:'WAREHOUSE
   if(input.kind==='WAREHOUSE'){
    warehouse=input.warehouse?.trim()??'';
    const allowed=await tx.location.findFirst({where:{name:warehouse,type:"WAREHOUSE"}});
-   if(!allowed||!warehouse)throw new Error('Select a registered destination warehouse');
+   if(!allowed||!warehouse||!warehouseAllowedForCommodity(warehouse,'PKE'))throw new Error('Select a registered destination warehouse');
   }
   const kg=input.quantityMt*1000;
   const gatepassNo=await nextSerial(input.kind==='WAREHOUSE'?SERIALS.GATEPASS_INBOUND:SERIALS.GATEPASS_OUTBOUND,tx);
   const base=Math.round(kg*n(trade.contract.ratePerKg)*100)/100;
   const tax=input.kind==='PORT_SALE'?advanceTaxOn(base,advanceTaxRateFor(policy,trade.counterparty.taxFilerStatus)):0;
-  const truck=await tx.pendingTruck.create({data:{gatepassNo,arrivalDate:new Date(),movementType:input.kind==='WAREHOUSE'?'INBOUND':'OUTBOUND',status:'ASSIGNED',warehouseName:warehouse,truckNo:input.truckNo,counterpartyName:trade.counterparty.name,commodityCode:'PKE',commodityName:'PKE',executionEntity:'PAK',recordedByName:actor,builtyDetails:input.builty,weightKg:kg,weightAsPerBuiltyKg:kg,warehouseWeightKg:input.kind==='WAREHOUSE'?kg:null,remainingKg:0,assignedTradeRef:trade.tradeRef,assignedAt:new Date(),remarks:`Vessel ${state.vessel} · BL ${state.blNo}`,...(input.kind==='PORT_SALE'?{saleBasePkr:base,saleTaxPkr:tax,saleExpectedPkr:base+tax,saleStage:'AWAITING_BALANCE' as const}:{})}});
+  const truck=await tx.pendingTruck.create({data:{gatepassNo,arrivalDate:new Date(),movementType:input.kind==='WAREHOUSE'?'INBOUND':'OUTBOUND',status:'ASSIGNED',warehouseName:warehouse,truckNo:input.truckNo,counterpartyName:trade.counterparty.name,commodityCode:'PKE',commodityName:'PKE',executionEntity:'PAK',recordedByName:actor,transporterName:input.transporterName,builtyDetails:input.builty,weightKg:kg,weightAsPerBuiltyKg:kg,warehouseWeightKg:input.kind==='WAREHOUSE'?kg:null,remainingKg:0,assignedTradeRef:trade.tradeRef,assignedAt:new Date(),remarks:`Vessel ${state.vessel} · BL ${state.blNo}`,...(input.kind==='PORT_SALE'?{saleBasePkr:base,saleTaxPkr:tax,saleExpectedPkr:base+tax,saleStage:'AWAITING_BALANCE' as const}:{})}});
   let receiptId:string|undefined;
   if(input.kind==='WAREHOUSE'){
    const receipt=await tx.inboundReceipt.create({data:{kcsNo:await nextSerial(SERIALS.INBOUND,tx),gatepassNo,tradeRef:trade.tradeRef,receiveDate:new Date(),truckNo:input.truckNo,biltyNo:input.builty,trnNo:gatepassNo,warehouseName:warehouse,sellerName:trade.counterparty.name,weightSpotKg:kg,weightWarehouseKg:kg,weightDiffKg:0,allocatedQtyMt:input.quantityMt,status:'ALLOCATED'}});

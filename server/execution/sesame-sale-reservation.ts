@@ -20,6 +20,7 @@ export type SaleReservation = {
 
 /** Pakistan warehouse sales, including a legacy FZCO-from-Pakistan purchase that was not rewritten. */
 export function isPakistanPhysicalSale(direction: string, params: unknown): boolean {
+  if ((params as Record<string,unknown>|null)?.pkePortFileId) return false;
   const entity = tradeEntity(params);
   const internal = (params as Record<string, unknown> | null)?.internalCounterpartyEntity;
   return (direction === "SELL" && entity === "PAK") || (direction === "BUY" && entity === "FZCO" && internal === "PAK");

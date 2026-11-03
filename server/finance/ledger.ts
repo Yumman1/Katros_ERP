@@ -462,10 +462,20 @@ export async function canFundTruck(
 ): Promise<TruckFundingCheck> {
   const trade = await db.trade.findUnique({
     where: { tradeRef: input.tradeRef },
-    select: { paymentType: true, tradeParams: true, commodity: { select: { code: true } } },
+    select: { quantity:true, contract:true, paymentType: true, tradeParams: true, commodity: { select: { code: true } } },
   });
   if (!trade) return { ok: false, kind: "ADVANCE", availablePkr: 0, reason: "Trade not found" };
   const kind = tradeTermsKind(trade.paymentType);
+  if (trade.commodity.code === "PKE" && (trade.tradeParams as Record<string,unknown>|null)?.pkePortFileId) {
+    const [paid,billed] = await Promise.all([
+      db.voucher.aggregate({where:{tradeRef:input.tradeRef,side:'SELL',status:'APPROVED',noteRef:null},_sum:{amountPkr:true}}),
+      db.counterpartyLedgerEntry.aggregate({where:{tradeRef:input.tradeRef,side:'SELL',entryType:'DEBIT'},_sum:{amountPkr:true}}),
+    ]);
+    const expected=Math.max(Number(trade.quantity)*1000*Number(trade.contract?.ratePerKg??0),Number(billed._sum.amountPkr??0));
+    const received=Number(paid._sum.amountPkr??0);
+    if(expected<=0||received+.005<expected)return {ok:false,kind,availablePkr:received,reason:`Receive the full payment for this port sale before generating its DO. Remaining: ${Math.max(0,expected-received).toLocaleString()} PKR`};
+  }
+
   const available = await availableCreditPkr(input.counterpartyId, db, {
     excludeTruckId: input.excludeTruckId,
     commodityCode: trade.commodity.code,

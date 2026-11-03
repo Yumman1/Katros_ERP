@@ -29,7 +29,7 @@ export async function sesameBook(code: string) {
     const contractStatus = t.contract?.contractStatus ?? null;
     const receivedMt = n(t.contract?.receivedQtyMt);
     return {
-    tradeScope: t.tradeScope, sesameType: sesameGrade(t.tradeParams), tradeRef: t.tradeRef, entity: tradeEntity(t.tradeParams), internalEntity: counterpart, direction: t.direction,
+    portSale: code === "PKE" && !!(t.tradeParams as Record<string,unknown>|null)?.pkePortFileId, tradeScope: t.tradeScope, sesameType: sesameGrade(t.tradeParams), tradeRef: t.tradeRef, entity: tradeEntity(t.tradeParams), internalEntity: counterpart, direction: t.direction,
     quantityMt, confirmedMt: confirmed.get(t.tradeRef) ?? 0, openMt, receivedMt, closeOnPayment, contractStatus,
     counterparty: t.counterparty.name, status: t.tradeStatus, submitted: t.submittedToExecution, price: n(t.pricePerCanonicalQty ?? t.price), currency: t.currency,
     confirmedValue: (confirmed.get(t.tradeRef) ?? 0) * n(t.pricePerCanonicalQty ?? t.price),
@@ -41,10 +41,10 @@ export async function sesameBook(code: string) {
     const own = rows.filter(t => t.sesameType !== "Impurities" && (t.entity === entity || t.internalEntity === entity));
     const open = own.filter(t => ["PENDING", "LOCKED", "CONFIRMED", "EXECUTED"].includes(t.status) && t.submitted);
     const side = (t: typeof rows[number]) => t.entity === entity ? t.direction : t.direction === "BUY" ? "SELL" : "BUY";
-    const qty = (t: typeof rows[number]) => sesameBookQty({ quantityMt: t.quantityMt, openMt: t.openMt, receivedMt: t.receivedMt, internal: t.internalEntity != null, closeOnPayment: t.closeOnPayment, contractStatus: t.contractStatus, asEntity: entity });
+    const qty = (t: typeof rows[number]) => code === "PKE" ? (t.contractStatus === "Close" ? 0 : t.quantityMt) : sesameBookQty({ quantityMt: t.quantityMt, openMt: t.openMt, receivedMt: t.receivedMt, internal: t.internalEntity != null, closeOnPayment: t.closeOnPayment, contractStatus: t.contractStatus, asEntity: entity });
     const buys = open.filter(t => side(t) === "BUY").reduce((sum,t) => sum+qty(t), 0);
     const sells = open.filter(t => side(t) === "SELL").reduce((sum,t) => sum+qty(t), 0);
-    const physicalSells = open.filter(t => side(t) === "SELL").reduce((sum,t) => sum+t.openMt, 0);
+    const physicalSells = open.filter(t => side(t) === "SELL" && !t.portSale).reduce((sum,t) => sum+t.openMt, 0);
     const owned = entity === "FZCO" ? 0 : physicalPak;
     const fzcoBuys = open.filter(t => side(t) === "BUY");
     const fzcoBuyQty = fzcoBuys.reduce((s,t) => s+qty(t), 0);
