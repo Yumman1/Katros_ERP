@@ -1,5 +1,6 @@
 "use client";
 
+import {useQuery} from "@tanstack/react-query";
 import Link from "next/link";
 import { InternalGateLinks } from "@/components/execution/internal-gate-links";
 import { useExecutionCommodityDesk } from "@/components/execution/commodity-desk-provider";
@@ -44,6 +45,7 @@ export default function ExecutionShiftingPage() {
     {},
     { refetchInterval: DESK_REFETCH_MS },
   );
+  const ports=useQuery<{files:{location:string;freeMt:number}[]}>({queryKey:['pke-port-shifts'],enabled:active.code==='PKE',queryFn:async()=>{const r=await fetch('/api/pke-port');if(!r.ok)throw new Error('Unable to load port stock');return r.json();}});
   const { data: warehouses } = trpc.execution.warehouseLocations.useQuery();
   const { data: commodities } = trpc.commodity.list.useQuery();
 
@@ -136,7 +138,7 @@ export default function ExecutionShiftingPage() {
 
       {showForm ? (
         <NewShiftForm
-          warehouses={(warehouses ?? []).map((w) => w.name)}
+          warehouses={[...(warehouses ?? []).map((w) => w.name),...(active.code==='PKE'?(ports.data?.files??[]).filter(f=>f.freeMt>0).map(f=>f.location):[])]}
           commodities={(commodities ?? []).filter(c=>c.code===active.code).map((c) => ({ code: c.code, name: c.name }))}
           submitting={create.isPending}
           onSubmit={(v) => create.mutate(v)}
@@ -409,7 +411,7 @@ function NewShiftForm({
             className="w-full rounded-md border px-3 py-2 text-sm"
             required
           >
-            {warehouses.map((w) => (
+            {warehouses.filter(w=>!w.startsWith("Port: ")).map((w) => (
               <option key={w} value={w}>
                 {w}
               </option>

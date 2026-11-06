@@ -702,7 +702,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
     // grows with each part-payment finance approves. Open notes post only what
     // vouchers have collected so far; the full claim stays on billedPkr.
     const postedPkr =
-      isOpenNote || (e.entryType === "DEBIT" && e.side === "BUY" && !e.purchaseAdvanceFlow)
+      (isOpenNote && !e.sourceRef?.startsWith("INS-")) || (e.entryType === "DEBIT" && e.side === "BUY" && !e.purchaseAdvanceFlow)
         ? paidPkr
         : billedPkr;
     // A deliberate hold is a decision, not an overdue payable — it never ages.
@@ -782,6 +782,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
           // Paid money is not owed; what is left ages unless it is being held
           // deliberately, and a fully settled debit never ages.
           settledDebit += e.paidPkr;
+          if(e.sourceRef?.startsWith("INS-"))totalCredit+=e.paidPkr;
           const openPkr = Math.max(0, e.billedPkr - e.paidPkr);
           // Payables do not age: a purchase is paid outright and the truck is
           // released, so a buy debit is either paid or deliberately held —

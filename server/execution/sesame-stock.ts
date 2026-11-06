@@ -50,6 +50,12 @@ export async function physicalStock(db: DB, code: string, excludeDispatchId?: st
   for (const t of unassigned) add(t.warehouseName, n(t.remainingKg)/1000);
   for (const r of outs) if (!(code === "PKE" && r.warehouseName.startsWith("Port: "))) add(r.warehouseName, outboundStockDelta(r.status, n(r.allocatedQtyMt)));
   for (const t of shifts) for (const wh of new Set([t.fromWarehouseName, t.toWarehouseName])) if (wh) add(wh, stockTransferDelta(wh, { ...t, dispatchedQtyMt: n(t.dispatchedQtyMt), receivedQtyMt: t.receivedQtyMt == null ? null : n(t.receivedQtyMt) }));
+  if(code==='PKE'){
+    const {pkePortRows}=await import('./pke-port');
+    for(const port of await pkePortRows(db)){
+      map.set(port.location,port.remainingMt);
+    }
+  }
   if (code === "PKE") for (const [warehouse, qty] of map) map.set(warehouse, Math.max(0, qty));
   return map;
 }

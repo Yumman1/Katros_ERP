@@ -9,17 +9,21 @@ import {getFinancePolicy} from '@/server/finance/policy';
 import {advanceTaxOn,advanceTaxRateFor} from '@/lib/finance-policy';
 import type {PkeImportPayload} from '@/lib/pke-import';
 const n=(v:unknown)=>Number(v??0);
+export const portLocation=(id:string,port:string,vessel:string)=>`Port: ${port} · ${vessel} [${id}]`;
 export const portFileId=(params:unknown)=>String((params as Record<string,unknown>|null)?.pkePortFileId??'');
 export async function pkePortRows(db:Prisma.TransactionClient=prisma){
  const files=await db.pkeImportFile.findMany({include:{portMovements:true},orderBy:{createdAt:'desc'}});
+ const shifts=await db.stockTransfer.findMany({where:{commodityCode:'PKE',status:{in:['IN_TRANSIT','RECEIVED']}}});
  const trades=await db.trade.findMany({where:{commodity:{code:'PKE'},tradeStatus:{not:'CANCELLED'}},include:{contract:true,counterparty:true}});
  return files.map(f=>{
   const refs=(f.payload as unknown as PkeImportPayload).references;
   const quantity=n(refs['Vessel received MT']);
-  const moved=f.portMovements.reduce((s,m)=>s+n(m.quantityMt),0);
+  const location=portLocation(f.id,refs['Arrival port']??'',refs['Vessel name']??'');
+  const shifted=shifts.filter(s=>s.fromWarehouseName===location).reduce((a,s)=>a+n(s.dispatchedQtyMt),0);
+  const moved=f.portMovements.reduce((s,m)=>s+n(m.quantityMt),0)+shifted;
   const sales=trades.filter(t=>portFileId(t.tradeParams)===f.id&&t.direction==='SELL');
   const booked=sales.reduce((s,t)=>s+Math.max(0,n(t.quantity)-f.portMovements.filter(m=>m.saleTradeRef===t.tradeRef).reduce((a,m)=>a+n(m.quantityMt),0)),0);
-  return {id:f.id,title:f.title,purchaseTradeRef:f.purchaseTradeRef,saleTradeRef:refs['Dubai sale trade reference']??'',blNo:refs['Bill of lading']??'',vessel:refs['Vessel name']??'',port:refs['Arrival port']??'',arrivalDate:refs['Vessel arrival date']??'',quantityMt:quantity,warehouseMt:f.portMovements.filter(m=>m.kind==='WAREHOUSE').reduce((s,m)=>s+n(m.quantityMt),0),soldMt:f.portMovements.filter(m=>m.kind==='PORT_SALE').reduce((s,m)=>s+n(m.quantityMt),0),remainingMt:Math.max(0,quantity-moved),freeMt:Math.max(0,quantity-moved-booked),sales:sales.map(t=>({tradeRef:t.tradeRef,buyer:t.counterparty.name,quantityMt:n(t.quantity),locked:!!t.contract&&['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus),remainingMt:Math.max(0,n(t.quantity)-f.portMovements.filter(m=>m.saleTradeRef===t.tradeRef).reduce((s,m)=>s+n(m.quantityMt),0))}))};
+  return {location,id:f.id,title:f.title,purchaseTradeRef:f.purchaseTradeRef,saleTradeRef:refs['Dubai sale trade reference']??'',blNo:refs['Bill of lading']??'',vessel:refs['Vessel name']??'',port:refs['Arrival port']??'',arrivalDate:refs['Vessel arrival date']??'',quantityMt:quantity,warehouseMt:f.portMovements.filter(m=>m.kind==='WAREHOUSE').reduce((s,m)=>s+n(m.quantityMt),0),soldMt:f.portMovements.filter(m=>m.kind==='PORT_SALE').reduce((s,m)=>s+n(m.quantityMt),0),remainingMt:Math.max(0,quantity-moved),freeMt:Math.max(0,quantity-moved-booked),sales:sales.map(t=>({tradeRef:t.tradeRef,buyer:t.counterparty.name,quantityMt:n(t.quantity),locked:!!t.contract&&['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus),remainingMt:Math.max(0,n(t.quantity)-f.portMovements.filter(m=>m.saleTradeRef===t.tradeRef).reduce((s,m)=>s+n(m.quantityMt),0))}))};
  });
 }
 export async function guardPkePortBooking(db:Prisma.TransactionClient,input:{code:string;direction:string;params:unknown;quantity:number;tradeScope?:string;excludeRef?:string}){
@@ -28,6 +32,7 @@ export async function guardPkePortBooking(db:Prisma.TransactionClient,input:{cod
  await db.$queryRaw`SELECT id FROM "PkeImportFile" WHERE id=${id} FOR UPDATE`;
  const row=(await pkePortRows(db)).find(f=>f.id===id);
  if(!row?.vessel||!row.arrivalDate||row.quantityMt<=0)throw new Error('Record vessel arrival before selling from the port');
+ const source=await db.trade.findUniqueOrThrow({where:{tradeRef:row.purchaseTradeRef}});if(source.tradeStatus==='CANCELLED')throw new Error('Import purchase cancelled');
  const own=row.sales.find(s=>s.tradeRef===input.excludeRef);
  if(input.quantity>row.freeMt+(own?.quantityMt??0)+.000001)throw new Error('Sale exceeds unbooked PKE stock at this port');
 }
@@ -51,13 +56,14 @@ export async function recordPkePortMovement(input:{fileId:string;kind:'WAREHOUSE
   if(input.kind==='PORT_SALE'&&(trade.direction!=='SELL'||trade.commodity.code!=='PKE'||trade.tradeScope!=='LOCAL'||tradeEntity(trade.tradeParams)!=='PAK'||portFileId(trade.tradeParams)!==file.id))throw new Error('Select a local PKE sale booked against this vessel');
   if(input.kind==='PORT_SALE'&&input.quantityMt>(state.sales.find(t=>t.tradeRef===trade.tradeRef)?.remainingMt??0)+.000001)throw new Error('Movement exceeds the local sale contract');
   const supplier=await tx.trade.findUniqueOrThrow({where:{tradeRef:file.purchaseTradeRef},include:{contract:true}});
+  if(supplier.tradeStatus==='CANCELLED'||internal.tradeStatus==='CANCELLED')throw new Error('The import was cancelled');
   if(!supplier.contract)throw new Error('Lock the supplier purchase first');
   // All BLs under the same internal contract share its quantity limit.
   const related=await tx.pkeImportFile.findMany({where:{payload:{path:['references','Dubai sale trade reference'],equals:internal.tradeRef}},select:{id:true}});
   const portSold=await tx.pkePortMovement.aggregate({where:{importFileId:{in:related.map(f=>f.id)},kind:'PORT_SALE'},_sum:{quantityMt:true}});
   const received=await tx.inboundReceipt.aggregate({where:{tradeRef:internal.tradeRef,status:{not:'DRAFT'}},_sum:{allocatedQtyMt:true}});
   if(n(portSold._sum.quantityMt)+n(received._sum.allocatedQtyMt)+input.quantityMt>n(internal.quantity)+.000001)throw new Error('Port sales plus warehouse receipts exceed the Dubai sale / Pakistan purchase contract');
-  let warehouse=`Port: ${state.port} · ${state.vessel}`;
+  let warehouse=state.location;
   if(input.kind==='WAREHOUSE'){
    warehouse=input.warehouse?.trim()??'';
    const allowed=await tx.location.findFirst({where:{name:warehouse,type:"WAREHOUSE"}});

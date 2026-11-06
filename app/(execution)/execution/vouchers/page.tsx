@@ -1,5 +1,5 @@
 "use client";
-import {PkePortReceiptVoucher} from "@/components/execution/pke-port-receipt-voucher";
+
 import {InternalTradePayments} from "@/components/execution/internal-trade-payments";
 import {InternationalPurchaseVoucher} from "@/components/execution/international-purchase-voucher";
 import {useExecutionCommodityDesk} from "@/components/execution/commodity-desk-provider";
@@ -17,6 +17,8 @@ import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 import { ReceiptText } from "lucide-react";
 import Link from "next/link";
+import {useQuery} from "@tanstack/react-query";
+import type {PkeReceiptQuote} from "@/lib/pke-receipt-quote";
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { PageLoadingSkeleton } from "@/components/ui/page-loading-skeleton";
@@ -61,7 +63,7 @@ export default function ExecutionVouchersPage() {
   const fzco=usesSesameWorkflow(active.code)&&entity==="FZCO";
   const [purchaseIntl,setPurchaseIntl]=useState(false);
   const [internal,setInternal]=useState(false);
-  const [international,setInternational]=useState(false);
+  const [international,setInternational]=useState(fzco);
   const [side, setSide] = useState<"SELL" | "BUY">("SELL");
   const [counterpartyId, setCounterpartyId] = useState("");
   const [tradeRef, setTradeRef] = useState("");
@@ -90,6 +92,9 @@ export default function ExecutionVouchersPage() {
     { counterpartyId, side },
     { enabled: counterpartyId !== "" },
   );
+  const quotes=useQuery<{balances:{tradeRef:string;receiptQuote:PkeReceiptQuote|null}[]}>({queryKey:['pke-voucher-quotes'],enabled:active.code==='PKE',queryFn:async()=>{const r=await fetch('/api/pke-port');if(!r.ok)throw new Error('Unable to load receipt amount');return r.json();}});
+  const quote=side==='SELL'&&!noteRef?quotes.data?.balances.find(b=>b.tradeRef===tradeRef)?.receiptQuote:null;
+  useEffect(()=>{if(active.code==='PKE'&&quote)setAmount(String(quote.availablePkr));},[active.code,tradeRef,quote]);
   const selectedTrade = sellTrades?.find(t => t.tradeRef === tradeRef);
   const isAdvance = side === "BUY" && !!selectedTrade && !selectedTrade.isSettlement;
   const effectivePercentage = advancePct === "" ? selectedTrade?.advancePercentage ?? 0 : Number(advancePct);
@@ -159,7 +164,7 @@ export default function ExecutionVouchersPage() {
     Number(amount) > 0 &&
     (!isAdvance || (!!builtyNumber && !!truckNo.trim() && !!transporterName.trim() && Number(advanceWeightKg) > 0 && effectivePercentage > 0 && effectivePercentage <= 100)) &&
     (side === "SELL" || tradeRef !== "" || noteRef !== "") &&
-    (side === "BUY" || (!(method === "Bank transfer" && !bankName.trim()) && reference.trim() !== "" && !duplicateVoucher)) &&
+    (side === "BUY" || active.code === "PKE" || (!(method === "Bank transfer" && !bankName.trim()) && reference.trim() !== "" && !duplicateVoucher)) &&
     !create.isPending;
 
   if (isLoading && !vouchers) {
@@ -186,7 +191,7 @@ export default function ExecutionVouchersPage() {
         subtitle="Record payments and purchase advances against trades; finance approval updates the counterparty ledger."
       />
 
-      {active.code === "PKE" && entity === "PAK" && <PkePortReceiptVoucher/>}
+
       {/* Form stays compact at the top; history grows below and the whole page scrolls. */}
       <div className="exec-panel p-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -217,6 +222,7 @@ export default function ExecutionVouchersPage() {
                 </button>
               ))}
               {usesSesameWorkflow(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",!internal&&purchaseIntl&&"exec-segment-active")} onClick={()=>{setInternal(false);setPurchaseIntl(true);setInternational(false);setSide("BUY");clearAgainst();}}>{fzco ? "Purchase" : "International Purchase"}</button>}
+              {active.code==='PKE'&&fzco&&<button type="button" className="exec-segment-item px-3 py-1 text-xs" onClick={()=>{setInternal(false);setInternational(false);setPurchaseIntl(false);setSide('SELL');clearAgainst();}}>Insurance receipt</button>}
               {usesSesameWorkflow(active.code)&&<button type="button" className={cn("exec-segment-item px-3 py-1 text-xs",internal&&"exec-segment-active")} onClick={()=>{setInternal(true);setPurchaseIntl(false);setInternational(false);}}>Internal Trade</button>}
             </div>
             <span className="text-xs text-subtle">
@@ -226,7 +232,8 @@ export default function ExecutionVouchersPage() {
             </span>
           </div>
 
-          {internal&&usesSesameWorkflow(active.code)?<InternalTradePayments/>:purchaseIntl?<InternationalPurchaseVoucher/>:(international||fzco)?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
+          {internal&&usesSesameWorkflow(active.code)?<InternalTradePayments/>:purchaseIntl?<InternationalPurchaseVoucher/>:(international||(fzco&&active.code!=="PKE"))?<SesameExportShipments mode="voucher" embedded sideFilter="SELL"/>:<>
+          {quote&&<p className="mt-3 text-sm">Quantity {quote.quantityMt} MT · Locked rate {quote.ratePkrPerKg} PKR/kg · Agreed {fmtPkr(quote.agreedPkr)} · Expected {fmtPkr(quote.expectedPkr)} · Paid {fmtPkr(quote.paidPkr)} · Pending {fmtPkr(quote.pendingPkr)} · Available {fmtPkr(quote.availablePkr)}</p>}
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Counterparty
@@ -346,7 +353,7 @@ export default function ExecutionVouchersPage() {
                 className="kastros-input kastros-input-sm w-full"
               />
             </label>
-            {side === "SELL" && <><label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+            {side === "SELL" && active.code!=="PKE" && <><label className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
               Method
               <SearchableSelect
                 value={method}
@@ -405,7 +412,8 @@ export default function ExecutionVouchersPage() {
             <button
               type="button"
               disabled={!canSubmit}
-              onClick={() =>
+              onClick={() => {
+                if(active.code==='PKE'&&!window.confirm(`Generate voucher for PKR ${amount}?`))return;
                 create.mutate({
                   counterpartyId,
                   side,
@@ -420,10 +428,10 @@ export default function ExecutionVouchersPage() {
                   method: side === "SELL" ? method : undefined,
                   bankName: side === "SELL" && method === "Bank transfer" ? bankName : undefined,
                   voucherDate: new Date(voucherDate),
-                  reference: side === "BUY" ? undefined : reference.trim(),
+                  reference: side === "BUY" || active.code === "PKE" ? undefined : reference.trim(),
                   note: note.trim() || undefined,
-                })
-              }
+                });
+              }}
               className="kastros-btn-primary px-4 py-2 text-xs disabled:opacity-50"
             >
               {create.isPending ? "Submitting…" : side === "BUY" ? "Generate voucher" : "Submit for finance approval"}
@@ -534,8 +542,8 @@ export default function ExecutionVouchersPage() {
                   </td>
                   <td className="px-5 py-3">
                     {v.traderApprovalRequired && !v.traderApprovedAt && v.status === "PENDING_FINANCE" ? <span className="text-warning">Pending trader approval</span> : <StatusChip status={v.status} />}
-                    {(v.side === "BUY" || v.internalPaymentRef) && <button className="block text-xs underline mt-2" onClick={()=>void downloadPurchaseVoucher(v).catch(e=>alert(e.message))}>Download {v.status === "APPROVED" ? "completed" : "pending"} voucher PDF</button>}
-                    {(v.side === "BUY" || v.internalPaymentRef) && <p className="text-xs">{v.commodityCode} · Agreed trade amount {v.agreedTradeAmountPkr?.toLocaleString() ?? "—"} PKR · Agreed advance {v.agreedAdvancePercentage ?? "—"}%</p>}
+                    {(v.side === "BUY" || v.internalPaymentRef || v.commodityCode === "PKE") && <button className="block text-xs underline mt-2" onClick={()=>void downloadPurchaseVoucher(v).catch(e=>alert(e.message))}>Download {v.status === "APPROVED" ? "completed" : "pending"} voucher PDF</button>}
+                    {(v.side === "BUY" || v.internalPaymentRef || v.commodityCode === "PKE") && <p className="text-xs">{v.commodityCode} · Agreed trade amount {v.agreedTradeAmountPkr?.toLocaleString() ?? "—"} PKR · Agreed advance {v.agreedAdvancePercentage ?? "—"}%</p>}
                     {v.builtyNumber && <div className="mt-2 space-y-1"><p>Truck {v.truckNo ?? "—"} · Builty {v.builtyNumber} · {v.advancePercentage}% advance / {100 - (v.advancePercentage ?? 0)}% remaining terms</p><p>Invoice {v.invoiceNo ?? "pending"}</p>{v.adjustments.map((a, i) => <p key={i}>Applied {fmtPkr(a.amountPkr)} · {a.tradeRef} · Builty {a.builty} · Invoice {a.invoice ?? "pending"}</p>)}<p className={v.truckPaid ? "text-success" : "text-warning"}>{v.truckPaid ? "Paid" : "Truck settlement pending"}</p>{v.truckPaid && v.availableAdvancePkr > 0 && <button className="underline" onClick={() => { setAdjustVoucher(v.id); setAdjustAmount(String(v.availableAdvancePkr)); }}>Adjust excess {fmtPkr(v.availableAdvancePkr)} with future truck</button>}</div>}
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">{v.enteredByName ?? "—"}</td>

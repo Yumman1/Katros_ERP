@@ -1,5 +1,6 @@
 "use client";
 
+import {useQuery} from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -8,6 +9,7 @@ import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
 const TABS = [
+ {href:"/trader/approvals/pke-shipments",label:"PKE shipments"},
   { href: "/trader/approvals/export-delivery-orders", label: "Sesame export DOs" },
   { href: "/trader/approvals/trade-changes", label: "Trade changes" },
   { href: "/trader/approvals/over-delivery", label: "Over-delivery" },
@@ -20,6 +22,7 @@ const TABS = [
  */
 export default function TraderApprovalsLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const pke=useQuery<{files:{reviews:{status:string}[]}[]}>({queryKey:["pke-shipment-reviews"],queryFn:async()=>{const r=await fetch("/api/pke-shipment-reviews");if(!r.ok)throw new Error("Unable to load approvals");return r.json();},refetchInterval:30000});
   const editCount = trpc.trader.executionEditApprovalsCount.useQuery(undefined, {
     refetchInterval: 60_000,
     retry: false,
@@ -31,7 +34,7 @@ export default function TraderApprovalsLayout({ children }: { children: ReactNod
 
   const exports=trpc.sesameExport.list.useQuery(undefined,{refetchInterval:30000});
   const countFor = (href: string) =>
-    href.endsWith("/export-delivery-orders") ? exports.data?.filter(s=>s.status==="TRADER_PENDING").length : href.endsWith("/trade-changes") ? editCount.data : overDeliveryCount.data;
+    href.endsWith("/pke-shipments") ? pke.data?.files.reduce((s,f)=>s+f.reviews.filter(r=>r.status==="PENDING").length,0) : href.endsWith("/export-delivery-orders") ? exports.data?.filter(s=>s.status==="TRADER_PENDING").length : href.endsWith("/trade-changes") ? editCount.data : overDeliveryCount.data;
 
   return (
     <div className="kastros-desk-page">

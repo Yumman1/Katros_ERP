@@ -1,4 +1,5 @@
 "use client";
+import {PkePortGateOut,type PkeGateVessel} from "@/components/warehouse/pke-port-gate-out";
 import {PkeTripartyGateIn} from "@/components/warehouse/pke-triparty-gate-in";
 import {SesameExportContainers} from "@/components/warehouse/sesame-export-containers";
 import {usesSesameWorkflow} from "@/lib/sesame";
@@ -33,6 +34,7 @@ import { formatPkDateTime } from "@/lib/formatters/datetime";
 const RECORDED_BY_KEY = "kastros-gatepass-recorded-by";
 
 type ReferenceData = {
+  pkePorts?:PkeGateVessel[];
   pkeVessels?: {id:string;vessel:string;blNo:string;freeMt:number;remainingMt:number;purchaseTradeRef:string;saleTradeRef:string}[];
   exportTrades?: {tradeRef:string;counterpartyName:string;commodityCode:string;commodityName:string;entity:string}[];
   /** FZCO buyers with an open international sale — the counterparty of a triparty gate-out. */
@@ -327,7 +329,7 @@ export default function WarehouseGatepassPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="flex rounded-2xl border border-border bg-foreground/[0.03] p-1.5 gap-1.5">
+            <div className="flex flex-wrap rounded-2xl border border-border bg-foreground/[0.03] p-1.5 gap-1.5">
               <ModeButton
                 active={form.movementType === "INBOUND" && !pkeInbound}
                 icon={<ArrowDownToLine className="h-4 w-4" />}
@@ -349,9 +351,9 @@ export default function WarehouseGatepassPage() {
                 onClick={() => {setPkeInbound(false);setMovementType("OUTBOUND", true);}}
                 color="#f59e0b"
               />
-            </div>
             <ModeButton active={pkeInbound} icon={<ArrowDownToLine className="h-4 w-4"/>} label="PKE triparty gate-in" color="#34d399" onClick={()=>{setPkeInbound(true);setMovementType("INBOUND");}}/>
-            {pkeInbound?<PkeTripartyGateIn vessels={reference.pkeVessels??[]} warehouses={reference.warehouses.filter(w=>warehouseAllowedForCommodity(w,"PKE"))} onRecorded={async()=>{const res=await fetch("/api/warehouse-gatepass");if(res.ok)setReference(await res.json());}}/>:<>
+            </div>
+            {pkeInbound?<PkeTripartyGateIn vessels={reference.pkeVessels??[]} warehouses={reference.warehouses.filter(w=>!w.startsWith("Port: ")&&warehouseAllowedForCommodity(w,"PKE"))} onRecorded={async()=>{const res=await fetch("/api/warehouse-gatepass");if(res.ok)setReference(await res.json());}}/>:<>
             {triparty && <p className="text-xs text-subtle">Pakistan sells to Dubai FZCO and the containers ship straight to FZCO&apos;s buyer. Select the final buyer; execution assigns the internal sale and the FZCO sale.</p>}
 
             <FormSection title="Register" icon={<User className="h-4 w-4" />} color="#f59e0b">
@@ -386,6 +388,7 @@ export default function WarehouseGatepassPage() {
               </Field>
             </FormSection>
 
+            {form.movementType==='OUTBOUND'&&reference.pkePorts?.some(v=>v.location===form.warehouseName)?<PkePortGateOut key={form.warehouseName} vessel={reference.pkePorts.find(v=>v.location===form.warehouseName)!} recordedBy={form.recordedByName} onRecorded={()=>setPreviewTick(v=>v+1)}/>:<>
             <FormSection
               title="Party & Commodity"
               icon={<ClipboardList className="h-4 w-4" />}
@@ -628,6 +631,7 @@ export default function WarehouseGatepassPage() {
                 ? "Saving…"
                 : `Log ${form.movementType === "INBOUND" ? "Gate In" : "Gate Out"}`}
             </button>}
+            </>}
             </>}
           </div>
         )}

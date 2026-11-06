@@ -128,6 +128,7 @@ export async function POST(request: Request) {
       const current=await tx.pkeImportFile.findUniqueOrThrow({where:{id:data.id}});
       if(current.revision!==data.revision)throw new Error("This file changed. Refresh before saving");
       const before=current.payload as unknown as PkeImportPayload;
+      if(before.shipmentReviews?.some(q=>q.status==='PENDING'||q.status==='APPROVED'))for(const key of ['BL quantity MT','Vessel received MT','Dubai sale trade reference','Bill of lading'])if(before.references[key]!==payload.references[key])throw new Error('Resolve the shipment approval before changing its quantities or references');
       const supplier=await tx.trade.findUniqueOrThrow({where:{tradeRef:current.purchaseTradeRef},include:{contract:true}});
       for(const ref of [current.purchaseTradeRef,saleRef].filter(Boolean).sort())await tx.$queryRaw`SELECT id FROM "ExecutionContract" WHERE "tradeRef"=${ref} FOR UPDATE`;
       const related=await tx.pkeImportFile.findMany({where:{purchaseTradeRef:current.purchaseTradeRef,id:{not:current.id}}});
@@ -135,7 +136,9 @@ export async function POST(request: Request) {
       if(!Number.isFinite(blQty)||blQty<0||!Number.isFinite(arrived)||arrived<0||arrived>blQty+.000001)throw new Error('Vessel quantity must be positive and no more than the BL quantity');
       if(arrived>0&&(!/^\d{4}-\d{2}-\d{2}$/.test(payload.references['Vessel arrival date']??'')||!Number.isFinite(Date.parse(payload.references['Vessel arrival date']))))throw new Error('Enter a valid vessel arrival date');
       if(arrived>0&&(!payload.references['Vessel name']?.trim()||!payload.references['Arrival port']?.trim()||!payload.references['Vessel arrival date']||!payload.references['Bill of lading']?.trim()||!saleRef))throw new Error('Record vessel, port, arrival date, BL number and linked Dubai sale before receiving stock at port');
+      if(supplier.tradeStatus==='CANCELLED')throw new Error('Import cancelled');
       const otherQty=related.reduce((sum,f)=>sum+Number((f.payload as unknown as PkeImportPayload).references['BL quantity MT']||0),0);
+      if(data.action==='advance'&&row.stage>=PKE_IMPORT_STAGES.length-1&&otherQty+blQty<Number(supplier.quantity)-Number(supplier.contract?.quantityToleranceMt??0)-.000001&&![current,...related].some(f=>(f.payload as unknown as PkeImportPayload).shipmentReviews?.some(q=>q.kind==='SHORTFALL'&&q.status==='APPROVED'&&Math.abs(q.quantityMt-(Number(supplier.quantity)-otherQty-blQty))<.000001)))throw new Error('Save all BL quantities, then request trader approval of the final shortfall before completing the import');
       if(otherQty+blQty>Number(supplier.quantity)+.000001)throw new Error('Combined BL quantities exceed the supplier purchase contract');
       if(saleRef){
         await tx.$queryRaw`SELECT id FROM "ExecutionContract" WHERE "tradeRef"=${saleRef} FOR UPDATE`;
@@ -144,7 +147,9 @@ export async function POST(request: Request) {
         if(saleFiles.reduce((sum,f)=>sum+Number((f.payload as unknown as PkeImportPayload).references['BL quantity MT']||0),0)+blQty>Number(sale.quantity)+.000001)throw new Error('Combined BL quantities exceed the Dubai sale contract');
       }
       const movementCount=await tx.pkePortMovement.count({where:{importFileId:current.id}})+await tx.trade.count({where:{tradeStatus:{not:'CANCELLED'},tradeParams:{path:['pkePortFileId'],equals:current.id}}});
-      if(movementCount)for(const key of ['Vessel name','Arrival port','Vessel arrival date','Vessel received MT','BL quantity MT','Bill of lading','Dubai sale trade reference'])if(before.references[key]!==payload.references[key])throw new Error('Cannot change vessel or BL quantity references after a port movement');
+      const {portLocation}=await import('@/server/execution/pke-port');
+      const shifts=await tx.stockTransfer.count({where:{commodityCode:'PKE',fromWarehouseName:portLocation(current.id,before.references['Arrival port']??'',before.references['Vessel name']??''),status:{not:'CANCELLED'}}});
+      if(movementCount||shifts)for(const key of ['Vessel name','Arrival port','Vessel arrival date','Vessel received MT','BL quantity MT','Bill of lading','Dubai sale trade reference'])if(before.references[key]!==payload.references[key])throw new Error('Cannot change vessel or BL quantity references after a port movement');
       const siblings=await tx.pkeImportFile.findMany({where:{id:{not:current.id},OR:[{purchaseTradeRef:current.purchaseTradeRef},...(saleRef?[{payload:{path:['references','Dubai sale trade reference'],equals:saleRef}}]:[])]}});
       for(const lc of payload.lcs??[]){
         if(!lc.reference.trim())continue;
@@ -175,7 +180,10 @@ export async function POST(request: Request) {
         const value=payload.references[field];
         if(value&&(!Number.isFinite(Number(value))||Number(value)<0))throw new Error("BL invoice amounts must be nonnegative numbers");
       }
-      return tx.pkeImportFile.updateMany({where:{id:data.id,revision:data.revision},data:{stage,payload:JSON.parse(JSON.stringify(payload)),revision:{increment:1}}});
+      const updated=await tx.pkeImportFile.updateMany({where:{id:data.id,revision:data.revision},data:{stage,payload:JSON.parse(JSON.stringify(payload)),revision:{increment:1}}});
+      const {settlePkeTrade}=await import('@/server/finance/pke-settlement');
+      for(const ref of new Set([current.purchaseTradeRef,saleRef].filter((v):v is string=>!!v)))await settlePkeTrade(tx,ref);
+      return updated;
     });
     if(!result.count) throw new Error("This file changed. Refresh before saving");
     return NextResponse.json({ok:true});

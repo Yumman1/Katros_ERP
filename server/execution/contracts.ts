@@ -182,6 +182,7 @@ export async function refreshContract(tradeRef: string): Promise<void> {
       },
     });
     if (!row) return;
+    if(row.trade.commodity.code==='PKE'&&row.trade.tradeStatus==='CANCELLED')return;
 
     const contractualQtyMt = num(row.contractualQtyMt);
     const fulfilled = await computeFulfilledQty(tx, tradeRef, row.direction, row.quantityUnit);

@@ -6,7 +6,7 @@ export const PKE_IMPORT_STAGES = [
   {title:"Supplier shipping documents",owner:"FZCO",description:"The vessel ships directly to Pakistan. The phyto document uses the Pakistan import permit reference. Commercial and Dubai invoices are generated in the system.",fields:["Bill of lading","Phytosanitary certificate","Fumigation certificate","Certificate of analysis","Shipping company certificate","Certificate of origin"]},
 ] as const;
 export type PkeLc = {id:string;side:"PAK_DUBAI"|"DUBAI_SUPPLIER";reference:string;bank:string;currency:string;amount:string};
-export type PkeImportPayload = {references:Record<string,string>;bypasses?:PkeLcBypass[];lcs?:PkeLc[];documents:{id:string;field:string;name:string;path:string;uploadedAt:string;uploadedBy:string}[];history:{at:string;actor:string;action:string}[]};
+export type PkeImportPayload = {shipmentReviews?:import("./pke-shipment-review").PkeShipmentReview[];references:Record<string,string>;bypasses?:PkeLcBypass[];lcs?:PkeLc[];documents:{id:string;field:string;name:string;path:string;uploadedAt:string;uploadedBy:string}[];history:{at:string;actor:string;action:string}[]};
 export const PKE_IMPORT_FIELDS = PKE_IMPORT_STAGES.flatMap(s=>[...s.fields]);
 export const PKE_UPLOAD_FIELDS = ["Supplier sales contract","Pakistan import permit","Bill of lading","Phytosanitary certificate","Fumigation certificate","Certificate of analysis","Shipping company certificate","Certificate of origin"];
 export const emptyPkeImport = ():PkeImportPayload=>({references:{},lcs:[],documents:[],history:[]});

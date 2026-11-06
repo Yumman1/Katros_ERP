@@ -9,7 +9,7 @@ function fixture(qty=40,prior=0,duplicate=false){
  const purchase={id:'buy',tradeRef:'BUY',commodity:{code:'PKE'},direction:'BUY',tradeParams:{tradingEntity:'Kastros FZCO'},contract,tradeStatus:'LOCKED',directSettled:false};
  const sale={...purchase,id:'sale',tradeRef:'SALE',tradeParams:{tradingEntity:'Kastros PAK',internalCounterpartyEntity:'FZCO'},contract:{...contract,id:'sale-contract'}};
  const receipt={id:'receipt',tradeRef:'SALE',status:'ALLOCATED',gatepassNo:'GATE1',allocatedQtyMt:qty,pkeTripartyReceipt:duplicate?{}:null,gatepassTruck:{id:'truck',executionEntity:'PAK',commodityCode:'PKE',movementType:'INBOUND',status:'ASSIGNED'}};
- const db={
+ const db={stockTransfer:{findMany:async()=>[]},
   $queryRaw:async()=>[],
   pkePortMovement:{aggregate:async()=>({_sum:{quantityMt:0}}),create:async(args:unknown)=>mutations.push({kind:'port',args})},
   pkeImportFile:{findMany:async()=>[{...file,portMovements:[]}],findUniqueOrThrow:async()=>structuredClone(file),update:async(args:unknown)=>mutations.push({kind:'file',args})},

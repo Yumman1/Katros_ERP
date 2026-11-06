@@ -235,7 +235,7 @@ export async function createVoucher(input: {
   if (!Number.isFinite(input.amountPkr) || input.amountPkr <= 0) {
     throw new Error("Voucher amount must be positive");
   }
-  const purchaseRequest = input.side === "BUY";
+  const purchaseRequest = input.side === "BUY" || input.commodityCode === "PKE";
   const reference = purchaseRequest ? null : input.reference?.trim() || null;
   if (!reference && !purchaseRequest) {
     throw new Error("Payment reference is required (slip, cheque, or transfer reference number)");
@@ -349,6 +349,18 @@ export async function createVoucher(input: {
     );
   }
 
+  if(commodityCode==='PKE'&&side==='SELL'&&tradeRef&&!noteRef){
+    const row=await allocateSerial(SERIALS.VOUCHER,voucherNo=>prisma.$transaction(async tx=>{
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`port-receipt:${tradeRef}`}))::text`;
+      const trade=await tx.trade.findUniqueOrThrow({where:{tradeRef},include:{contract:true}});
+      if(!trade.contract||!['LOCKED','CONFIRMED','EXECUTED'].includes(trade.tradeStatus))throw new Error('Select an approved sale');
+      const billed=await tx.counterpartyLedgerEntry.aggregate({where:{tradeRef,side:'SELL',entryType:'DEBIT',counterpartyId:input.counterpartyId},_sum:{amountPkr:true}});
+      const committed=await tx.voucher.aggregate({where:{tradeRef,side:'SELL',noteRef:null,status:{not:'REJECTED'}},_sum:{amountPkr:true}});
+      const agreed=num(trade.quantity)*1000*num(trade.contract.ratePerKg);
+      if(input.amountPkr+num(committed._sum.amountPkr)>Math.max(agreed,num(billed._sum.amountPkr))+.005)throw new Error('Receipt exceeds remaining sale value including pending vouchers');
+      return tx.voucher.create({data:{voucherNo,counterpartyId:input.counterpartyId,side,tradeRef,commodityCode,executionEntity,amountPkr:input.amountPkr,agreedTradeAmountPkr:agreed,voucherDate,enteredByName:input.enteredByName,note:input.note,reference:null,method:null,bankName:null},include:VOUCHER_INCLUDE});
+    }));return voucherRowToView(row);
+  }
   const row = await allocateSerial(SERIALS.VOUCHER, (voucherNo) =>
     prisma.voucher.create({
       data: {
@@ -424,8 +436,9 @@ export async function approveVoucher(
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('voucher-payment-approval'))::text`;
     const current = await tx.voucher.findUniqueOrThrow({where:{id:voucherId}});
     if(current.pkePayment && current.tradeRef) await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`${current.voucherKind === "INTERNAL_TRADE" ? "internal-payment" : "purchase-payment"}:${current.tradeRef}`}))::text`;
+    if(current.commodityCode==='PKE'&&current.tradeRef&&!current.noteRef){const t=await tx.trade.findUniqueOrThrow({where:{tradeRef:current.tradeRef}});if(t.tradeStatus==='CANCELLED')throw new Error('This PKE trade was cancelled');}
     await validatePkePaymentApproval(tx,current);
-    if(current.tradeRef)await assertPkeLcPaymentAllowed(tx,current.tradeRef);
+    if(current.tradeRef&&!current.noteRef)await assertPkeLcPaymentAllowed(tx,current.tradeRef);
     if (current.status !== "PENDING_FINANCE") throw new Error("Voucher not found or already resolved");
     if (current.traderApprovalRequired && !current.traderApprovedAt) throw new Error("The trade’s trader must approve this voucher before Finance can pay it");
     if(current.voucherKind === "INTERNAL_TRADE" && current.tradeRef) {
@@ -437,7 +450,7 @@ export async function approveVoucher(
       const total=quantityUnitToKg(num(t.quantity),t.quantityUnit??"MT")*num(t.contract.ratePerKg);
       if(await internalCommitted(tx,t.tradeRef,true,current.id)+num(current.amountPkr)>total+.005)throw new Error("Payment exceeds the remaining internal trade amount");
     }
-    if(current.voucherKind==='PKE_PORT_SALE'&&current.tradeRef){
+    if(current.commodityCode==='PKE'&&current.side==='SELL'&&current.tradeRef&&!current.noteRef){
       const trade=await tx.trade.findUniqueOrThrow({where:{tradeRef:current.tradeRef},include:{contract:true}});
       const due=await tx.counterpartyLedgerEntry.aggregate({where:{tradeRef:current.tradeRef,side:'SELL',entryType:'DEBIT'},_sum:{amountPkr:true}});
       const paid=await tx.voucher.aggregate({where:{tradeRef:current.tradeRef,side:'SELL',status:'APPROVED',id:{not:current.id}},_sum:{amountPkr:true}});
@@ -465,9 +478,9 @@ export async function approveVoucher(
     }
     const reference = paymentReference?.trim() || current.reference?.trim();
     if (!reference) throw new Error("Enter the payment reference after payment before approving this voucher");
-    const method = (current.side === "BUY" || current.internalPaymentRef) ? paymentDetails?.method?.trim() || current.method : current.method;
-    const bankName = (current.side === "BUY" || current.internalPaymentRef) ? (method === "Bank transfer" ? paymentDetails?.bankName?.trim() || current.bankName : null) : current.bankName;
-    if ((current.side === "BUY" || current.internalPaymentRef) && !["Bank transfer", "Cheque", "Cash", "Other"].includes(method ?? "")) throw new Error("Select the payment method used by Finance");
+    const method = (current.side === "BUY" || current.internalPaymentRef || current.commodityCode === "PKE") ? paymentDetails?.method?.trim() || current.method : current.method;
+    const bankName = (current.side === "BUY" || current.internalPaymentRef || current.commodityCode === "PKE") ? (method === "Bank transfer" ? paymentDetails?.bankName?.trim() || current.bankName : null) : current.bankName;
+    if ((current.side === "BUY" || current.internalPaymentRef || current.commodityCode === "PKE") && !["Bank transfer", "Cheque", "Cash", "Other"].includes(method ?? "")) throw new Error("Select the payment method used by Finance");
     if (method === "Bank transfer" && !bankName) throw new Error("Select the bank used for payment");
     const candidates = await tx.voucher.findMany({where:{id:{not:voucherId},status:"APPROVED"}});
     if (candidates.some(v => !(current.internalPaymentRef && v.internalPaymentRef===current.internalPaymentRef && v.tradeRef===current.tradeRef && v.executionEntity!==current.executionEntity) && vouchersSharePaymentKey({...current,reference,bankName},v))) throw new Error("This payment reference, bank, date and amount are already approved");
@@ -502,7 +515,7 @@ export async function approveVoucher(
       },
       tx,
     );
-    if(row?.internalPaymentRef||row?.exportShipmentId||row?.voucherKind)await tx.counterpartyLedgerEntry.updateMany({where:{voucherId},data:{executionEntity:row.executionEntity,paymentFxRate:row.paymentFxRate,exportShipmentId:row.exportShipmentId}});
+    if(row?.internalPaymentRef||row?.exportShipmentId||row?.voucherKind||row?.commodityCode==='PKE')await tx.counterpartyLedgerEntry.updateMany({where:{voucherId},data:{executionEntity:row.executionEntity,paymentFxRate:row.paymentFxRate,exportShipmentId:row.exportShipmentId}});
     if((row?.voucherKind==="INTL_PURCHASE"||row?.voucherKind==="INTERNAL_TRADE")&&row.tradeRef){
       const trade=await tx.trade.findUnique({where:{tradeRef:row.tradeRef},include:{commodity:true}});
       if(trade&&(await import("@/lib/sesame-entity")).internalTrade(trade.commodity.code,trade.direction,trade.tradeParams)){

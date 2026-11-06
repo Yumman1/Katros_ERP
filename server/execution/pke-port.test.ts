@@ -5,7 +5,7 @@ import {pkePortRows,guardPkePortBooking} from './pke-port';
 function fixture(){
  const file={id:'file',title:'BL1',purchaseTradeRef:'BUY',payload:{references:{'Bill of lading':'BL1','Dubai sale trade reference':'INTERNAL','Vessel name':'Vessel','Arrival port':'Karachi','Vessel arrival date':'2026-11-03','Vessel received MT':'200'}},portMovements:[{kind:'WAREHOUSE',quantityMt:40,saleTradeRef:null},{kind:'PORT_SALE',quantityMt:20,saleTradeRef:'SALE'}]};
  const trades=[{tradeRef:'SALE',direction:'SELL',tradeParams:{pkePortFileId:'file'},quantity:80,counterparty:{name:'Buyer'},contract:{},tradeStatus:'LOCKED'}];
- const db={$queryRaw:async()=>[],pkeImportFile:{findMany:async()=>[file]},trade:{findMany:async()=>trades}} as unknown as Prisma.TransactionClient;
+ const db={stockTransfer:{findMany:async()=>[]},$queryRaw:async()=>[],pkeImportFile:{findMany:async()=>[file]},trade:{findMany:async()=>trades,findUniqueOrThrow:async()=>({tradeStatus:'LOCKED'})}} as unknown as Prisma.TransactionClient;
  return {file,trades,db};
 }
 test('200 MT arrival reconciles 40 warehouse + 20 port sale + 140 at port; 60 reserved',async()=>{

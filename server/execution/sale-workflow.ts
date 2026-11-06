@@ -34,6 +34,7 @@ import { TraderInvoiceOwnershipError, truckTransporterName, truckTransporterPhon
 async function saleTruckOrThrow(truckId: string) {
   const row = await prisma.pendingTruck.findUnique({ where: { id: truckId } });
   if (!row) throw new Error("Gate entry not found");
+  if(row.commodityCode==='PKE'&&row.assignedTradeRef){const t=await prisma.trade.findUnique({where:{tradeRef:row.assignedTradeRef}});if(t?.tradeStatus==='CANCELLED')throw new Error('This PKE trade was cancelled');}
   if (row.movementType !== "OUTBOUND") {
     throw new Error("Sale payment workflow applies to outbound trucks only");
   }

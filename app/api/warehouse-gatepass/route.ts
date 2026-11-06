@@ -57,6 +57,7 @@ export async function GET(request: Request) {
   const movement =
     movementType === "INBOUND" || movementType === "OUTBOUND" ? movementType : undefined;
 
+  const ports=(await pkePortRows()).filter(f=>f.vessel&&f.arrivalDate&&f.remainingMt>0);
   const companyNames = new Set((await getCompanyWarehouses()).map((w) => w.name));
   const warehouseSet = new Set<string>();
   for (const loc of await getMergedLocations()) {
@@ -88,7 +89,8 @@ export async function GET(request: Request) {
     exportTrades,
     tripartyCounterparties,
     tripartyInternalTrades:triparty.internal,
-    warehouses: Array.from(warehouseSet).sort((a, b) => a.localeCompare(b)),
+    pkePorts:ports,
+    warehouses: [...ports.map(p=>p.location),...Array.from(warehouseSet)].sort((a, b) => a.localeCompare(b)),
     advances: await approvedAdvanceBuiltys(),
     inboundCounterparties,
     outboundCounterparties,
@@ -99,6 +101,10 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (request.headers.get("content-type")?.includes("application/json")) {
     const body=await request.clone().json().catch(()=>null);
+    if(body?.action==='pke-port-out')try{
+ const data=z.object({fileId:z.string().min(1),saleTradeRef:z.string().min(1),truckNo:z.string().trim().min(1),builty:z.string().trim().min(1),quantityMt:z.number().finite().positive(),recordedByName:z.string().trim().min(1),requestKey:z.string().uuid()}).parse(body);
+ return NextResponse.json(await recordPkePortMovement({...data,kind:'PORT_SALE'},data.recordedByName));
+ }catch(e){return NextResponse.json({error:e instanceof Error?e.message:'Unable to record gate-out'},{status:400});}
     if(body?.action==='pke-triparty-in')try{
       const data=z.object({fileId:z.string().min(1),warehouse:z.string().trim().min(1),truckNo:z.string().trim().min(1),builty:z.string().trim().min(1),quantityMt:z.number().finite().positive(),recordedByName:z.string().trim().min(1),transporterName:z.string().trim().optional(),requestKey:z.string().uuid()}).parse(body);
       return NextResponse.json(await recordPkePortMovement({...data,kind:'WAREHOUSE'},data.recordedByName));

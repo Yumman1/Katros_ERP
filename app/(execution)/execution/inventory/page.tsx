@@ -7,6 +7,7 @@ import { usesSesameWorkflow } from "@/lib/sesame";
 
 export default function ExecutionInventoryPage() {
   const { active, entity } = useExecutionCommodityDesk();
+  if(active.code==='PKE')return <SesameInventoryView commodityCode="PKE" entity={entity}/>;
   const sesame = usesSesameWorkflow(active.code);
   if (sesame && entity === "FZCO") {
     return <SesameInventoryView commodityCode={active.code} entity="FZCO" />;

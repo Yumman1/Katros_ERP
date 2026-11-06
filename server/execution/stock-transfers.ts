@@ -201,7 +201,8 @@ export async function createStockTransfer(input: {
   if([from,to].some(w=>w&&!warehouseAllowedForCommodity(w,input.commodityCode)))throw new Error("Faqir Warehouse is not available for Sesame");
   if (input.purpose === "PROCESSING" && !["Raw","Machine Cleaned"].includes(input.sesameType ?? "Machine Cleaned")) throw new Error("Only Raw or Machine Cleaned stock can be sent for processing");
   if (usesSesameWorkflow(input.commodityCode)) {
-    const names = [from,to].filter((v): v is string=>Boolean(v));
+    const names = [from,to].filter((v): v is string=>Boolean(v)&&!(input.commodityCode==='PKE'&&v?.startsWith('Port: ')));
+    if(to.startsWith('Port: '))throw new Error('Select a destination warehouse');
     const locations = await prisma.location.findMany({where:{type:"WAREHOUSE",name:{in:names}}});
     if (locations.length !== new Set(names).size) throw new Error("Register the source and processing warehouse before moving stock");
   }
@@ -277,10 +278,15 @@ export async function dispatchStockTransfer(
 
     if (usesSesameWorkflow(t.commodityCode)) {
       await lockSesameOwnership(tx, t.commodityCode);
-      if (t.fromWarehouseName) await assertGradeAvailable(tx, t.commodityCode, t.fromWarehouseName, t.sesameType, qty);
+      if (t.fromWarehouseName && t.commodityCode!=="PKE") await assertGradeAvailable(tx, t.commodityCode, t.fromWarehouseName, t.sesameType, qty);
       if (t.fromWarehouseName && await pakistanAvailable(tx, t.commodityCode, t.fromWarehouseName) + TRANSIT_TOLERANCE_MT < qty) throw new Error("Insufficient physical sesame stock at the source warehouse");
     }
 
+    if(t.commodityCode==='PKE'&&t.fromWarehouseName?.startsWith('Port: ')){
+ const {pkePortRows}=await import('./pke-port');const port=(await pkePortRows(tx)).find(p=>p.location===t.fromWarehouseName);if(!port)throw new Error('Port not found');
+ await tx.$queryRaw`SELECT id FROM "PkeImportFile" WHERE id=${port.id} FOR UPDATE`;
+ const current=(await pkePortRows(tx)).find(p=>p.id===port.id)!;if(qty>current.freeMt+TRANSIT_TOLERANCE_MT)throw new Error('Port stock is insufficient or reserved for sales');
+ }
     const outGatepassNo = `INT-${await nextSerial(SERIALS.GATEPASS_OUTBOUND, tx)}`;
     return tx.stockTransfer.update({
       where: { id },

@@ -26,6 +26,7 @@ export default function TraderInventoryPage() {
     );
   }
 
+  if(active.code==='PKE')return <SesameInventoryView commodityCode="PKE" entity={entity} onSelectEntity={setEntity}/>;
   const sesame = usesSesameWorkflow(active.code);
   if (sesame && entity === "FZCO") {
     return (
