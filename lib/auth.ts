@@ -39,6 +39,7 @@ export const authOptions: NextAuthOptions = {
             name: user.name ?? undefined,
             role: user.role,
             isHead: user.isHead,
+            executionEntity: user.executionEntity,
           };
         }
 
@@ -57,6 +58,7 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        token.executionEntity = user.executionEntity;
         token.role = user.role;
         token.isHead = user.isHead ?? false;
         token.sub = user.id;
@@ -66,10 +68,15 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
+      if(token.sub && !isMockMode()) {
+        const current=await prisma.user.findUnique({where:{id:token.sub},select:{executionEntity:true,role:true,isHead:true,disabled:true}});
+        if(current && !current.disabled){token.executionEntity=current.executionEntity;token.role=current.role;token.isHead=current.isHead;}
+      }
       if (session.user && token.sub) {
         session.user.id = token.sub;
         session.user.role = token.role ?? "READ_ONLY";
         session.user.isHead = token.isHead ?? false;
+        session.user.executionEntity = token.executionEntity ?? "PAK";
         if (token.name) session.user.name = token.name as string;
         if (token.email) session.user.email = token.email as string;
       }

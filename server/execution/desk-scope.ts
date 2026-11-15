@@ -21,6 +21,7 @@ export async function filterDeskTradeRows<T>(rows: T[], code: string | undefined
 
 /** Shared master data remains shared; every transaction target must match its desk. */
 export async function assertDeskTarget(code: string | undefined, path: string, raw: unknown, entity?: SesameEntity) {
+  if(entity === "FZCO" && /^execution\.(?:addWarehouseLocation|updateWarehouseLocation|deleteWarehouseLocation|allocateWarehouse|allocateWarehouseSplit|approveOpenTradeWarehouseSplit)$/.test(path)) throw new TRPCError({code:"FORBIDDEN",message:"Warehouse operations belong to Pakistan execution"});
   if (entity === "FZCO" && /(?:StockTransfer|execution\.(?:createPendingTruck|createGateEntry|dailyPrices|setDailyPrice|prices))/.test(path)) throw new TRPCError({ code: "BAD_REQUEST", message: "Physical warehouse operations are managed in the Pakistan desk" });
   if (!code || !raw || typeof raw !== "object") return;
   const input = raw as Record<string, unknown>;

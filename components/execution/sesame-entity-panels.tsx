@@ -36,19 +36,19 @@ export function SesamePositionView({ commodityCode, canEdit = true }: { commodit
   if (isLoading) return <p>Loading {commodityCode} positions…</p>;
   if (error) return <p role="alert">{error.message}</p>;
   return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">{commodityCode} positions — Pakistan and Dubai FZCO</h2>
-    <p className="text-sm text-muted-foreground">{commodityCode === "PKE" ? "Dubai holds no physical stock. PKE trades close after vessel arrival and cleared payments. Physical inventory includes port and warehouse stock." : "Pakistan holds physical inventory. Dubai FZCO is a book of open purchases and sales: a sale closes when the buyer pays FZCO; a purchase closes when FZCO pays Kastros Pakistan or the supplier."}</p>
+    {commodityCode !== "PKE" && <p className="text-sm text-muted-foreground">Pakistan holds physical inventory. Dubai FZCO is a book of open purchases and sales: a sale closes when the buyer pays FZCO; a purchase closes when FZCO pays Kastros Pakistan or the supplier.</p>}
     <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>Position (MT)</th>{data?.positions.map(p => <th className={cell} key={p.entity}>{ENTITY_NAMES[p.entity]}</th>)}</tr></thead><tbody>
       {([['Physical inventory (Pakistan)','ownedMt'],['Open purchases','openBuyMt'],['Open sales','openSellMt'],['Net position','netPositionMt']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{key==='ownedMt'&&p.entity==='FZCO'?'—':qty(p[key])}{key==='netPositionMt'&&p.entity==='FZCO'?(p[key]>0?' Long':p[key]<0?' Short':' Balanced'):''}</td>)}</tr>)}
       {([['Entry rate (PKR / maund)','entryRatePkrPerMaund'],['Market rate (PKR / maund)','marketRatePkrPerMaund'],['In / out (PKR / maund)','inOutPkrPerMaund'],['In / out value (PKR)','inOutValuePkr'],['In / out value (USD)','inOutValueUsd']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{p[key] == null ? "—" : qty(p[key])}</td>)}</tr>)}
     </tbody></table></div>
-    <p className="text-xs text-muted-foreground">Pakistan net position = physical inventory + open purchases − open sales. FZCO net position = open purchases − open sales; a negative balance is Short and a positive balance is Long.</p>
+
     {canEdit && <form className="flex flex-wrap gap-3 items-end" onSubmit={e => { e.preventDefault(); save.mutate({ commodityCode, season: "SUMMER", fxRate: Number(fx), ...(rate ? { marketRatePkrPerMaund: Number(rate) } : {}) }); }}>
       <label className="text-sm">Shared USD / PKR rate<input aria-label="Shared USD / PKR rate" className={input} type="number" step="0.01" min="0.01" required value={fx} placeholder={String(market?.find(m => m.commodityCode === commodityCode)?.fxRate ?? "")} onChange={e => setFx(e.target.value)} /></label>
       <label className="text-sm">Shared fallback market rate (PKR / maund)<input className={input} type="number" step="0.01" min="0.01" value={rate} onChange={e => setRate(e.target.value)} /></label>
       <button className="kastros-btn-primary" disabled={save.isPending}>Save rate</button>
       {save.error && <p role="alert">{save.error.message}</p>}{save.isSuccess && <p role="status">Rate saved. Locked contracts retain their saved rate.</p>}
     </form>}
-    <p className="text-xs text-muted-foreground">Pakistan Daily Prices take precedence over the fallback market rate. FZCO entry cost is the weighted cost of open purchases; Pakistan uses its receipt-based purchase cost.</p>
+
   </section>;
 }
 
@@ -175,7 +175,7 @@ export function SesameInventoryView({
 export function FzcoHeldStock({ commodityCode }: { commodityCode: string }) {
  const {data,error,isLoading}=useBook(commodityCode);
  const rows=data?.custody.filter(r=>Math.abs(r.ownedMt)>.000001||r.reservedMt>.000001)??[];
- return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">Stock held by counterparty</h2><p className="text-sm text-muted-foreground">Locked purchases appear against the supplier automatically. Dispatch reduces stock held; payment independently closes the open purchase.</p>
+ return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">Stock held by counterparty</h2>
  {isLoading?<p>Loading stock…</p>:error?<p role="alert">{error.message}</p>:<><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Held by','Product type','Stock MT','Reserved MT','Available MT'].map(h=><th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{rows.map(r=><tr key={`${r.holderId}-${r.grade}`}><td className={cell}>{r.holder}</td><td className={cell}>{r.grade}</td><td className={cell}>{qty(r.ownedMt)}</td><td className={cell}>{qty(r.reservedMt)}</td><td className={cell}>{qty(r.availableMt)}</td></tr>)}</tbody></table></div>{!rows.length&&<p>No supplier-held stock.</p>}</>}
  </section>;
 }
@@ -188,7 +188,7 @@ export function FzcoBook({ commodityCode }: { commodityCode: string }) {
   if (isLoading) return <p>Loading FZCO trades…</p>;
   if (error) return <p role="alert">{error.message}</p>;
   return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">FZCO open book</h2>
-    <p className="text-sm text-muted-foreground">{commodityCode === "PKE" ? "Dubai holds no physical stock. PKE trades close after vessel arrival and cleared payments. Physical inventory includes port and warehouse stock." : "Purchases stay open until FZCO pays Kastros Pakistan or the supplier. Sales stay open until the buyer pays FZCO."}</p>
+    {commodityCode !== "PKE" && <p className="text-sm text-muted-foreground">Purchases stay open until FZCO pays Kastros Pakistan or the supplier. Sales stay open until the buyer pays FZCO.</p>}
     <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Trade','FZCO side','Counterparty','Quantity MT','On book MT','Status','Action'].map(h => <th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>{rows.map(t => {
       const side = t.entity === "FZCO" ? t.direction : t.direction === "BUY" ? "SELL" : "BUY";
       const counterparty = t.internalEntity ? ENTITY_NAMES[t.entity === "FZCO" ? t.internalEntity : t.entity] : t.counterparty;
@@ -215,7 +215,7 @@ export function FzcoTrucks() {
   const credit = trpc.execution.requestClearWithoutPayment.useMutation({ onSuccess: refresh });
   const cancel = trpc.sesameExecution.cancelLoad.useMutation({ onSuccess: refresh });
   const issue = order.error ?? gate.error ?? release.error ?? credit.error ?? cancel.error ?? error;
-  return <div className="kastros-desk-page space-y-5"><h1 className="text-2xl font-semibold">FZCO trucks</h1><SesameExportShipments mode="movement"/><p><Link href="/execution/movements/fzco-entry" target="_blank" className="underline">Open office truck-entry link</Link></p><p className="text-sm text-muted-foreground">Third-party purchases and sales are independent. Pakistan warehouse movements are shown here for reference and managed in Pakistan Execution.</p>
+  return <div className="kastros-desk-page space-y-5"><h1 className="text-2xl font-semibold">FZCO trucks</h1><SesameExportShipments mode="movement"/><p><Link href="/execution/movements/fzco-entry" target="_blank" className="underline">Open office truck-entry link</Link></p>
     <FzcoGateAssignment/><FzcoDirectEntry/>{issue && <p className="text-destructive" role="alert">{issue.message}</p>}
     {canCancel && rows?.some(r => r.saleStage === "AWAITING_BALANCE" && !r.deliveryOrderNo) && <section className="kastros-card p-4"><h2 className="font-semibold">Correct an unapproved load</h2><p className="text-sm text-muted-foreground mb-3">Cancel its reservation before recording the corrected truck.</p>{rows.filter(r => r.saleStage === "AWAITING_BALANCE" && !r.deliveryOrderNo).map(r => <button key={r.truckId} className="kastros-btn-secondary mr-2" disabled={cancel.isPending} onClick={() => { if (window.confirm(`Cancel load ${r.truckNo}?`)) cancel.mutate({ truckId: r.truckId }); }}>Cancel {r.truckNo}</button>)}</section>}
     <div className="kastros-card overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Truck','Trade','Amount PKR','Stage','Action'].map(h => <th className={cell} key={h}>{h}</th>)}</tr></thead><tbody>{rows?.map(r => <tr key={r.truckId}><td className={cell}>{r.truckNo}</td><td className={cell}>{r.tradeRef}</td><td className={cell}>{qty(r.saleExpectedPkr ?? 0)}</td><td className={cell}>{r.saleReleasedAt ? "RELEASED" : r.saleStage}</td><td className={cell}><div className="flex flex-wrap gap-2">{!r.saleReleasedAt && r.canGenerateDo && <button className="kastros-btn-secondary" disabled={order.isPending} onClick={() => order.mutate({ truckId: r.truckId })}>Generate DO</button>}{!r.saleReleasedAt && r.canGenerateGatePass && <button className="kastros-btn-secondary" disabled={gate.isPending} onClick={() => gate.mutate({ truckId: r.truckId })}>Generate gate pass</button>}{!r.saleReleasedAt && r.gateOutSlipNo && <button className="kastros-btn-primary" disabled={release.isPending} onClick={() => release.mutate({ truckId: r.truckId })}>Release truck</button>}{r.saleStage === "AWAITING_BALANCE" && !r.canGenerateDo && <button className="kastros-btn-secondary" disabled={credit.isPending} onClick={() => credit.mutate({ truckId: r.truckId })}>Request credit clearance</button>}{r.deliveryOrderNo && <Link className="text-accent-secondary" href={`/execution/print/delivery-order/${r.truckId}`} target="_blank">Print DO</Link>}{r.gateOutSlipNo && <Link className="text-accent-secondary" href={`/execution/print/gate-out-slip/${r.truckId}`} target="_blank">Print gate pass</Link>}</div></td></tr>)}</tbody></table>{!rows?.length && <p className="p-5">No FZCO trucks yet.</p>}</div>

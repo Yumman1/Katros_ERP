@@ -455,7 +455,7 @@ function ExternalTruckMovements() {
             icon={<ClipboardList className="h-4 w-4 text-brand" />}
             title="Gate Register"
             count={filteredMovements.length}
-            description="Completed gate in/out records — local trucks after payment or release, international and triparty groups after the shipment is released."
+            description=""
           />
 
           {/* Toolbar — wraps gracefully, never forces page width. */}
@@ -795,7 +795,7 @@ function OpenTruckWorkflow({
         icon={<Truck className="h-4 w-4 text-accent-secondary" />}
         title="Truck Workflow"
         count={workflowCount}
-        description="Assign each gate entry to a trade and follow it through — local trucks leave once paid or released; international and triparty groups leave once the BL is recorded and then appear in the gate register."
+        description=""
       />
       {unassignedPagination.totalItems > 0 && truckFilters.controls}
       <div className="flex flex-col gap-3">

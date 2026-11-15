@@ -1,5 +1,6 @@
 "use client";
 
+import { useSession } from "next-auth/react";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -13,6 +14,8 @@ type Desk = { id: string; code: string; name: string };
 const Context = createContext<{ desks: Desk[]; active: Desk; select: (code: string) => void; entity: SesameEntity; selectEntity: (entity: SesameEntity, destination?: string) => void } | null>(null);
 
 export function ExecutionCommodityDeskProvider({ children }: { children: ReactNode }) {
+  const {data: session} = useSession();
+  const fixedEntity = session?.user.role === "EXECUTION" ? session.user.executionEntity === "FZCO" ? "FZCO" : "PAK" : undefined;
   const desks = trpc.execution.commodityDesks.useQuery(undefined, { retry: false, refetchOnWindowFocus: true });
   const router = useRouter();
   const pathname = usePathname();
@@ -30,13 +33,15 @@ export function ExecutionCommodityDeskProvider({ children }: { children: ReactNo
     { tradeRef: match ? decodeURIComponent(match[1]) : undefined, truckId: truck ? decodeURIComponent(truck[1]) : undefined },
     { enabled: Boolean(match || truck), retry: false },
   );
+  if (target.error) return <p role="alert" className="p-6 text-destructive">{target.error.message}</p>;
   if (desks.error) return <p role="alert" className="p-6 text-destructive">{desks.error.message}</p>;
   if (selected === null || desks.isLoading || ((match || truck) && target.isLoading)) return <p className="p-6">Loading execution desk…</p>;
   const list = desks.data ?? [];
   const active = list.find(d => d.code === (target.data?.code ?? selected)) ?? list[0];
   if (!active) return <p className="p-6">No commodities have been registered.</p>;
-  const entity: SesameEntity = usesSesameWorkflow(active.code) ? (target.data?.entity ?? selectedEntity) : "PAK";
+  const entity: SesameEntity = usesSesameWorkflow(active.code) ? (fixedEntity ?? target.data?.entity ?? selectedEntity) : "PAK";
   const selectEntity = (next: SesameEntity, destination = "/execution") => {
+    if (fixedEntity && next !== fixedEntity) return;
     try { localStorage.setItem("sesame-execution-entity", next); } catch { /* optional storage */ }
     setSelectedEntity(next);
     router.push(destination);
@@ -68,12 +73,13 @@ export function useExecutionCommodityDesk() {
 }
 
 export function ExecutionCommoditySwitcher() {
+  const {data:session}=useSession();
   const { desks, active, select, entity, selectEntity } = useExecutionCommodityDesk();
   return <div className="mx-4 mb-3 mt-3">
     <label htmlFor="execution-commodity" className="mb-1.5 block text-xs font-medium text-muted-foreground">Execution commodity</label>
     <select id="execution-commodity" className="kastros-select w-full" value={active.code} onChange={e => select(e.target.value)}>
       {desks.map(d => <option key={d.id} value={d.code}>{d.name} — {d.code}</option>)}
     </select>
-    {usesSesameWorkflow(active.code) && <fieldset className="mt-4"><legend className="mb-2 text-xs text-muted-foreground">Sesame execution</legend><div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">{(["PAK", "FZCO"] as const).map(value => <button key={value} type="button" aria-pressed={entity === value} onClick={() => selectEntity(value)} className={`rounded-md px-2 py-2 text-xs ${entity === value ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}>{value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}</button>)}</div></fieldset>}
+    {session?.user.role !== "EXECUTION" && usesSesameWorkflow(active.code) && <fieldset className="mt-4"><legend className="mb-2 text-xs text-muted-foreground">Sesame execution</legend><div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">{(["PAK", "FZCO"] as const).map(value => <button key={value} type="button" aria-pressed={entity === value} onClick={() => selectEntity(value)} className={`rounded-md px-2 py-2 text-xs ${entity === value ? "bg-accent-secondary text-white" : "text-muted-foreground"}`}>{value === "PAK" ? "Pakistan" : ENTITY_NAMES[value]}</button>)}</div></fieldset>}
   </div>;
 }

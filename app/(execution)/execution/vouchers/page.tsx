@@ -188,7 +188,7 @@ export default function ExecutionVouchersPage() {
           </>
         }
         title="Vouchers"
-        subtitle="Record payments and purchase advances against trades; finance approval updates the counterparty ledger."
+        subtitle=""
       />
 
 

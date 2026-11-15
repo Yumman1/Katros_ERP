@@ -674,13 +674,14 @@ function BookTradeForm() {
 
   // 236G advance income tax on sell trades — filer vs non-filer rates are set
   // on Finance → Policies; the status itself is saved on the counterparty.
+  const dubaiTrade = isSesame && sesameTradingEntity(tradeParams) === "Kastros FZCO";
   const advanceTaxRatePct =
     filerStatus === "NON_FILER"
       ? policy.data?.advanceTaxRatePctNonFiler ?? null
       : policy.data?.advanceTaxRatePct ?? null;
   const taxableNotional = isSesame ? netAfterCommission : notional;
   const advanceTaxAmount =
-    direction === TradeDirection.SELL && notional > 0 && advanceTaxRatePct != null
+    !dubaiTrade && direction === TradeDirection.SELL && notional > 0 && advanceTaxRatePct != null
       ? (taxableNotional * advanceTaxRatePct) / 100
       : 0;
 
@@ -1359,7 +1360,7 @@ function BookTradeForm() {
               />
             </Field>
           </div>
-          {direction === TradeDirection.SELL && selectedCounterparty && (
+          {!dubaiTrade && direction === TradeDirection.SELL && selectedCounterparty && (
             <div className="mt-3">
               <label className="text-xs font-medium text-muted-foreground">
                 236G tax status — {selectedCounterparty.name}
@@ -1464,7 +1465,7 @@ function BookTradeForm() {
                 </div>
               </>
             )}
-            {direction === TradeDirection.SELL && notional > 0 && advanceTaxRatePct != null && (
+            {!dubaiTrade && direction === TradeDirection.SELL && notional > 0 && advanceTaxRatePct != null && (
               <>
                 <div title="Set on Finance → Policies">
                   Advance income tax (236G, {advanceTaxRatePct}% —{" "}

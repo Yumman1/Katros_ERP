@@ -12,7 +12,7 @@ import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { formInputClass } from "@/lib/form-controls";
 
 const schema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().min(1, "Login ID required"),
   password: z.string().min(1, "Password required"),
 });
 
@@ -76,9 +76,9 @@ export default function LoginPage() {
           <p className="mt-1 text-sm text-muted-foreground">Access your trading or execution desk</p>
           <form onSubmit={onSubmit} className="mt-6 space-y-4">
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Email</label>
+              <label className="text-xs font-medium text-muted-foreground">Email / Login ID</label>
               <input
-                type="email"
+                type="text"
                 autoComplete="email"
                 className={`${formInputClass} mt-1`}
                 {...register("email")}

@@ -327,7 +327,7 @@ export async function generateDeliveryOrder(
       const updated = await tx.pendingTruck.updateMany({
         where: { id: truckId, movementType: "OUTBOUND", saleStage: "AWAITING_BALANCE" },
         data: {
-          saleStage: "DO_PENDING_EXECUTION",
+          saleStage: row.executionEntity === "FZCO" ? "DO_PENDING_FINANCE" : "DO_PENDING_EXECUTION",
           saleFinanceApprovedBy: requestedByName,
           saleFinanceApprovedAt: new Date(),
         },
@@ -337,7 +337,7 @@ export async function generateDeliveryOrder(
       }
     });
   } else if (row.saleStage === "CLEARED_UNPAID") {
-    await transition(truckId, ["CLEARED_UNPAID"], "DO_PENDING_EXECUTION");
+    await transition(truckId, ["CLEARED_UNPAID"], row.executionEntity === "FZCO" ? "DO_PENDING_FINANCE" : "DO_PENDING_EXECUTION");
   } else {
     throw new Error("This truck is not ready for a delivery order");
   }

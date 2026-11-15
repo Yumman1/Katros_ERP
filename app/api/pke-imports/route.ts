@@ -1,10 +1,11 @@
+import { isDubaiExecution } from "@/lib/execution-access";
 import { linkPkeTripartyReceipt } from "@/server/execution/pke-import";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/server/db";
 import { tradeEntity, internalEntity, pkeImportSale } from "@/lib/sesame-entity";
-import { canApprovePkeLcBypass, emptyPkeImport, PKE_UPLOAD_FIELDS, normalizePkeReferences, PKE_IMPORT_STAGES, type PkeImportPayload } from "@/lib/pke-import";
+import { canUploadPkeDocument, missingDubaiLc, canApprovePkeLcBypass, emptyPkeImport, PKE_UPLOAD_FIELDS, normalizePkeReferences, PKE_IMPORT_STAGES, type PkeImportPayload } from "@/lib/pke-import";
 import { saveGatepassDocuments, getGatepassDocumentUrl } from "@/server/gatepass-documents";
 import { randomUUID } from "crypto";
 import { readFile } from "fs/promises";
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
     const trades=await prisma.trade.findMany({where:{commodity:{code:"PKE"},tradeStatus:{not:"CANCELLED"}},include:{counterparty:true,contract:true},orderBy:{tradeDate:"desc"}});
     const sales=trades.filter(t=>pkeImportSale("PKE",t.direction,t.tradeParams));
     const receipts=await prisma.inboundReceipt.findMany({where:{tradeRef:{in:sales.map(t=>t.tradeRef)},status:{not:"DRAFT"},gatepassNo:{not:null},pkeTripartyReceipt:{is:null}},select:{id:true,tradeRef:true,gatepassNo:true,truckNo:true,allocatedQtyMt:true}});
-    return NextResponse.json({canApproveBypasses:canApprovePkeLcBypass(viewer),files:await prisma.pkeImportFile.findMany({include:{receipts:{include:{receipt:{select:{gatepassNo:true,truckNo:true}}}}},orderBy:{updatedAt:"desc"}}),
+    return NextResponse.json({executionEntity:isDubaiExecution(viewer)?"FZCO":"PAK",canApproveBypasses:canApprovePkeLcBypass(viewer),files:(await prisma.pkeImportFile.findMany({include:{receipts:{include:{receipt:{select:{gatepassNo:true,truckNo:true}}}}},orderBy:{updatedAt:"desc"}})).map(f=>({...f,stage:missingDubaiLc(f.payload as unknown as PkeImportPayload,trades.find(t=>t.tradeRef===f.purchaseTradeRef)?.paymentType)?Math.min(f.stage,PKE_IMPORT_STAGES.length-1):f.stage})),
       purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency,paymentType:t.paymentType})),
       sales:sales.map(t=>({tradeRef:t.tradeRef,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),paymentType:t.paymentType,currency:t.currency})),receipts});
   } catch(error) { return failure(error); }
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
       const row=await prisma.pkeImportFile.findUniqueOrThrow({where:{id}});
       const existingPayload=row.payload as unknown as PkeImportPayload;
       if(!PKE_UPLOAD_FIELDS.includes(field)&&!existingPayload.lcs?.some(l=>`LC:${l.id}`===field))throw new Error("Choose a shipping document, permit or saved LC");
+      if(user.role === "EXECUTION" && !canUploadPkeDocument(isDubaiExecution(user)?"FZCO":"PAK",field,existingPayload)) throw new Error("This document belongs to the other execution desk");
       if(row.revision!==revision) throw new Error("This file changed. Refresh before uploading");
       const file=form.get("file");
       if(!(file instanceof File)||file.size===0||file.size>4*1024*1024) throw new Error("Choose a file up to 4 MB");
@@ -74,7 +76,13 @@ export async function POST(request: Request) {
       if(!result.count) throw new Error("This file changed during upload. Refresh and retry");
       return NextResponse.json({ok:true});
     }
-    const input=await request.json();
+    let input=await request.json();
+    if(isDubaiExecution(user) && !["save-lcs","request-bypass"].includes(input.action)) throw new Error("Dubai can update supplier LCs only");
+    if(input.action === "save-lcs") {
+      const saved=await prisma.pkeImportFile.findUniqueOrThrow({where:{id:String(input.id)}});
+      const prior=saved.payload as unknown as PkeImportPayload;
+      input={...input,action:"save",references:prior.references};
+    }
     if(input.action==="request-bypass"||input.action==="review-bypass"){
       const data=z.object({id:z.string(),revision:z.number().int().nonnegative(),action:z.enum(["request-bypass","review-bypass"]),lcId:z.string().optional(),requirements:z.string().trim().min(1).max(2000).optional(),reason:z.string().trim().min(1).max(2000).optional(),requestId:z.string().optional(),decision:z.enum(["APPROVED","REJECTED"]).optional(),reviewNote:z.string().trim().max(2000).optional()}).parse(input);
       const row=await prisma.pkeImportFile.findUniqueOrThrow({where:{id:data.id}});
@@ -83,9 +91,10 @@ export async function POST(request: Request) {
       payload.bypasses??=[];
       if(data.action==="request-bypass"){
         const selected=payload.lcs?.find(l=>l.id===data.lcId);
+        if(user.role === "EXECUTION" && selected?.side !== (isDubaiExecution(user)?"DUBAI_SUPPLIER":"PAK_DUBAI"))throw new Error("Choose an LC belonging to your execution desk");
         if(!selected||!selected.reference.trim()||!data.requirements||!data.reason)throw new Error("Select a saved LC with a reference and describe the unmet requirements and reason");
         if(payload.bypasses.some(b=>b.lcId===selected.id&&b.status==="PENDING"))throw new Error("This LC already has a pending bypass request");
-        payload.bypasses.push({id:randomUUID(),lcId:selected.id,lcSnapshot:selected,requirements:data.requirements,reason:data.reason,status:"PENDING",requestedById:user.id,requestedBy:name,requestedAt:new Date().toISOString()});
+        payload.bypasses.push({id:randomUUID(),lcId:selected.id,lcSnapshot:selected,requirements:data.requirements,reason:data.reason,status:isDubaiExecution(user)?"APPROVED":"PENDING",...(isDubaiExecution(user)?{reviewedById:user.id,reviewedBy:name,reviewedAt:new Date().toISOString(),reviewNote:"Dubai execution authorization"}:{}),requestedById:user.id,requestedBy:name,requestedAt:new Date().toISOString()});
         payload.history.push({at:new Date().toISOString(),actor:name,action:`Requested document bypass for LC ${selected.reference}: ${data.requirements} · ${data.reason}`});
       }else{
         if(!canApprovePkeLcBypass(user))throw new Error("Only the execution head can approve or reject LC document bypasses");
@@ -115,6 +124,10 @@ export async function POST(request: Request) {
     }
     if(payload.references["Dubai sale trade reference"]!==saleRef && await prisma.pkeTripartyReceipt.count({where:{importFileId:row.id}}))throw new Error("Cannot change the sale after linking a triparty receipt");
     if(data.lcs){
+      if(user.role === "EXECUTION") {
+        const otherSide=isDubaiExecution(user)?"PAK_DUBAI":"DUBAI_SUPPLIER";
+        if(JSON.stringify(data.lcs.filter(l=>l.side===otherSide))!==JSON.stringify((payload.lcs??[]).filter(l=>l.side===otherSide))) throw new Error("Only the owning desk can change this LC");
+      }
       for(const request of payload.bypasses??[])if(!data.lcs.some(l=>l.id===request.lcId))throw new Error("Cannot remove an LC with document-bypass history");
       if(new Set(data.lcs.map(l=>l.id)).size!==data.lcs.length)throw new Error("Duplicate LC entry");
       for(const old of payload.lcs??[])if(!data.lcs.some(l=>l.id===old.id)&&payload.documents.some(d=>d.field===`LC:${old.id}`))throw new Error("An LC with uploaded documents cannot be removed");
@@ -166,6 +179,9 @@ export async function POST(request: Request) {
       if(saleRef&&(await tx.trade.findUniqueOrThrow({where:{tradeRef:saleRef}})).paymentType==='LC')allowedSides.add('PAK_DUBAI');
       for(const lc of payload.lcs??[])if(!allowedSides.has(lc.side)&&JSON.stringify(before.lcs?.find(l=>l.id===lc.id))!==JSON.stringify(lc))throw new Error('Remove LC entries for trades with CAD or other non-LC payment terms');
 
+      if(data.action==='advance' && stage >= PKE_IMPORT_STAGES.length && supplier.paymentType==='LC') {
+        if(missingDubaiLc(payload,supplier.paymentType)) throw new Error('Dubai must upload its supplier LC documents before completing this import');
+      }
       const payments=await tx.voucher.findMany({where:{status:{not:"REJECTED"},pkePayment:{path:["fileId"],equals:data.id}},select:{pkePayment:true}});
       for(const v of payments){
         const payment=v.pkePayment as {bl:boolean;lcId?:string;side:string};

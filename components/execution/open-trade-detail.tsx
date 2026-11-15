@@ -369,7 +369,7 @@ export function OpenTradeDetail({
 
       <div className="space-y-5 rounded-lg border border-kastros-border bg-kastros-card p-5">
         {/* ── 1. Deal (matches Book a Trade) ── */}
-        <Section title="Deal" description="Commodity, counterparty, and market — as booked by the trader">
+        <Section title="Deal" description="">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Commodity">
               <input
@@ -571,7 +571,7 @@ export function OpenTradeDetail({
         </Section>
 
         {/* ── 3. Delivery ── */}
-        <Section title="Delivery" description="Incoterms, delivery window, and warehouse selections">
+        <Section title="Delivery" description="">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Incoterms">
               <SearchableSelect
@@ -638,7 +638,7 @@ export function OpenTradeDetail({
         </Section>
 
         {/* ── 4. Payment ── */}
-        <Section title="Payment" description="Settlement terms for this trade">
+        <Section title="Payment" description="">
           <div>
             <label className="text-xs font-medium text-muted-foreground">Payment type</label>
             <div className="mt-2 flex flex-wrap gap-2">

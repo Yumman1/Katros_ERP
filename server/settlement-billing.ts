@@ -38,6 +38,7 @@ export function settlementSideFor(direction: string): "BUY" | "SELL" {
 const EPSILON = 0.005;
 
 type TargetTrade = {
+  tradeParams?: unknown;
   direction: string;
   quantity: Prisma.Decimal;
   price: Prisma.Decimal;
@@ -60,7 +61,7 @@ export async function settlementTargetPkr(trade: TargetTrade): Promise<{
     num(trade.quantity) *
       (trade.pricePerCanonicalQty != null ? num(trade.pricePerCanonicalQty) : num(trade.price)),
   );
-  if (trade.direction !== "SELL") {
+  if (trade.direction !== "SELL" || (trade.tradeParams as Record<string,unknown>|null)?.tradingEntity === "Kastros FZCO") {
     return { notionalPkr: notional, taxRatePct: 0, advanceTaxPkr: 0, targetPkr: notional };
   }
   const { getFinancePolicy } = await import("./finance/policy");
@@ -88,6 +89,7 @@ const SETTLEMENT_TRADE_SELECT = {
   tradeStatus: true,
   directSettled: true,
   settlementNote: true,
+  tradeParams: true,
   settlementApprovedBy: true,
   settlementApprovedAt: true,
   settlementClosedAt: true,

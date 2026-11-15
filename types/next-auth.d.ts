@@ -8,12 +8,14 @@ declare module "next-auth" {
       role: Role;
       /** Whether this user is the head/lead of their department. */
       isHead: boolean;
+      executionEntity?: string;
     };
   }
 
   interface User {
     role: Role;
     isHead?: boolean;
+    executionEntity?: string;
   }
 }
 
@@ -21,5 +23,6 @@ declare module "next-auth/jwt" {
   interface JWT {
     role?: Role;
     isHead?: boolean;
+    executionEntity?: string;
   }
 }

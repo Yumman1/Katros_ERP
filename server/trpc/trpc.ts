@@ -29,7 +29,7 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next, path, getR
   if (ctx.executionCommodityCode) {
     const desk = await ctx.prisma.commodity.findUnique({ where: { code: ctx.executionCommodityCode }, select: { id: true } });
     if (!desk) throw new TRPCError({ code: "BAD_REQUEST", message: "Unknown execution commodity" });
-    await assertDeskTarget(ctx.executionCommodityCode, path, rawInput, ctx.executionEntity);
+    if(path !== "execution.referenceDesk") await assertDeskTarget(ctx.executionCommodityCode, path, rawInput, ctx.executionEntity);
   }
   // Presence heartbeat — at most one write per user per minute, fire-and-forget.
   const userId = ctx.session.user.id;
@@ -72,6 +72,7 @@ export function headProcedure(department?: Department) {
     if (isExecutive(u.role)) {
       return next({ ctx });
     }
+    if (department === "EXECUTION" && u.role === "EXECUTION" && u.executionEntity === "FZCO" && ctx.executionEntity === "FZCO" && ctx.executionCommodityCode) return next({ctx});
     if (!u.isHead) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Head of department access required" });
     }

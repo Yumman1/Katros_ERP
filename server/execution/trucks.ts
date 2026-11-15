@@ -999,7 +999,7 @@ export async function assignTruckToTrade(
       const saleBasePkr =
         Math.round(((numOrNull(truckRow.saleBasePkr) ?? 0) + addedBasePkr) * 100) / 100;
       // 236G at the buyer's filer/non-filer policy rate.
-      const taxRatePct = advanceTaxRateFor(financePolicy, tradeRow?.counterparty.taxFilerStatus);
+      const taxRatePct = (tradeRow?.tradeParams as Record<string,unknown>|null)?.tradingEntity === "Kastros FZCO" ? 0 : advanceTaxRateFor(financePolicy, tradeRow?.counterparty.taxFilerStatus);
       const saleTaxPkr = advanceTaxOn(saleBasePkr, taxRatePct);
       const saleExpectedPkr = Math.round((saleBasePkr + saleTaxPkr) * 100) / 100;
       // Keep an already-advanced stage (partial re-assignment); fresh trucks

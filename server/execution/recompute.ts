@@ -20,6 +20,7 @@ export async function recomputeTradeLinkedAmounts(tradeRef: string): Promise<voi
       where: { tradeRef: ref },
       select: {
         direction: true,
+        tradeParams: true,
         counterparty: { select: { taxFilerStatus: true } },
       },
     }),
@@ -82,7 +83,7 @@ export async function recomputeTradeLinkedAmounts(tradeRef: string): Promise<voi
       const dispatchedKg = Math.max(0, num(truck.weightKg) - num(truck.remainingKg));
       if (!(dispatchedKg > 0)) continue;
       const saleBasePkr = Math.round(dispatchedKg * rateKg * 100) / 100;
-      const taxRatePct = advanceTaxRateFor(policy, trade.counterparty?.taxFilerStatus);
+      const taxRatePct = (trade.tradeParams as Record<string,unknown>|null)?.tradingEntity === "Kastros FZCO" ? 0 : advanceTaxRateFor(policy, trade.counterparty?.taxFilerStatus);
       const saleTaxPkr = advanceTaxOn(saleBasePkr, taxRatePct);
       const saleExpectedPkr = Math.round((saleBasePkr + saleTaxPkr) * 100) / 100;
       await prisma.pendingTruck.update({

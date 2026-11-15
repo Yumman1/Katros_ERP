@@ -15,7 +15,7 @@ export type TeamContext = {
 export function useTeam(): TeamContext {
   const { data } = useSession();
   const role = (data?.user?.role as Role | undefined) ?? null;
-  const isHead = data?.user?.isHead ?? false;
+  const isHead = (role === "EXECUTION" && data?.user?.executionEntity === "FZCO") || (data?.user?.isHead ?? false);
   return {
     role,
     isHead,

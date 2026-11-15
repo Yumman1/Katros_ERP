@@ -205,15 +205,23 @@ export const executionRouter = router({
     if (!ctx.executionCommodityCode || ctx.executionEntity === "FZCO") throw new Error("Select a Pakistan commodity desk for physical internal movements");
     return { href: `/warehouse/internal-gate?access=${encodeURIComponent(createInternalGateAccess(ctx.executionCommodityCode))}` };
   }),
-  commodityDesks: roleProcedure([...execRoles]).query(async () => {
+  commodityDesks: roleProcedure([...execRoles]).query(async ({ctx}) => {
     const desks = await prisma.commodity.findMany({ select: { id: true, code: true, name: true }, orderBy: { name: "asc" } });
-    return desks.sort((a, b) => Number(["CORN", "CRN"].includes(b.code.toUpperCase())) - Number(["CORN", "CRN"].includes(a.code.toUpperCase())));
+    return desks.filter(d=>ctx.session.user.role !== "EXECUTION" || ctx.executionEntity !== "FZCO" || ["SES","SESAME","PKE"].includes(d.code)).sort((a, b) => Number(["CORN", "CRN"].includes(b.code.toUpperCase())) - Number(["CORN", "CRN"].includes(a.code.toUpperCase())));
   }),
   referenceDesk: roleProcedure([...execRoles])
     .input(z.object({ tradeRef: z.string().optional(), truckId: z.string().optional() }))
-    .query(async ({ input }) => {
-      if (input.tradeRef) { const t = await prisma.trade.findUnique({ where: { tradeRef: input.tradeRef }, select: { tradeParams: true, commodity: { select: { code: true } } } }); return t ? { code: t.commodity.code, entity: tradeEntity(t.tradeParams) } : null; }
-      if (input.truckId) { const t = await prisma.pendingTruck.findUnique({ where: { id: input.truckId }, select: { commodityCode: true, executionEntity: true } }); return t ? { code: t.commodityCode, entity: t.executionEntity === "FZCO" ? "FZCO" as const : "PAK" as const } : null; }
+    .query(async ({ ctx, input }) => {
+      if (input.tradeRef) {
+        const t=await prisma.trade.findUnique({where:{tradeRef:input.tradeRef},select:{tradeParams:true,commodity:{select:{code:true}}}});
+        if(!t)return null;
+        const entity=ctx.session.user.role === "EXECUTION" ? ctx.executionEntity! : tradeEntity(t.tradeParams);
+        const params=t.tradeParams as Record<string,unknown>|null;
+        if(ctx.session.user.role === "EXECUTION" && usesSesameWorkflow(t.commodity.code) && tradeEntity(t.tradeParams)!==entity && params?.internalCounterpartyEntity!==entity)throw new Error("Trade belongs to another execution desk");
+        if(entity==='FZCO'&&!usesSesameWorkflow(t.commodity.code))throw new Error("Commodity not assigned");
+        return {code:t.commodity.code,entity};
+      }
+      if(input.truckId){const t=await prisma.pendingTruck.findUnique({where:{id:input.truckId},select:{commodityCode:true,executionEntity:true}});if(!t)return null;if(ctx.session.user.role==='EXECUTION'&&t.executionEntity!==ctx.executionEntity)throw new Error("Truck belongs to another execution desk");return {code:t.commodityCode,entity:t.executionEntity==='FZCO'?'FZCO' as const:'PAK' as const};}
       return null;
     }),
   deskSummary: roleProcedure([...execRoles]).query(({ ctx }) => getDeskSummary(ctx.executionCommodityCode, ctx.executionEntity)),

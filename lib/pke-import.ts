@@ -37,3 +37,14 @@ export function lcBypassBlocksPayment(payload:PkeImportPayload):boolean {
 export function canApprovePkeLcBypass(user:{role:string;isHead:boolean;disabled?:boolean}):boolean {
  return user.role==="EXECUTION"&&user.isHead&&!user.disabled;
 }
+
+/** Supplier-side LCs belong to Dubai; all other import documents belong to Pakistan. */
+export function canUploadPkeDocument(entity:"PAK"|"FZCO", field:string, payload:PkeImportPayload) {
+  const lc=payload.lcs?.find(l=>`LC:${l.id}`===field);
+  return entity==="FZCO" ? lc?.side==="DUBAI_SUPPLIER" : lc?.side!=="DUBAI_SUPPLIER";
+}
+export function missingDubaiLc(payload:PkeImportPayload,paymentType:string|null|undefined) {
+  if(paymentType!=="LC")return false;
+  const lcs=(payload.lcs??[]).filter(l=>l.side==="DUBAI_SUPPLIER");
+  return !lcs.length || lcs.some(l=>!l.reference.trim() || !payload.documents.some(d=>d.field===`LC:${l.id}`));
+}

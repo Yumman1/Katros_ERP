@@ -41,6 +41,7 @@ model User {
   role         Role     @default(READ_ONLY)
   /// Department head flag — drives headProcedure authorization (approvals).
   isHead       Boolean  @default(false)
+  executionEntity String @default("PAK")
   /// Disabled accounts cannot log in (managed on the CEO → Users page).
   disabled     Boolean  @default(false)
   /// Presence heartbeat — updated (throttled) on every authenticated API call.
