@@ -48,7 +48,7 @@ export async function GET(request: Request) {
     const sales=trades.filter(t=>pkeImportSale("PKE",t.direction,t.tradeParams));
     const receipts=await prisma.inboundReceipt.findMany({where:{tradeRef:{in:sales.map(t=>t.tradeRef)},status:{not:"DRAFT"},gatepassNo:{not:null},pkeTripartyReceipt:{is:null}},select:{id:true,tradeRef:true,gatepassNo:true,truckNo:true,allocatedQtyMt:true}});
     return NextResponse.json({executionEntity:isDubaiExecution(viewer)?"FZCO":"PAK",canApproveBypasses:canApprovePkeLcBypass(viewer),files:(await prisma.pkeImportFile.findMany({include:{receipts:{include:{receipt:{select:{gatepassNo:true,truckNo:true}}}}},orderBy:{updatedAt:"desc"}})).map(f=>({...f,stage:missingDubaiLc(f.payload as unknown as PkeImportPayload,trades.find(t=>t.tradeRef===f.purchaseTradeRef)?.paymentType)?Math.min(f.stage,PKE_IMPORT_STAGES.length-1):f.stage})),
-      purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency,paymentType:t.paymentType})),
+      purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,tradeDate:t.tradeDate,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency,paymentType:t.paymentType})),
       sales:sales.map(t=>({tradeRef:t.tradeRef,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),paymentType:t.paymentType,currency:t.currency})),receipts});
   } catch(error) { return failure(error); }
 }
