@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {calculatePkeCost,DEFAULT_PKE_COST_POLICY as policy,validatePkeCostPolicy} from './pke-costing';
+import {calculatePkeCost,DEFAULT_PKE_COST_POLICY as policy,validatePkeCostPolicy,validatePkeCostPatch} from './pke-costing';
 const near=(actual:number,expected:number)=>assert.ok(Math.abs(actual-expected)<0.01,`${actual} vs ${expected}`);
 test('reconciles detailed spreadsheet totals at 24,200 MT, USD 227.50 and FX 278.5',()=>{
  const r=calculatePkeCost({invoiceAmount:5505500,quantityMt:24200,currency:'USD',exchangeRate:278.5},policy);
@@ -20,4 +20,22 @@ test('tax policy changes flow through cascading tax bases',()=>{
 test('rejects missing or invalid inputs and rates',()=>{
  const input={invoiceAmount:22750,quantityMt:100,currency:'USD' as const,exchangeRate:278.5};
  assert.throws(()=>calculatePkeCost({...input,quantityMt:0},policy));assert.throws(()=>calculatePkeCost({...input,exchangeRate:NaN},policy));assert.throws(()=>validatePkeCostPolicy({...policy,salesTaxPct:101}));
+});
+
+test('cost ownership prevents cross-department and unknown writes',()=>{
+ assert.deepEqual(validatePkeCostPatch({salesTaxPct:18},'FINANCE'),{salesTaxPct:18});
+ assert.deepEqual(validatePkeCostPatch({insurancePct:.06,cessPct:.8,transportPerMt:2000},'EXECUTION'),{insurancePct:.06,cessPct:.8,transportPerMt:2000});
+ assert.throws(()=>validatePkeCostPatch({insurancePct:.06},'FINANCE'));
+ assert.throws(()=>validatePkeCostPatch({salesTaxPct:18},'EXECUTION'));
+ assert.throws(()=>validatePkeCostPatch({unknown:1},'EXECUTION'));
+ assert.throws(()=>validatePkeCostPatch({},'FINANCE'));
+ assert.throws(()=>validatePkeCostPatch({exchangeRate:0},'EXECUTION'));
+});
+test('execution expense changes recalculate landed cost without altering tax rates',()=>{
+ const input={invoiceAmount:22750,quantityMt:100,currency:'USD' as const,exchangeRate:278.5};
+ const before=calculatePkeCost(input,policy);
+ const after=calculatePkeCost(input,{...policy,...validatePkeCostPatch({transportPerMt:2500},'EXECUTION')});
+ near(after.delivered-before.delivered,50000);near(after.taxes,before.taxes);
+ const insured=calculatePkeCost(input,{...policy,insurancePct:1});
+ assert.ok(insured.customsBase>before.customsBase);assert.ok(insured.taxes>before.taxes);
 });

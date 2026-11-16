@@ -36,14 +36,14 @@ export async function getFinancePolicy(): Promise<FinancePolicyView> {
 
 export async function updateFinancePolicy(
   patch: {
-    pkeCosting?: PkeCostPolicy;
+    pkeCosting?: Partial<PkeCostPolicy>;
     yearlyInflowLimitPkr?: number;
     advanceTaxRatePct?: number;
     advanceTaxRatePctNonFiler?: number;
   },
   updatedBy: string,
 ): Promise<FinancePolicyView> {
-  if(patch.pkeCosting)validatePkeCostPolicy(patch.pkeCosting);
+
   if (patch.yearlyInflowLimitPkr != null && patch.yearlyInflowLimitPkr <= 0) {
     throw new Error("Yearly inflow limit must be positive");
   }
@@ -52,19 +52,14 @@ export async function updateFinancePolicy(
       throw new Error("Advance tax rates must be between 0 and 100 percent");
     }
   }
-  const row = await prisma.financePolicy.upsert({
-    where: { id: POLICY_ID },
-    update: { ...patch, updatedBy },
-    create: {
-      id: POLICY_ID,
-      ...(patch.pkeCosting?{pkeCosting:patch.pkeCosting}:{}),
-      yearlyInflowLimitPkr:
-        patch.yearlyInflowLimitPkr ?? DEFAULT_FINANCE_POLICY.yearlyInflowLimitPkr,
-      advanceTaxRatePct: patch.advanceTaxRatePct ?? DEFAULT_FINANCE_POLICY.advanceTaxRatePct,
-      advanceTaxRatePctNonFiler:
-        patch.advanceTaxRatePctNonFiler ?? DEFAULT_FINANCE_POLICY.advanceTaxRatePctNonFiler,
-      updatedBy,
-    },
+  const row=await prisma.$transaction(async tx=>{
+    await tx.financePolicy.upsert({where:{id:POLICY_ID},create:{id:POLICY_ID},update:{}});
+    await tx.$queryRaw`SELECT id FROM "FinancePolicy" WHERE id=${POLICY_ID} FOR UPDATE`;
+    const current=await tx.financePolicy.findUniqueOrThrow({where:{id:POLICY_ID}});
+    const {pkeCosting,...rest}=patch;
+    const merged=pkeCosting?{...pkeCostPolicy(current.pkeCosting),...pkeCosting}:undefined;
+    if(merged)validatePkeCostPolicy(merged);
+    return tx.financePolicy.update({where:{id:POLICY_ID},data:{...rest,...(merged?{pkeCosting:merged}:{}),updatedBy}});
   });
   return rowToView(row);
 }

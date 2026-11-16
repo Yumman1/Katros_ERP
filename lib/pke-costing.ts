@@ -17,7 +17,7 @@ export function pkeCostPolicy(value:unknown):PkeCostPolicy {
 export function validatePkeCostPolicy(p:PkeCostPolicy){
  for(const [key,label,unit] of PKE_COST_FIELDS){const v=p[key];if(!Number.isFinite(v)||v<0||(unit==='%'&&v>100)||(key==='exchangeRate'&&v<=0))throw new Error(`Invalid ${label}`);}
 }
-export type PkeCostLine={label:string;amount:number;basis?:string;rate?:number;unit?:string};
+export type PkeCostLine={key?:PkeCostKey;label:string;amount:number;basis?:string;rate?:number;unit?:string};
 export function calculatePkeCost(input:{invoiceAmount:number;quantityMt:number;currency:'USD'|'PKR';exchangeRate:number},policy:PkeCostPolicy){
  validatePkeCostPolicy(policy);
  if(!Number.isFinite(input.invoiceAmount)||input.invoiceAmount<=0||!Number.isFinite(input.quantityMt)||input.quantityMt<=0||!Number.isFinite(input.exchangeRate)||input.exchangeRate<=0)throw new Error('Enter a positive trade value, quantity and exchange rate');
@@ -25,19 +25,29 @@ export function calculatePkeCost(input:{invoiceAmount:number;quantityMt:number;c
  const insurance=cfr*policy.insurancePct/100;
  const landing=(cfr+insurance)*policy.landingPct/100;
  const customsBase=cfr+insurance+landing;
- const lines:PkeCostLine[]=[{label:'Trade value (CFR)',amount:cfr},{label:'Insurance',amount:insurance,basis:'CFR value',rate:policy.insurancePct,unit:'%'}];
- const addTax=(key:PkeCostKey,label:string,base:number,basis:string)=>{const amount=base*policy[key]/100;lines.push({label,amount,rate:policy[key],unit:'%',basis});return amount;};
+ const lines:PkeCostLine[]=[{label:'Trade value (CFR)',amount:cfr},{key:'insurancePct',label:'Insurance',amount:insurance,basis:'CFR value',rate:policy.insurancePct,unit:'%'}];
+ const addTax=(key:PkeCostKey,label:string,base:number,basis:string)=>{const amount=base*policy[key]/100;lines.push({key,label,amount,rate:policy[key],unit:'%',basis});return amount;};
  const duties=addTax('customsDutyPct','Customs duty',customsBase,'Customs value')+addTax('additionalCustomsDutyPct','Additional customs duty',customsBase,'Customs value')+addTax('regulatoryDutyPct','Regulatory duty',customsBase,'Customs value');
  const salesBase=customsBase+duties;
  const sales=addTax('salesTaxPct','Sales tax',salesBase,'Customs value + duties')+addTax('additionalSalesTaxPct','Additional sales tax',salesBase,'Customs value + duties');
  const incomeBase=salesBase+sales;
  const income=addTax('incomeTaxPct','Income tax',incomeBase,'Customs value + duties + sales taxes')+addTax('additionalIncomeTaxPct','Additional income tax',incomeBase,'Customs value + duties + sales taxes');
  const cess=addTax('cessPct','Infrastructure cess',customsBase,'Customs value');
- const addCost=(key:PkeCostKey,label:string)=>{const amount=policy[key]*qty;lines.push({label,amount,rate:policy[key],unit:'PKR/MT'});return amount;};
+ const addCost=(key:PkeCostKey,label:string)=>{const amount=policy[key]*qty;lines.push({key,label,amount,rate:policy[key],unit:'PKR/MT'});return amount;};
  let portCharges=0;
  for(const key of ['wharfagePerMt','surveyorPerMt','clearancePerMt','fumigationPerMt','terminalPerMt','bagsPerMt'] as const)portCharges+=addCost(key,PKE_COST_FIELDS.find(f=>f[0]===key)![1]);
  const exPort=cfr+insurance+duties+sales+income+cess+portCharges;
  const exWarehouse=exPort+addCost('transportPerMt','Port-to-warehouse transport')+addCost('warehousePerMt','Warehouse (3 months)');
  const delivered=exWarehouse+addCost('deliveryPerMt','Customer delivery');
  return {lines,customsBase,landingAllowance:landing,taxes:duties+sales+income+cess,exPort,exWarehouse,delivered,perMt:delivered/qty,perBag:delivered/qty/20,usdPerMt:delivered/qty/input.exchangeRate};
+}
+
+export const PKE_TAX_KEYS: readonly PkeCostKey[] = ['customsDutyPct','additionalCustomsDutyPct','regulatoryDutyPct','salesTaxPct','additionalSalesTaxPct','incomeTaxPct','additionalIncomeTaxPct'];
+export const PKE_TAX_FIELDS=PKE_COST_FIELDS.filter(([key])=>PKE_TAX_KEYS.includes(key));
+export const PKE_EXECUTION_COST_FIELDS=PKE_COST_FIELDS.filter(([key])=>!PKE_TAX_KEYS.includes(key));
+export function validatePkeCostPatch(value:Record<string,number>,owner:'FINANCE'|'EXECUTION') {
+ const allowed=owner==='FINANCE'?PKE_TAX_FIELDS:PKE_EXECUTION_COST_FIELDS;
+ if(!Object.keys(value).length || Object.keys(value).some(key=>!allowed.some(([k])=>k===key)))throw new Error('These costing fields belong to another department');
+ validatePkeCostPolicy({...DEFAULT_PKE_COST_POLICY,...value});
+ return value as Partial<PkeCostPolicy>;
 }

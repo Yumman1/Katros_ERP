@@ -1,8 +1,8 @@
-import {PKE_COST_FIELDS,type PkeCostPolicy,validatePkeCostPolicy} from "@/lib/pke-costing";
+import {validatePkeCostPatch} from "@/lib/pke-costing";
 import { filterDeskRejections } from "@/server/execution/desk-scope";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { headProcedure, protectedProcedure, router } from "@/server/trpc/trpc";
+import { headProcedure, protectedProcedure, roleProcedure, router } from "@/server/trpc/trpc";
 import {
   getFinancePolicy,
   getYearlySellInflowByCounterparty,
@@ -22,15 +22,18 @@ import { prisma } from "@/server/db";
  */
 export const policyRouter = router({
   get: protectedProcedure.query(() => getFinancePolicy()),
+  updatePkeExecutionCosts: roleProcedure(['EXECUTION']).input(z.record(z.string(),z.number().finite().nonnegative())).mutation(async({ctx,input})=>{
+    if(ctx.executionEntity!=='PAK'||ctx.executionCommodityCode!=='PKE')throw new TRPCError({code:'FORBIDDEN',message:'Open Pakistan PKE execution'});
+    try{return await updateFinancePolicy({pkeCosting:validatePkeCostPatch(input,'EXECUTION')},ctx.session.user.name??'Execution');}
+    catch(e){throw new TRPCError({code:'BAD_REQUEST',message:e instanceof Error?e.message:'Invalid costing values'});}
+  }),
 
   /** Head of finance only — company tax rates are not a member-level knob. */
   update: headProcedure("FINANCE")
     .input(
       z.object({
         pkeCosting: z.record(z.string(),z.number().finite().nonnegative()).transform((value,ctx)=>{
-          if(PKE_COST_FIELDS.some(([key])=>value[key]===undefined)||Object.keys(value).length!==PKE_COST_FIELDS.length){ctx.addIssue({code:z.ZodIssueCode.custom,message:"Provide every PKE costing value"});return z.NEVER;}
-          try{validatePkeCostPolicy(value as PkeCostPolicy);}catch(e){ctx.addIssue({code:z.ZodIssueCode.custom,message:e instanceof Error?e.message:"Invalid policy"});return z.NEVER;}
-          return value as PkeCostPolicy;
+          try{return validatePkeCostPatch(value,'FINANCE');}catch(e){ctx.addIssue({code:z.ZodIssueCode.custom,message:e instanceof Error?e.message:'Invalid policy'});return z.NEVER;}
         }).optional(),
         yearlyInflowLimitPkr: z.number().positive().optional(),
         advanceTaxRatePct: z.number().min(0).max(100).optional(),

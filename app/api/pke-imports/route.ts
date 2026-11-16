@@ -109,10 +109,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ok:true});
     }
     if(input.action==="receipt")return NextResponse.json(await linkPkeTripartyReceipt(z.object({id:z.string(),revision:z.number().int().nonnegative(),receiptId:z.string(),saleTradeRef:z.string()}).parse(input),name));
-    if(input.action==="create") {
-      const data=z.object({tradeRef:z.string().min(1),title:z.string().trim().min(1).max(160)}).parse(input);
+    if(input.action==="create"||input.action==="open") {
+      const data=z.object({tradeRef:z.string().min(1)}).parse(input);
       await purchase(data.tradeRef);
-      return NextResponse.json(await prisma.pkeImportFile.create({data:{purchaseTradeRef:data.tradeRef,title:data.title,createdBy:name,payload:JSON.parse(JSON.stringify(emptyPkeImport()))}}));
+      const file=await prisma.$transaction(async tx=>{
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`pke-import:${data.tradeRef}`}))`;
+        if(input.action==="open"){
+          const existing=await tx.pkeImportFile.findFirst({where:{purchaseTradeRef:data.tradeRef},orderBy:{createdAt:'desc'}});
+          if(existing)return existing;
+        }
+        const count=await tx.pkeImportFile.count({where:{purchaseTradeRef:data.tradeRef}});
+        return tx.pkeImportFile.create({data:{purchaseTradeRef:data.tradeRef,title:`${data.tradeRef} · Shipment ${count+1}`,createdBy:name,payload:JSON.parse(JSON.stringify(emptyPkeImport()))}});
+      });
+      return NextResponse.json(file);
     }
     const data=edit.parse(input), row=await prisma.pkeImportFile.findUniqueOrThrow({where:{id:data.id}});
 
