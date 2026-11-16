@@ -1,3 +1,4 @@
+import {PKE_COST_FIELDS,type PkeCostPolicy,validatePkeCostPolicy} from "@/lib/pke-costing";
 import { filterDeskRejections } from "@/server/execution/desk-scope";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -26,6 +27,11 @@ export const policyRouter = router({
   update: headProcedure("FINANCE")
     .input(
       z.object({
+        pkeCosting: z.record(z.string(),z.number().finite().nonnegative()).transform((value,ctx)=>{
+          if(PKE_COST_FIELDS.some(([key])=>value[key]===undefined)||Object.keys(value).length!==PKE_COST_FIELDS.length){ctx.addIssue({code:z.ZodIssueCode.custom,message:"Provide every PKE costing value"});return z.NEVER;}
+          try{validatePkeCostPolicy(value as PkeCostPolicy);}catch(e){ctx.addIssue({code:z.ZodIssueCode.custom,message:e instanceof Error?e.message:"Invalid policy"});return z.NEVER;}
+          return value as PkeCostPolicy;
+        }).optional(),
         yearlyInflowLimitPkr: z.number().positive().optional(),
         advanceTaxRatePct: z.number().min(0).max(100).optional(),
         advanceTaxRatePctNonFiler: z.number().min(0).max(100).optional(),

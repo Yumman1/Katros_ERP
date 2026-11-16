@@ -1,5 +1,6 @@
 "use client";
 
+import {PkeCostPolicyForm} from "@/components/finance/pke-cost-policy";
 import { useEffect, useState } from "react";
 
 import { PageHeader } from "@/components/ui/page-header";
@@ -81,6 +82,7 @@ export default function FinancePoliciesPage() {
           <div className="py-12 text-center text-sm text-subtle">Loading policies…</div>
         ) : (
           <>
+            <PkeCostPolicyForm/>
             <div className="grid gap-4 lg:grid-cols-2">
               <section className="exec-panel">
                 <h2 className="text-sm font-semibold text-foreground">Yearly counterparty inflow limit</h2>

@@ -1,0 +1,1 @@
+ALTER TABLE "FinancePolicy" ADD COLUMN IF NOT EXISTS "pkeCosting" JSONB;

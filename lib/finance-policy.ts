@@ -1,3 +1,4 @@
+import { DEFAULT_PKE_COST_POLICY, type PkeCostPolicy } from "./pke-costing";
 /**
  * Finance policy knobs — shared types + pure helpers. The single policy row
  * (Finance → Policies page) drives the 236G advance income tax and the yearly
@@ -5,6 +6,7 @@
  */
 
 export type FinancePolicyView = {
+  pkeCosting?: PkeCostPolicy;
   /** Yearly inflow cap per buyer (PKR actually received, fiscal year 1 Jul – 30 Jun). */
   yearlyInflowLimitPkr: number;
   /** 236G advance income tax rate for ATL filers — percent of (price × quantity) on sales. */
@@ -16,6 +18,7 @@ export type FinancePolicyView = {
 };
 
 export const DEFAULT_FINANCE_POLICY: FinancePolicyView = {
+  pkeCosting: DEFAULT_PKE_COST_POLICY,
   yearlyInflowLimitPkr: 200_000_000,
   advanceTaxRatePct: 0.1,
   advanceTaxRatePctNonFiler: 2.0,

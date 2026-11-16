@@ -1515,6 +1515,7 @@ model TradeTraceabilityLink {
 /// Company-wide finance policy knobs — single row, edited on the Finance →
 /// Policies page and read everywhere else in the app.
 model FinancePolicy {
+  pkeCosting Json?
   id String @id @default("main")
   /// Yearly inflow cap per buyer (PKR received, fiscal year 1 Jul – 30 Jun).
   yearlyInflowLimitPkr Decimal @default(200000000) @db.Decimal(20, 2)

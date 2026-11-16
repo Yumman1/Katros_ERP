@@ -642,3 +642,7 @@ body {
   color: #111827;
   -webkit-text-fill-color: #111827;
 }
+
+/* Keep the application sans-serif even when a webfont cannot load. */
+body { font-family: var(--font-inter, Arial), Helvetica, sans-serif; }
+button, input, select, textarea { font-family: inherit; }

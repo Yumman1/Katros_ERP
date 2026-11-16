@@ -24,7 +24,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} h-dvh overflow-hidden bg-background font-sans text-foreground antialiased`}>
+      <body className={`${inter.className} ${inter.variable} h-dvh overflow-hidden bg-background font-sans text-foreground antialiased`}>
         <Providers>{children}</Providers>
       </body>
     </html>

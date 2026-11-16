@@ -1,3 +1,4 @@
+import {pkeCostPolicy,validatePkeCostPolicy,type PkeCostPolicy} from "@/lib/pke-costing";
 import { prisma } from "@/server/db";
 import { num } from "@/server/db/convert";
 import {
@@ -12,6 +13,7 @@ type PolicyRow = NonNullable<Awaited<ReturnType<typeof prisma.financePolicy.find
 
 function rowToView(row: PolicyRow): FinancePolicyView {
   return {
+    pkeCosting: pkeCostPolicy(row.pkeCosting),
     yearlyInflowLimitPkr: num(row.yearlyInflowLimitPkr),
     advanceTaxRatePct: num(row.advanceTaxRatePct),
     advanceTaxRatePctNonFiler: num(row.advanceTaxRatePctNonFiler),
@@ -34,12 +36,14 @@ export async function getFinancePolicy(): Promise<FinancePolicyView> {
 
 export async function updateFinancePolicy(
   patch: {
+    pkeCosting?: PkeCostPolicy;
     yearlyInflowLimitPkr?: number;
     advanceTaxRatePct?: number;
     advanceTaxRatePctNonFiler?: number;
   },
   updatedBy: string,
 ): Promise<FinancePolicyView> {
+  if(patch.pkeCosting)validatePkeCostPolicy(patch.pkeCosting);
   if (patch.yearlyInflowLimitPkr != null && patch.yearlyInflowLimitPkr <= 0) {
     throw new Error("Yearly inflow limit must be positive");
   }
@@ -53,6 +57,7 @@ export async function updateFinancePolicy(
     update: { ...patch, updatedBy },
     create: {
       id: POLICY_ID,
+      ...(patch.pkeCosting?{pkeCosting:patch.pkeCosting}:{}),
       yearlyInflowLimitPkr:
         patch.yearlyInflowLimitPkr ?? DEFAULT_FINANCE_POLICY.yearlyInflowLimitPkr,
       advanceTaxRatePct: patch.advanceTaxRatePct ?? DEFAULT_FINANCE_POLICY.advanceTaxRatePct,

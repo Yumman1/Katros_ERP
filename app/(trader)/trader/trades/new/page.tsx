@@ -13,6 +13,7 @@ import {
 } from "@/components/trader/corn-specification-fields";
 import { WarehouseMultiSelect } from "@/components/trader/warehouse-multi-select";
 import { formatQuantityTolerance, QuantityToleranceField } from "@/components/trader/quantity-tolerance-field";
+import {PkeCostEstimate} from "@/components/execution/pke-cost-estimate";
 import { TradeParametersFields } from "@/components/trader/trade-parameters-fields";
 import { trpc } from "@/lib/trpc/client";
 import {
@@ -1419,6 +1420,7 @@ function BookTradeForm() {
               )}
             </div>
           )}
+          {selectedCommodity?.code === "PKE" && (direction === TradeDirection.BUY || (fzcoBooking && tradeParams.internalCounterpartyEntity === "PAK")) && px > 0 && storedMt > 0 && <PkeCostEstimate compact invoiceAmount={notional} quantityMt={storedMt} currency={baseCurrency === "USD" ? "USD" : "PKR"}/>}
           {requiresQuotedPrice && px > 0 && (
           <div className="mt-3 space-y-1 rounded-md border border-kastros-border/60 bg-kastros-bg/40 px-3 py-2 text-xs text-muted-foreground">
             <div>

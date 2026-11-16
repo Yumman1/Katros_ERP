@@ -100,6 +100,7 @@ export function ExecutionShell({ children }: { children: ReactNode }) {
     {
       label: "Operations",
       items: [
+        ...(active.code === "PKE" && !fzco ? [{href:"/execution/costing-estimate",label:"Costing Estimate",icon:<Receipt className="h-4 w-4"/>}] : []),
         ...(active.code === "PKE" ? [{ href: "/execution/pke-imports", label: "Import Files", icon: <FileSpreadsheet className="h-4 w-4" /> }] : []),
         { href: "/execution/prices", label: "Daily Prices", icon: <TrendingUp className="h-4 w-4" /> },
         { href: "/execution/inventory", label: "Inventory", icon: <Warehouse className="h-4 w-4" /> },
