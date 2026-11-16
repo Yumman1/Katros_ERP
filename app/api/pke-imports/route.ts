@@ -38,11 +38,19 @@ export async function GET(request: Request) {
       const doc=(row.payload as unknown as PkeImportPayload).documents.find(d=>d.id===documentId);
       if(!doc) throw new Error("Document not found");
       const signed=await getGatepassDocumentUrl(doc.path);
-      if(signed) return NextResponse.redirect(signed);
+      const download=url.searchParams.get("download")==="1";
+      const filename=doc.name.replace(/[^a-zA-Z0-9._-]/g,"_");
+      const disposition=`${download?'attachment':'inline'}; filename="${filename}"`;
+      if(signed){
+        if(!download)return NextResponse.redirect(signed);
+        const stored=await fetch(signed);
+        if(!stored.ok||!stored.body)throw new Error("Document download is unavailable; please retry");
+        return new Response(stored.body,{headers:{"Content-Type":stored.headers.get("Content-Type")||"application/octet-stream","Content-Disposition":disposition,"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
+      }
       if(process.env.VERCEL || process.env.SUPABASE_URL) throw new Error("Document download is unavailable; please retry");
       const root=path.resolve(process.cwd(),"data/local"), target=path.resolve(root,doc.path);
       if(!target.startsWith(root+path.sep)) throw new Error("Invalid document path");
-      return new Response(new Uint8Array(await readFile(target)),{headers:{"Content-Type":"application/octet-stream","Content-Disposition":`attachment; filename="${doc.name.replace(/[^a-zA-Z0-9._-]/g,"_")}"`,"X-Content-Type-Options":"nosniff"}});
+      return new Response(new Uint8Array(await readFile(target)),{headers:{"Content-Type":({pdf:"application/pdf",png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg"} as Record<string,string>)[path.extname(doc.name).slice(1).toLowerCase()]||"application/octet-stream","Content-Disposition":disposition,"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
     }
     const trades=await prisma.trade.findMany({where:{commodity:{code:"PKE"},tradeStatus:{not:"CANCELLED"}},include:{counterparty:true,contract:true},orderBy:{tradeDate:"desc"}});
     const sales=trades.filter(t=>pkeImportSale("PKE",t.direction,t.tradeParams));
