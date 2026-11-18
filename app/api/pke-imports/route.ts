@@ -56,7 +56,7 @@ export async function GET(request: Request) {
     const sales=trades.filter(t=>pkeImportSale("PKE",t.direction,t.tradeParams));
     const receipts=await prisma.inboundReceipt.findMany({where:{tradeRef:{in:sales.map(t=>t.tradeRef)},status:{not:"DRAFT"},gatepassNo:{not:null},pkeTripartyReceipt:{is:null}},select:{id:true,tradeRef:true,gatepassNo:true,truckNo:true,allocatedQtyMt:true}});
     return NextResponse.json({executionEntity:isDubaiExecution(viewer)?"FZCO":"PAK",canApproveBypasses:canApprovePkeLcBypass(viewer),files:(await prisma.pkeImportFile.findMany({include:{receipts:{include:{receipt:{select:{gatepassNo:true,truckNo:true}}}}},orderBy:{updatedAt:"desc"}})).map(f=>({...f,stage:missingDubaiLc(f.payload as unknown as PkeImportPayload,trades.find(t=>t.tradeRef===f.purchaseTradeRef)?.paymentType)?Math.min(f.stage,PKE_IMPORT_STAGES.length-1):f.stage})),
-      purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,tradeDate:t.tradeDate,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency,paymentType:t.paymentType})),
+      purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,tradeDate:t.tradeDate,pricePerMt:Number(t.pricePerCanonicalQty??t.price),commission:Number(t.commissionAmount??0)*(t.priceCurrency==="USd"?0.01:1),quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency,paymentType:t.paymentType})),
       sales:sales.map(t=>({tradeRef:t.tradeRef,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),paymentType:t.paymentType,currency:t.currency})),receipts});
   } catch(error) { return failure(error); }
 }
@@ -92,17 +92,19 @@ export async function POST(request: Request) {
       input={...input,action:"save",references:prior.references};
     }
     if(input.action==="request-bypass"||input.action==="review-bypass"){
-      const data=z.object({id:z.string(),revision:z.number().int().nonnegative(),action:z.enum(["request-bypass","review-bypass"]),lcId:z.string().optional(),requirements:z.string().trim().min(1).max(2000).optional(),reason:z.string().trim().min(1).max(2000).optional(),requestId:z.string().optional(),decision:z.enum(["APPROVED","REJECTED"]).optional(),reviewNote:z.string().trim().max(2000).optional()}).parse(input);
+      const data=z.object({id:z.string(),revision:z.number().int().nonnegative(),action:z.enum(["request-bypass","review-bypass"]),lcId:z.string().optional(),documentField:z.string().max(200).optional(),requirements:z.string().trim().min(1).max(2000).optional(),reason:z.string().trim().min(1).max(2000).optional(),requestId:z.string().optional(),decision:z.enum(["APPROVED","REJECTED"]).optional(),reviewNote:z.string().trim().max(2000).optional()}).parse(input);
       const row=await prisma.pkeImportFile.findUniqueOrThrow({where:{id:data.id}});
       if(row.revision!==data.revision)throw new Error("This file changed. Refresh before continuing");
       const payload=row.payload as unknown as PkeImportPayload;
       payload.bypasses??=[];
       if(data.action==="request-bypass"){
         const selected=payload.lcs?.find(l=>l.id===data.lcId);
-        if(user.role === "EXECUTION" && selected?.side !== (isDubaiExecution(user)?"DUBAI_SUPPLIER":"PAK_DUBAI"))throw new Error("Choose an LC belonging to your execution desk");
+        if(data.documentField&&!PKE_UPLOAD_FIELDS.includes(data.documentField)&&data.documentField!==`LC:${selected?.id}`)throw new Error("Choose a document from this import file");
+        if(data.documentField&&user.role==="EXECUTION"&&!canUploadPkeDocument(isDubaiExecution(user)?"FZCO":"PAK",data.documentField,payload))throw new Error("This document belongs to the other execution desk");
+        if(user.role === "EXECUTION" && !data.documentField && selected?.side !== (isDubaiExecution(user)?"DUBAI_SUPPLIER":"PAK_DUBAI"))throw new Error("Choose an LC belonging to your execution desk");
         if(!selected||!selected.reference.trim()||!data.requirements||!data.reason)throw new Error("Select a saved LC with a reference and describe the unmet requirements and reason");
-        if(payload.bypasses.some(b=>b.lcId===selected.id&&b.status==="PENDING"))throw new Error("This LC already has a pending bypass request");
-        payload.bypasses.push({id:randomUUID(),lcId:selected.id,lcSnapshot:selected,requirements:data.requirements,reason:data.reason,status:isDubaiExecution(user)?"APPROVED":"PENDING",...(isDubaiExecution(user)?{reviewedById:user.id,reviewedBy:name,reviewedAt:new Date().toISOString(),reviewNote:"Dubai execution authorization"}:{}),requestedById:user.id,requestedBy:name,requestedAt:new Date().toISOString()});
+        if(payload.bypasses.some(b=>b.lcId===selected.id&&b.documentField===data.documentField&&b.status==="PENDING"))throw new Error("This LC already has a pending bypass request");
+        payload.bypasses.push({id:randomUUID(),lcId:selected.id,lcSnapshot:selected,...(data.documentField?{documentField:data.documentField}:{}),requirements:data.requirements,reason:data.reason,status:"PENDING",requestedById:user.id,requestedBy:name,requestedAt:new Date().toISOString()});
         payload.history.push({at:new Date().toISOString(),actor:name,action:`Requested document bypass for LC ${selected.reference}: ${data.requirements} · ${data.reason}`});
       }else{
         if(!canApprovePkeLcBypass(user))throw new Error("Only the execution head can approve or reject LC document bypasses");

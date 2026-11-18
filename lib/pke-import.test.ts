@@ -63,3 +63,16 @@ test('LC bypass requires approval, preserves multiple-LC checks and invalidates 
  payload.bypasses.push({...payload.bypasses[0],id:'request3',lcId:'lc2',status:'PENDING'});
  assert.equal(lcBypassBlocksPayment(payload),true);
 });
+
+test('approving one document cannot clear another document on the same LC',()=>{
+ const payload=emptyPkeImport();
+ const lc={id:'lc-doc',side:'PAK_DUBAI' as const,reference:'LC-doc',bank:'Bank',currency:'USD',amount:'1000'};
+ payload.lcs=[lc];
+ const base={lcId:lc.id,lcSnapshot:{...lc},requirements:'Missing document',reason:'Review',requestedById:'exec',requestedBy:'Execution',requestedAt:'2026-11-18'};
+ payload.bypasses=[{...base,id:'phyto',documentField:'Phytosanitary certificate',status:'PENDING'},{...base,id:'origin',documentField:'Certificate of origin',status:'APPROVED'}];
+ assert.equal(lcBypassBlocksPayment(payload),true);
+ payload.bypasses[0].status='APPROVED';
+ assert.equal(lcBypassBlocksPayment(payload),false);
+ payload.bypasses.push({...base,id:'phyto-new',documentField:'Phytosanitary certificate',status:'REJECTED'});
+ assert.equal(lcBypassBlocksPayment(payload),true);
+});

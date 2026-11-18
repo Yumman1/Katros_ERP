@@ -23,14 +23,14 @@ export function pkeReceiptProgress(total:number,prior:number,quantity:number){
 }
 
 export type PkeLcBypass = {
- id:string;lcId:string;lcSnapshot:PkeLc;requirements:string;reason:string;
+ id:string;lcId:string;lcSnapshot:PkeLc;documentField?:string;requirements:string;reason:string;
  status:"PENDING"|"APPROVED"|"REJECTED";
  requestedById:string;requestedBy:string;requestedAt:string;
  reviewedById?:string;reviewedBy?:string;reviewedAt?:string;reviewNote?:string;
 };
 export function lcBypassBlocksPayment(payload:PkeImportPayload):boolean {
  const latest=new Map<string,PkeLcBypass>();
- for(const request of payload.bypasses??[])latest.set(request.lcId,request);
+ for(const request of payload.bypasses??[])latest.set(`${request.lcId}::${request.documentField??"legacy"}`,request);
  return [...latest.values()].some(request=>request.status!=="APPROVED" || JSON.stringify(request.lcSnapshot)!==JSON.stringify(payload.lcs?.find(l=>l.id===request.lcId)));
 }
 
