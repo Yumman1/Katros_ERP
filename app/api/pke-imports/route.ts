@@ -213,7 +213,7 @@ export async function POST(request: Request) {
         if(before.references["Dubai sale trade reference"]!==payload.references["Dubai sale trade reference"])throw new Error("Cannot change the sale linked to a payment voucher");
         if(payment.bl){
           const amountField=payment.side==="PAK_DUBAI"?"Dubai BL invoice amount":"Supplier BL invoice amount";
-          if(before.references["Bill of lading"]!==payload.references["Bill of lading"]||before.references[amountField]!==payload.references[amountField])throw new Error("Cannot change a BL reference or invoice value used by a payment voucher");
+          if(before.references["Bill of lading"]!==payload.references["Bill of lading"]||(!before.references[amountField]&&before.references["Commercial invoice MT"]!==payload.references["Commercial invoice MT"])||before.references[amountField]!==payload.references[amountField])throw new Error("Cannot change a BL reference or invoice value used by a payment voucher");
         }
         if(payment.lcId&&JSON.stringify(before.lcs?.find(l=>l.id===payment.lcId))!==JSON.stringify(payload.lcs?.find(l=>l.id===payment.lcId)))throw new Error("Cannot change an LC used by a payment voucher");
       }

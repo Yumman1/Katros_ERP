@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import type {Prisma} from '@prisma/client';
 import {pkePaymentOptions,reservePkePayment,validatePkePaymentApproval} from './pke-import-payments';
 function fixture(internal=false){
- const trade={commodity:{code:'PKE'},direction:'BUY',paymentType:'LC',currency:'USD',tradeParams:internal?{tradingEntity:'Kastros PAK',internalCounterpartyEntity:'FZCO'}:{tradingEntity:'Kastros FZCO'}};
+ const trade={pricePerCanonicalQty:200,commodity:{code:'PKE'},direction:'BUY',paymentType:'LC',currency:'USD',tradeParams:internal?{tradingEntity:'Kastros PAK',internalCounterpartyEntity:'FZCO'}:{tradingEntity:'Kastros FZCO'}};
  const side=internal?'PAK_DUBAI':'DUBAI_SUPPLIER';
  const payload={references:{'Bill of lading':'BL-1','Supplier BL invoice amount':'1000','Dubai BL invoice amount':'1200'},lcs:[{id:'lc1',reference:'LC1',side,currency:'USD',amount:'800'}]};
  const payments:{id:string;status:string;pkePayment:Record<string,unknown>}[]=[];
@@ -28,7 +28,7 @@ test('shared internal voucher selects Pakistan-to-Dubai LC and its own invoice v
 });
 test('wrong file, LC side, missing BL amount and unsupported currency are rejected',async()=>{
  const f=fixture();await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'other',bl:true,lcId:'lc1'},280,280),/does not belong/);
- f.payload.references['Supplier BL invoice amount']='';await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true,lcId:'lc1'},280,280),/invoice amount/);
+ f.payload.references['Supplier BL invoice amount']='';await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true,lcId:'lc1'},280,280),/invoice weight/);
  f.payload.lcs[0].side='PAK_DUBAI';await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:false,lcId:'lc1'},280,280),/correct payment side/);
  f.payload.lcs[0].side='DUBAI_SUPPLIER';f.payload.lcs[0].currency='AED';await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:false,lcId:'lc1'},280,280),/currency/);
 });
@@ -66,3 +66,5 @@ test('one LC shared across BL files consumes a single limit',async()=>{
  const [option]=await pkePaymentOptions('BUY',f.db);assert.equal(option.blAvailable,1000);assert.equal(option.lcs[0].available,500);
  await assert.rejects(reservePkePayment(f.db,'BUY',{fileId:'file',bl:true,lcId:'lc1'},140002.8,280),/LC limit/);
 });
+
+test('new BL uses invoice weight and agreed rate less reservations',async()=>{const f=fixture();f.payload.references['Supplier BL invoice amount']='';Object.assign(f.payload.references,{'Commercial invoice MT':'4'});f.add(300);const [option]=await pkePaymentOptions('BUY',f.db);assert.equal(option.blAvailable,500);});

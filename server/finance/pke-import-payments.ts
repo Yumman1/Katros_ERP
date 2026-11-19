@@ -19,7 +19,8 @@ export async function pkePaymentOptions(tradeRef:string, db:Prisma.TransactionCl
  return files.map(file=>{
   const payload=file.payload as unknown as PkeImportPayload;
   const rows=allocations.filter(v=>v.payment?.fileId===file.id&&v.payment.side===side);
-  const blAmount=number(payload.references[internal?'Dubai BL invoice amount':'Supplier BL invoice amount']);
+  const saved=payload.references[internal?'Dubai BL invoice amount':'Supplier BL invoice amount'];
+  const blAmount=saved?.trim()?number(saved):round(number(payload.references['Commercial invoice MT'])*number(trade.pricePerCanonicalQty??trade.price));
   const blUsed=rows.filter(v=>v.payment?.bl).reduce((s,v)=>s+number(v.payment?.amount),0);
   return {fileId:file.id,title:file.title,side,paymentType:trade.paymentType,currency:trade.currency,blNo:payload.references['Bill of lading']||null,blAmount,
    blAvailable:round(Math.max(0,blAmount-blUsed)),
@@ -45,7 +46,7 @@ export async function reservePkePayment(db:Prisma.TransactionClient,tradeRef:str
  const amount=round(amountPkr/(option.currency==='USD'?fx:1));
  if(!Number.isFinite(amount)||amount<=0)throw new Error('Invalid payment exchange rate');
  if(!selection.bl&&!selection.lcId)throw new Error('Select a BL or an LC for this import payment');
- if(selection.bl&&(!option.blNo||option.blAmount<=0))throw new Error('Save the BL reference and invoice amount in Import Files first');
+ if(selection.bl&&(!option.blNo||option.blAmount<=0))throw new Error('Record the BL reference and commercial invoice weight, and check the agreed trade rate first');
  if(selection.bl&&amount>option.blAvailable+.005)throw new Error('Payment exceeds the BL balance including pending vouchers');
  const lc=selection.lcId?option.lcs.find(l=>l.id===selection.lcId):undefined;
  if(selection.lcId&&(!lc||!lc.reference))throw new Error('Select a saved LC for the correct payment side');
