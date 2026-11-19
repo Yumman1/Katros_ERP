@@ -17,13 +17,15 @@ export async function pkePortRows(db:Prisma.TransactionClient=prisma){
  const trades=await db.trade.findMany({where:{commodity:{code:'PKE'},tradeStatus:{not:'CANCELLED'}},include:{contract:true,counterparty:true}});
  return files.map(f=>{
   const refs=(f.payload as unknown as PkeImportPayload).references;
-  const quantity=n(refs['Vessel received MT']);
+  const invoicedMt=n(refs['Commercial invoice MT']);
+  const landed=refs['Vessel received MT']!=null&&refs['Vessel received MT']!=='';
+  const quantity=landed?n(refs['Vessel received MT']):invoicedMt;
   const location=portLocation(f.id,refs['Arrival port']??'',refs['Vessel name']??'');
   const shifted=shifts.filter(s=>s.fromWarehouseName===location).reduce((a,s)=>a+n(s.dispatchedQtyMt),0);
   const moved=f.portMovements.reduce((s,m)=>s+n(m.quantityMt),0)+shifted;
   const sales=trades.filter(t=>portFileId(t.tradeParams)===f.id&&t.direction==='SELL');
   const booked=sales.reduce((s,t)=>s+Math.max(0,n(t.quantity)-f.portMovements.filter(m=>m.saleTradeRef===t.tradeRef).reduce((a,m)=>a+n(m.quantityMt),0)),0);
-  return {location,id:f.id,title:f.title,purchaseTradeRef:f.purchaseTradeRef,saleTradeRef:refs['Dubai sale trade reference']??'',blNo:refs['Bill of lading']??'',vessel:refs['Vessel name']??'',port:refs['Arrival port']??'',arrivalDate:refs['Vessel arrival date']??'',quantityMt:quantity,warehouseMt:f.portMovements.filter(m=>m.kind==='WAREHOUSE').reduce((s,m)=>s+n(m.quantityMt),0),soldMt:f.portMovements.filter(m=>m.kind==='PORT_SALE').reduce((s,m)=>s+n(m.quantityMt),0),remainingMt:Math.max(0,quantity-moved),freeMt:Math.max(0,quantity-moved-booked),sales:sales.map(t=>({tradeRef:t.tradeRef,buyer:t.counterparty.name,quantityMt:n(t.quantity),locked:!!t.contract&&['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus),remainingMt:Math.max(0,n(t.quantity)-f.portMovements.filter(m=>m.saleTradeRef===t.tradeRef).reduce((s,m)=>s+n(m.quantityMt),0))}))};
+  return {invoicedMt,location,id:f.id,title:f.title,purchaseTradeRef:f.purchaseTradeRef,saleTradeRef:refs['Dubai sale trade reference']??'',blNo:refs['Bill of lading']??'',vessel:refs['Vessel name']??'',port:refs['Arrival port']??'',arrivalDate:landed?(refs['Vessel arrival date']??''):'',quantityMt:quantity,warehouseMt:f.portMovements.filter(m=>m.kind==='WAREHOUSE').reduce((s,m)=>s+n(m.quantityMt),0),soldMt:f.portMovements.filter(m=>m.kind==='PORT_SALE').reduce((s,m)=>s+n(m.quantityMt),0),remainingMt:Math.max(0,quantity-moved),freeMt:landed?Math.max(0,quantity-moved-booked):0,sales:sales.map(t=>({tradeRef:t.tradeRef,buyer:t.counterparty.name,quantityMt:n(t.quantity),locked:!!t.contract&&['LOCKED','CONFIRMED','EXECUTED'].includes(t.tradeStatus),remainingMt:Math.max(0,n(t.quantity)-f.portMovements.filter(m=>m.saleTradeRef===t.tradeRef).reduce((s,m)=>s+n(m.quantityMt),0))}))};
  });
 }
 export async function guardPkePortBooking(db:Prisma.TransactionClient,input:{code:string;direction:string;params:unknown;quantity:number;tradeScope?:string;excludeRef?:string}){

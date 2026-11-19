@@ -5,7 +5,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/server/db";
 import { tradeEntity, internalEntity, pkeImportSale } from "@/lib/sesame-entity";
-import { canUploadPkeDocument, missingDubaiLc, canApprovePkeLcBypass, emptyPkeImport, PKE_UPLOAD_FIELDS, normalizePkeReferences, PKE_IMPORT_STAGES, type PkeImportPayload } from "@/lib/pke-import";
+import { shipmentStage, canUploadPkeDocument, missingDubaiLc, canApprovePkeLcBypass, emptyPkeImport, PKE_UPLOAD_FIELDS, normalizePkeReferences, PKE_IMPORT_STAGES, type PkeImportPayload } from "@/lib/pke-import";
 import { saveGatepassDocuments, getGatepassDocumentUrl } from "@/server/gatepass-documents";
 import { randomUUID } from "crypto";
 import { readFile } from "fs/promises";
@@ -55,7 +55,7 @@ export async function GET(request: Request) {
     const trades=await prisma.trade.findMany({where:{commodity:{code:"PKE"},tradeStatus:{not:"CANCELLED"}},include:{counterparty:true,contract:true},orderBy:{tradeDate:"desc"}});
     const sales=trades.filter(t=>pkeImportSale("PKE",t.direction,t.tradeParams));
     const receipts=await prisma.inboundReceipt.findMany({where:{tradeRef:{in:sales.map(t=>t.tradeRef)},status:{not:"DRAFT"},gatepassNo:{not:null},pkeTripartyReceipt:{is:null}},select:{id:true,tradeRef:true,gatepassNo:true,truckNo:true,allocatedQtyMt:true}});
-    return NextResponse.json({executionEntity:isDubaiExecution(viewer)?"FZCO":"PAK",canApproveBypasses:canApprovePkeLcBypass(viewer),files:(await prisma.pkeImportFile.findMany({include:{receipts:{include:{receipt:{select:{gatepassNo:true,truckNo:true}}}}},orderBy:{updatedAt:"desc"}})).map(f=>({...f,stage:missingDubaiLc(f.payload as unknown as PkeImportPayload,trades.find(t=>t.tradeRef===f.purchaseTradeRef)?.paymentType)?Math.min(f.stage,PKE_IMPORT_STAGES.length-1):f.stage})),
+    return NextResponse.json({executionEntity:isDubaiExecution(viewer)?"FZCO":"PAK",canApproveBypasses:canApprovePkeLcBypass(viewer),files:(await prisma.pkeImportFile.findMany({include:{receipts:{include:{receipt:{select:{gatepassNo:true,truckNo:true}}}}},orderBy:{updatedAt:"desc"}})).map(f=>({...f,stage:missingDubaiLc(f.payload as unknown as PkeImportPayload,trades.find(t=>t.tradeRef===f.purchaseTradeRef)?.paymentType)?Math.min(shipmentStage(f.stage,f.payload as unknown as PkeImportPayload),1):shipmentStage(f.stage,f.payload as unknown as PkeImportPayload)})),
       purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,tradeDate:t.tradeDate,pricePerMt:Number(t.pricePerCanonicalQty??t.price),commission:Number(t.commissionAmount??0)*(t.priceCurrency==="USd"?0.01:1),quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency,paymentType:t.paymentType})),
       sales:sales.map(t=>({tradeRef:t.tradeRef,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),paymentType:t.paymentType,currency:t.currency})),receipts});
   } catch(error) { return failure(error); }
@@ -153,24 +153,30 @@ export async function POST(request: Request) {
       payload.lcs=data.lcs;
     }
     payload.references=normalizePkeReferences(data.references);
-    const stage=data.action==="advance"?Math.min(row.stage+1,PKE_IMPORT_STAGES.length):Math.min(row.stage,PKE_IMPORT_STAGES.length);
+    const previousStage=shipmentStage(row.stage,payload);payload.workflowVersion=2;
+    const stage=data.action==="advance"?Math.min(previousStage+1,PKE_IMPORT_STAGES.length):Math.min(previousStage,PKE_IMPORT_STAGES.length);
     payload.history.push({at:new Date().toISOString(),actor:name,action:data.action==="advance"?`Advanced to ${PKE_IMPORT_STAGES[stage]?.title??"Completed"} (testing: document checks optional)`:"Updated references"});
     const result=await prisma.$transaction(async tx=>{
       await tx.$queryRaw`SELECT id FROM "PkeImportFile" WHERE id=${data.id} FOR UPDATE`;
       const current=await tx.pkeImportFile.findUniqueOrThrow({where:{id:data.id}});
       if(current.revision!==data.revision)throw new Error("This file changed. Refresh before saving");
       const before=current.payload as unknown as PkeImportPayload;
-      if(before.shipmentReviews?.some(q=>q.status==='PENDING'||q.status==='APPROVED'))for(const key of ['BL quantity MT','Vessel received MT','Dubai sale trade reference','Bill of lading'])if(before.references[key]!==payload.references[key])throw new Error('Resolve the shipment approval before changing its quantities or references');
+      if(before.shipmentReviews?.some(q=>q.status==='PENDING'||q.status==='APPROVED'))for(const key of ['Commercial invoice MT','BL quantity MT','Vessel received MT','Dubai sale trade reference','Bill of lading'])if(before.references[key]!==payload.references[key])throw new Error('Resolve the shipment approval before changing its quantities or references');
       const supplier=await tx.trade.findUniqueOrThrow({where:{tradeRef:current.purchaseTradeRef},include:{contract:true}});
       for(const ref of [current.purchaseTradeRef,saleRef].filter(Boolean).sort())await tx.$queryRaw`SELECT id FROM "ExecutionContract" WHERE "tradeRef"=${ref} FOR UPDATE`;
       const related=await tx.pkeImportFile.findMany({where:{purchaseTradeRef:current.purchaseTradeRef,id:{not:current.id}}});
       const blQty=Number(payload.references['BL quantity MT']||0),arrived=Number(payload.references['Vessel received MT']||0);
-      if(!Number.isFinite(blQty)||blQty<0||!Number.isFinite(arrived)||arrived<0||arrived>blQty+.000001)throw new Error('Vessel quantity must be positive and no more than the BL quantity');
+      const inv=Number(payload.references["Commercial invoice MT"]||0);
+      if(!Number.isFinite(inv)||inv<0||(inv>0&&!payload.documents.some(d=>d.field==="Commercial invoice")))throw new Error("Upload the commercial invoice before recording its weight");
+      const otherInvoiced=related.reduce((sum,f)=>sum+Number((f.payload as unknown as PkeImportPayload).references["Commercial invoice MT"]||0),0);
+      if(inv&&inv+otherInvoiced>Number(supplier.quantity)+Number(supplier.contract?.quantityToleranceMt??0)+.000001)throw new Error("Invoice weight exceeds the remaining purchase quantity and tolerance");
+      if(payload.references["Vessel received MT"]==="0"&&!payload.references["Vessel arrival date"])throw new Error("Enter arrival date for zero landing weight");
+      if(!Number.isFinite(blQty)||blQty<0||!Number.isFinite(arrived)||arrived<0||arrived>Math.max(inv,blQty)+.000001)throw new Error('Vessel quantity must be positive and no more than the BL quantity');
       if(arrived>0&&(!/^\d{4}-\d{2}-\d{2}$/.test(payload.references['Vessel arrival date']??'')||!Number.isFinite(Date.parse(payload.references['Vessel arrival date']))))throw new Error('Enter a valid vessel arrival date');
       if(arrived>0&&(!payload.references['Vessel name']?.trim()||!payload.references['Arrival port']?.trim()||!payload.references['Vessel arrival date']||!payload.references['Bill of lading']?.trim()||!saleRef))throw new Error('Record vessel, port, arrival date, BL number and linked Dubai sale before receiving stock at port');
       if(supplier.tradeStatus==='CANCELLED')throw new Error('Import cancelled');
       const otherQty=related.reduce((sum,f)=>sum+Number((f.payload as unknown as PkeImportPayload).references['BL quantity MT']||0),0);
-      if(data.action==='advance'&&row.stage>=PKE_IMPORT_STAGES.length-1&&otherQty+blQty<Number(supplier.quantity)-Number(supplier.contract?.quantityToleranceMt??0)-.000001&&![current,...related].some(f=>(f.payload as unknown as PkeImportPayload).shipmentReviews?.some(q=>q.kind==='SHORTFALL'&&q.status==='APPROVED'&&Math.abs(q.quantityMt-(Number(supplier.quantity)-otherQty-blQty))<.000001)))throw new Error('Save all BL quantities, then request trader approval of the final shortfall before completing the import');
+      if(data.action==='advance'&&previousStage>=PKE_IMPORT_STAGES.length-1&&otherQty+blQty<Number(supplier.quantity)-Number(supplier.contract?.quantityToleranceMt??0)-.000001&&![current,...related].some(f=>(f.payload as unknown as PkeImportPayload).shipmentReviews?.some(q=>q.kind==='SHORTFALL'&&q.status==='APPROVED'&&Math.abs(q.quantityMt-(Number(supplier.quantity)-otherQty-blQty))<.000001)))throw new Error('Save all BL quantities, then request trader approval of the final shortfall before completing the import');
       if(otherQty+blQty>Number(supplier.quantity)+.000001)throw new Error('Combined BL quantities exceed the supplier purchase contract');
       if(saleRef){
         await tx.$queryRaw`SELECT id FROM "ExecutionContract" WHERE "tradeRef"=${saleRef} FOR UPDATE`;
@@ -181,7 +187,7 @@ export async function POST(request: Request) {
       const movementCount=await tx.pkePortMovement.count({where:{importFileId:current.id}})+await tx.trade.count({where:{tradeStatus:{not:'CANCELLED'},tradeParams:{path:['pkePortFileId'],equals:current.id}}});
       const {portLocation}=await import('@/server/execution/pke-port');
       const shifts=await tx.stockTransfer.count({where:{commodityCode:'PKE',fromWarehouseName:portLocation(current.id,before.references['Arrival port']??'',before.references['Vessel name']??''),status:{not:'CANCELLED'}}});
-      if(movementCount||shifts)for(const key of ['Vessel name','Arrival port','Vessel arrival date','Vessel received MT','BL quantity MT','Bill of lading','Dubai sale trade reference'])if(before.references[key]!==payload.references[key])throw new Error('Cannot change vessel or BL quantity references after a port movement');
+      if(movementCount||shifts)for(const key of ['Commercial invoice MT','Vessel name','Arrival port','Vessel arrival date','Vessel received MT','BL quantity MT','Bill of lading','Dubai sale trade reference'])if(before.references[key]!==payload.references[key])throw new Error('Cannot change vessel or BL quantity references after a port movement');
       const siblings=await tx.pkeImportFile.findMany({where:{id:{not:current.id},OR:[{purchaseTradeRef:current.purchaseTradeRef},...(saleRef?[{payload:{path:['references','Dubai sale trade reference'],equals:saleRef}}]:[])]}});
       for(const lc of payload.lcs??[]){
         if(!lc.reference.trim())continue;

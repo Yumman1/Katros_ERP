@@ -24,7 +24,7 @@ test('phyto reference always follows permit; documents exclude generated contrac
  assert.ok(PKE_UPLOAD_FIELDS.includes('Certificate of origin'));
  assert.ok(PKE_UPLOAD_FIELDS.includes('Bill of lading'));
  assert.ok(PKE_UPLOAD_FIELDS.includes("Supplier sales contract"));
- assert.ok(!PKE_UPLOAD_FIELDS.some(f=>/invoice/i.test(f)));
+ assert.ok(PKE_UPLOAD_FIELDS.includes("Commercial invoice"));assert.ok(!PKE_UPLOAD_FIELDS.includes("Fumigation certificate"));
 });
 
 test('partial receipts preserve the remainder and reject over-receipt',()=>{
@@ -37,7 +37,7 @@ test('partial receipts preserve the remainder and reject over-receipt',()=>{
 });
 
 test('Dubai import stages exclude Pakistan receipt, clearance and local delivery',()=>{
- assert.equal(PKE_IMPORT_STAGES.length,4);
+ assert.equal(PKE_IMPORT_STAGES.length,2);
  assert.ok(!PKE_IMPORT_STAGES.some(s=>/clearance|gate-in|local delivery/i.test(s.title)));
 });
 test('only an active execution head can approve LC bypass',()=>{

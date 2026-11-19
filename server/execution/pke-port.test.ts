@@ -22,3 +22,11 @@ test('booking cannot oversell port stock or use a Dubai/international trade',asy
 test('editing a partially delivered sale preserves its reservation',async()=>{
  const f=fixture();await guardPkePortBooking(f.db,{code:'PKE',direction:'SELL',params:{tradingEntity:'Kastros PAK',pkePortFileId:'file'},tradeScope:'LOCAL',quantity:80,excludeRef:'SALE'});
 });
+
+test('invoiced stock is unavailable for dispatch until landing replaces its weight',async()=>{
+ const f=fixture(), refs=f.file.payload.references as Record<string,string>;
+ f.file.portMovements=[];f.trades.length=0;refs['Commercial invoice MT']='200';delete refs['Vessel received MT'];
+ const [invoice]=await pkePortRows(f.db);assert.equal(invoice.remainingMt,200);assert.equal(invoice.freeMt,0);
+ refs['Vessel received MT']='195';const [landed]=await pkePortRows(f.db);assert.equal(landed.remainingMt,195);assert.equal(landed.freeMt,195);
+ refs['Vessel received MT']='0';assert.equal((await pkePortRows(f.db))[0].remainingMt,0);
+});

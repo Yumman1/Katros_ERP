@@ -37,11 +37,12 @@ export async function sesameBook(code: string) {
   const physicalPak = [...physical.values()].reduce((a,b) => a+b, 0);
   const market = (await getSeasonNetPositions()).find(p => p.commodityCode === code);
   const contracts = new Map(trades.map(t => [t.tradeRef, t.contract]));
+  const ports=code==='PKE'?await (await import('./pke-port')).pkePortRows():[];
   const positions = (["PAK", "FZCO"] as const).map(entity => {
     const own = rows.filter(t => t.sesameType !== "Impurities" && (t.entity === entity || t.internalEntity === entity));
     const open = own.filter(t => ["PENDING", "LOCKED", "CONFIRMED", "EXECUTED"].includes(t.status) && t.submitted);
     const side = (t: typeof rows[number]) => t.entity === entity ? t.direction : t.direction === "BUY" ? "SELL" : "BUY";
-    const qty = (t: typeof rows[number]) => code === "PKE" ? (t.contractStatus === "Close" ? 0 : t.quantityMt) : sesameBookQty({ quantityMt: t.quantityMt, openMt: t.openMt, receivedMt: t.receivedMt, internal: t.internalEntity != null, closeOnPayment: t.closeOnPayment, contractStatus: t.contractStatus, asEntity: entity });
+    const qty = (t: typeof rows[number]) => code === "PKE" ? (t.contractStatus === "Close" ? 0 : Math.max(0,t.quantityMt-(side(t)==="BUY"?ports.filter(p=>p.purchaseTradeRef===t.tradeRef||p.saleTradeRef===t.tradeRef).reduce((sum,p)=>sum+p.invoicedMt,0):0))) : sesameBookQty({ quantityMt: t.quantityMt, openMt: t.openMt, receivedMt: t.receivedMt, internal: t.internalEntity != null, closeOnPayment: t.closeOnPayment, contractStatus: t.contractStatus, asEntity: entity });
     const buys = open.filter(t => side(t) === "BUY").reduce((sum,t) => sum+qty(t), 0);
     const sells = open.filter(t => side(t) === "SELL").reduce((sum,t) => sum+qty(t), 0);
     const physicalSells = open.filter(t => side(t) === "SELL").reduce((sum,t) => sum+t.openMt, 0);
@@ -58,7 +59,7 @@ export async function sesameBook(code: string) {
   });
   const openSales = trades.filter((t) => ["PENDING", "LOCKED", "CONFIRMED", "EXECUTED"].includes(t.tradeStatus) && !t.directSettled);
   const unassignedBookedMt = openSales.reduce((s, t) => s + unassignedPakistanSaleMt(t), 0);
-  const ports=code==='PKE'?await (await import('./pke-port')).pkePortRows():[];
+
   const warehouses = await Promise.all([...physical].map(async ([name, quantityMt]) => {
     const port=ports.find(p=>p.location===name);
     const bookedMt = port ? Math.max(0,port.remainingMt-port.freeMt) : openSales.reduce((s, t) => s + bookedPakistanSaleKgAtWarehouse(t, name) / 1000, 0);

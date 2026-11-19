@@ -9,7 +9,7 @@ const n=(v:unknown)=>Number(v??0);
 export async function shipmentReviews(user:User){
  const [files,trades]=await Promise.all([prisma.pkeImportFile.findMany({orderBy:{updatedAt:'desc'}}),prisma.trade.findMany({where:{commodity:{code:'PKE'}},include:{contract:true}})]);
  return files.flatMap(f=>{const t=trades.find(t=>t.tradeRef===f.purchaseTradeRef);if(!t||user.role==='TRADER'&&!traderNamesMatch(t.traderName,user.name??user.email))return [];
- const p=f.payload as unknown as PkeImportPayload;return [{id:f.id,title:f.title,tradeRef:f.purchaseTradeRef,saleRef:p.references['Dubai sale trade reference'],contractMt:n(t.quantity),toleranceMt:n(t.contract?.quantityToleranceMt),blMt:n(p.references['BL quantity MT']),receivedMt:n(p.references['Vessel received MT']),arrived:!!p.references['Vessel arrival date'],reviews:p.shipmentReviews??[]}];});
+ const p=f.payload as unknown as PkeImportPayload;return [{id:f.id,title:f.title,tradeRef:f.purchaseTradeRef,saleRef:p.references['Dubai sale trade reference'],contractMt:n(t.quantity),toleranceMt:n(t.contract?.quantityToleranceMt),invoiceMt:n(p.references['Commercial invoice MT']),blMt:n(p.references['BL quantity MT']),receivedMt:n(p.references['Vessel received MT']),arrived:!!p.references['Vessel arrival date']&&!!p.references['Vessel received MT'],reviews:p.shipmentReviews??[]}];});
 }
 export async function registerInsurer(name:string,user:User){return prisma.$transaction(async tx=>{await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('pke-insurers'))::text`;const old=await tx.counterparty.findFirst({where:{name:{equals:name,mode:'insensitive'},code:{startsWith:'INS-'}}});return old??tx.counterparty.create({data:{code:`INS-${randomUUID().slice(0,12)}`,name,type:'TRADING_PARTNER',country:'Pakistan',tradingEntities:['PAK','FZCO'],createdById:user.id}});});}
 export async function reviewShipment(input:{id:string;action:'INSURANCE'|'SHORTFALL'|'APPROVED'|'REJECTED'|'CANCELLED';reviewId?:string;insurerId?:string;reason:string},user:User){return prisma.$transaction(async tx=>{
@@ -23,10 +23,11 @@ export async function reviewShipment(input:{id:string;action:'INSURANCE'|'SHORTF
   if(!['EXECUTION','CEO'].includes(user.role))throw new Error('Only Execution can request approval');
   if(p.shipmentReviews.some(q=>q.kind===input.action&&['PENDING','APPROVED'].includes(q.status)))throw new Error('A request already exists');
   const bl=n(p.references['BL quantity MT']),received=n(p.references['Vessel received MT']),tolerance=n(trade.contract.quantityToleranceMt);
-  const loss=pkeShortage(bl,received,tolerance);let quantity=loss.missing;
-  if(input.action==='INSURANCE'&&(!p.references['Vessel arrival date']||!loss.claimable||!input.insurerId))throw new Error('Select an insurer after arrival; shortage must exceed tolerance');
+  const invoice=n(p.references['Commercial invoice MT']);let quantity=0;
+  if(input.action==='INSURANCE'){if(!invoice||!p.references['Vessel received MT'])throw new Error('Record invoice and landing weights first');const loss=pkeShortage(invoice,received,invoice*.005);if(!loss.claimable)throw new Error('Shortage must exceed 0.5%');quantity=loss.missing;}
+  if(input.action==='INSURANCE'&&(!p.references['Vessel arrival date']))throw new Error('Select an insurer after arrival; shortage must exceed tolerance');
   if(input.action==='SHORTFALL'){const siblings=await tx.pkeImportFile.findMany({where:{purchaseTradeRef:trade.tradeRef}});quantity=n(trade.quantity)-siblings.reduce((s,f)=>s+n((f.payload as unknown as PkeImportPayload).references['BL quantity MT']),0);if(quantity<=tolerance+.000001)throw new Error('Combined BL quantity is within contract tolerance');}
-  const insurer=input.action==='INSURANCE'?await tx.counterparty.findFirst({where:{id:input.insurerId,code:{startsWith:'INS-'}}}):null;
+  const insurer=input.action==='INSURANCE'?await tx.counterparty.findFirst({where:{name:{equals:'ATLAS',mode:'insensitive'},code:{startsWith:'INS-'}}}):null;
   if(input.action==='INSURANCE'&&(!insurer||n(trade.contract.ratePerKg)<=0))throw new Error('Select a registered insurer and lock a positive purchase rate');
   p.shipmentReviews.push({id:randomUUID(),kind:input.action,status:'PENDING',reason:input.reason,requestedBy:name,requestedAt:new Date().toISOString(),quantityMt:quantity,amountPkr:Math.round(quantity*1000*n(trade.contract.ratePerKg)*100)/100,blMt:bl,receivedMt:received,...(insurer?{insurerId:insurer.id,insurerName:insurer.name}:{})});
  }else{
