@@ -39,7 +39,8 @@ export function calculatePkeCost(input:{invoiceAmount:number;quantityMt:number;c
  const exPort=cfr+insurance+duties+sales+income+cess+portCharges;
  const exWarehouse=exPort+addCost('transportPerMt','Port-to-warehouse transport')+addCost('warehousePerMt','Warehouse (3 months)');
  const delivered=exWarehouse+addCost('deliveryPerMt','Customer delivery');
- return {lines,customsBase,landingAllowance:landing,taxes:duties+sales+income+cess,exPort,exWarehouse,delivered,perMt:delivered/qty,perBag:delivered/qty/20,usdPerMt:delivered/qty/input.exchangeRate};
+ const entryRatePkrPerKg = ((exPort - sales - income) / qty - policy.bagsPerMt) / 1000;
+ return {entryRatePkrPerKg,lines,customsBase,landingAllowance:landing,taxes:duties+sales+income+cess,exPort,exWarehouse,delivered,perMt:delivered/qty,perBag:delivered/qty/20,usdPerMt:delivered/qty/input.exchangeRate};
 }
 
 export const PKE_TAX_KEYS: readonly PkeCostKey[] = ['customsDutyPct','additionalCustomsDutyPct','regulatoryDutyPct','salesTaxPct','additionalSalesTaxPct','incomeTaxPct','additionalIncomeTaxPct'];

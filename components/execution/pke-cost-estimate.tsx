@@ -25,6 +25,7 @@ export function PkeCostEstimate({invoiceAmount,quantityMt,currency='USD',compact
     <span className="text-xs uppercase tracking-wide">Ex Port</span>
     <p className="mt-2 text-lg font-semibold">PKR {money(estimate.exPort)}</p>
     <p className="mt-1 text-sm">PKR {money(estimate.exPort / quantityMt)} / MT · PKR {money(estimate.exPort / (quantityMt * 20))} / 50 kg bag</p>
+    <p className="mt-1 text-sm">Entry rate: PKR {money(estimate.entryRatePkrPerKg)} / kg</p>
    </div>
     <div className="rounded-2xl bg-accent-secondary/10 p-5"><span className="text-xs uppercase tracking-wide">Ex Warehouse</span><p className="mt-2 text-lg font-semibold">PKR {money(estimate.exWarehouse)}</p></div>
     <div className="rounded-2xl bg-emerald-500/10 p-5 text-success"><span className="text-xs uppercase tracking-wide">Delivered total</span><p className="mt-2 text-lg font-semibold">PKR {money(estimate.delivered)}</p></div>

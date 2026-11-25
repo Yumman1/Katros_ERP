@@ -1,3 +1,5 @@
+import { calculatePkeCost, DEFAULT_PKE_COST_POLICY } from "@/lib/pke-costing";
+import { getFinancePolicy } from "@/server/finance/policy";
 import {custodyRows} from './fzco-custody';
 import { sesameGrade } from "@/lib/sesame-processing";
 import { Prisma } from "@prisma/client";
@@ -38,6 +40,22 @@ export async function sesameBook(code: string) {
   const market = (await getSeasonNetPositions()).find(p => p.commodityCode === code);
   const contracts = new Map(trades.map(t => [t.tradeRef, t.contract]));
   const ports=code==='PKE'?await (await import('./pke-port')).pkePortRows():[];
+  let pakistanPkeEntryPerMaund: number | null = null;
+  if (code === "PKE") {
+    const policy = (await getFinancePolicy()).pkeCosting ?? DEFAULT_PKE_COST_POLICY;
+    const purchases = new Map(rows.filter(t => t.entity === "PAK" && t.direction === "BUY").map(t => [t.tradeRef, t]));
+    let totalCost = 0;
+    let totalKg = 0;
+    for (const shipment of ports) {
+      const purchase = purchases.get(shipment.saleTradeRef);
+      const mt = shipment.invoicedMt;
+      if (!purchase || mt <= 0 || purchase.price <= 0 || (purchase.currency !== "USD" && purchase.currency !== "PKR")) continue;
+      const estimate = calculatePkeCost({invoiceAmount: purchase.price * mt, quantityMt: mt, currency: purchase.currency, exchangeRate: policy.exchangeRate}, policy);
+      totalCost += estimate.entryRatePkrPerKg * mt * 1000;
+      totalKg += mt * 1000;
+    }
+    if (totalKg > 0) pakistanPkeEntryPerMaund = totalCost / totalKg * 40;
+  }
   const positions = (["PAK", "FZCO"] as const).map(entity => {
     const own = rows.filter(t => t.sesameType !== "Impurities" && (t.entity === entity || t.internalEntity === entity));
     const open = own.filter(t => ["PENDING", "LOCKED", "CONFIRMED", "EXECUTED"].includes(t.status) && t.submitted);
@@ -50,7 +68,7 @@ export async function sesameBook(code: string) {
     const fzcoBuys = open.filter(t => side(t) === "BUY");
     const fzcoBuyQty = fzcoBuys.reduce((s,t) => s+qty(t), 0);
     const fzcoBuyValue = fzcoBuys.reduce((s,t) => s+qty(t)*n(contracts.get(t.tradeRef)?.ratePerMaund), 0);
-    const entryRate = entity === "FZCO" ? (fzcoBuyQty > 0 ? fzcoBuyValue/fzcoBuyQty : null) : market?.tradeEntryRatePkrPerMaund ?? null;
+    const entryRate = entity === "FZCO" ? (fzcoBuyQty > 0 ? fzcoBuyValue/fzcoBuyQty : null) : code === "PKE" ? pakistanPkeEntryPerMaund : market?.tradeEntryRatePkrPerMaund ?? null;
     const marketRate = market?.marketRatePkrPerMaund ?? null;
     const inOut = entryRate != null && marketRate != null ? marketRate-entryRate : null;
     const netQty = entity === "FZCO" ? buys-sells : owned+buys-sells;
