@@ -34,19 +34,22 @@ export function SesamePositionView({ commodityCode, canEdit = true }: { commodit
   const utils = trpc.useUtils();
   const save = trpc.trader.setPositionMarketInput.useMutation({ onSuccess: () => { void utils.trader.seasonNetPositions.invalidate(); void utils.sesameExecution.book.invalidate(); void utils.sesameExecution.positionSnapshot.invalidate(); } });
   const position=data?.importPosition;
+  const dubai=data?.positions.find(p=>p.entity==="FZCO");
+  const dubaiUsdPerMt=(pkrPerMaund:number|null|undefined)=>
+    pkrPerMaund!=null && position?.fx ? pkrPerMaund*25/position.fx : null;
   if (isLoading) return <p>Loading {commodityCode} positions…</p>;
   if (error) return <p role="alert">{error.message}</p>;
   return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">{commodityCode} positions {commodityCode==="PKE"?"":"— Pakistan and Dubai FZCO"}</h2>
     {commodityCode !== "PKE" && <p className="text-sm text-muted-foreground">Pakistan holds physical inventory. Dubai FZCO is a book of open purchases and sales: a sale closes when the buyer pays FZCO; a purchase closes when FZCO pays Kastros Pakistan or the supplier.</p>}
-    {position?<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{["Position","Inventory in hand","Imports"].map(h=><th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>
+    {position?<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{["Position","Pakistan inventory in hand","Pakistan imports","Dubai FZCO"].map(h=><th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>
     {([
-      ["Net position (MT)",position.localNet,position.importMt],["Open purchases (MT)",null,position.importMt],
-      ["Inventory at warehouse (MT)",position.warehouseMt,null],["Inventory at port (MT)",position.portMt,null],["Open sales (MT)",-position.sales,null],
-      ["Market rate / CNF (PKR/kg · USD/MT)",position.localMarket,position.importMarket],
-      ["Trade entry rate / CNF (PKR/kg · USD/MT)",position.localEntry,position.importEntry],
-      ["In / out per unit",position.localDiff,position.importDiff],["In / out value (PKR)",position.localValue,position.importPkr],
-      ["In / out value (USD)",position.localUsd,position.importUsd],["FX (PKR/USD)",position.fx,null],
-    ] as const).map(([label,local,imports])=><tr key={label}><td className={cell}>{label}</td>{[local,imports].map((v,i)=><td key={i} className={cell}>{v==null?"—":v.toLocaleString("en-PK",{maximumFractionDigits:label.startsWith("FX")?4:2})}</td>)}</tr>)}
+      ["Net position (MT)",position.localNet,position.importMt,dubai?.netPositionMt],["Open purchases (MT)",null,position.importMt,dubai?.openBuyMt],
+      ["Inventory at warehouse (MT)",position.warehouseMt,null,null],["Inventory at port (MT)",position.portMt,null,null],["Open sales (MT)",-position.sales,null,dubai ? -dubai.openSellMt : null],
+      ["Market rate / CNF (PKR/kg · USD/MT)",position.localMarket,position.importMarket,dubaiUsdPerMt(dubai?.marketRatePkrPerMaund)],
+      ["Trade entry rate / CNF (PKR/kg · USD/MT)",position.localEntry,position.importEntry,dubaiUsdPerMt(dubai?.entryRatePkrPerMaund)],
+      ["In / out per unit",position.localDiff,position.importDiff,dubaiUsdPerMt(dubai?.inOutPkrPerMaund)],["In / out value (PKR)",position.localValue,position.importPkr,dubai?.inOutValuePkr],
+      ["In / out value (USD)",position.localUsd,position.importUsd,dubai?.inOutValueUsd],["FX (PKR/USD)",position.fx,null,position.fx],
+    ] as const).map(([label,local,imports,fzco])=><tr key={label}><td className={cell}>{label}</td>{[local,imports,fzco].map((v,i)=><td key={i} className={cell}>{v==null?"—":v.toLocaleString("en-PK",{maximumFractionDigits:label.startsWith("FX")?4:2})}</td>)}</tr>)}
     </tbody></table></div>:    <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>Position (MT)</th>{data?.positions.map(p => <th className={cell} key={p.entity}>{ENTITY_NAMES[p.entity]}</th>)}</tr></thead><tbody>
       {([['Physical inventory (Pakistan)','ownedMt'],['Open purchases','openBuyMt'],['Open sales','openSellMt'],['Net position','netPositionMt']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{key==='ownedMt'&&p.entity==='FZCO'?'—':qty(p[key])}{key==='netPositionMt'&&p.entity==='FZCO'?(p[key]>0?' Long':p[key]<0?' Short':' Balanced'):''}</td>)}</tr>)}
       {([[commodityCode === "PKE" ? "Entry rate (PKR / kg)" : "Entry rate (PKR / maund)",'entryRatePkrPerMaund'],['Market rate (PKR / maund)','marketRatePkrPerMaund'],['In / out (PKR / maund)','inOutPkrPerMaund'],['In / out value (PKR)','inOutValuePkr'],['In / out value (USD)','inOutValueUsd']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{p[key] == null ? "—" : qty(commodityCode === "PKE" && key === "entryRatePkrPerMaund" ? p[key] / 40 : p[key])}</td>)}</tr>)}
