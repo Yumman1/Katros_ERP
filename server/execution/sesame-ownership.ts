@@ -43,18 +43,23 @@ export async function sesameBook(code: string) {
   let pakistanPkeEntryPerMaund: number | null = null;
   if (code === "PKE") {
     const policy = (await getFinancePolicy()).pkeCosting ?? DEFAULT_PKE_COST_POLICY;
-    const purchases = new Map(rows.filter(t => t.entity === "PAK" && t.direction === "BUY").map(t => [t.tradeRef, t]));
-    let totalCost = 0;
-    let totalKg = 0;
+    const invoicedMtByTrade = new Map<string, number>();
     for (const shipment of ports) {
-      const purchase = purchases.get(shipment.saleTradeRef);
-      const mt = shipment.invoicedMt;
-      if (!purchase || mt <= 0 || purchase.price <= 0 || (purchase.currency !== "USD" && purchase.currency !== "PKR")) continue;
-      const estimate = calculatePkeCost({invoiceAmount: purchase.price * mt, quantityMt: mt, currency: purchase.currency, exchangeRate: policy.exchangeRate}, policy);
-      totalCost += estimate.entryRatePkrPerKg * mt * 1000;
-      totalKg += mt * 1000;
+      if (shipment.invoicedMt > 0) {
+        const ref = shipment.saleTradeRef;
+        invoicedMtByTrade.set(ref, (invoicedMtByTrade.get(ref) ?? 0) + shipment.invoicedMt);
+      }
     }
-    if (totalKg > 0) pakistanPkeEntryPerMaund = totalCost / totalKg * 40;
+    let sumOfRates = 0;
+    let purchaseCount = 0;
+    for (const purchase of rows) {
+      const mt = invoicedMtByTrade.get(purchase.tradeRef);
+      if (purchase.entity !== "PAK" || purchase.direction !== "BUY" || !mt || purchase.price <= 0 || (purchase.currency !== "USD" && purchase.currency !== "PKR")) continue;
+      const estimate = calculatePkeCost({invoiceAmount: purchase.price * mt, quantityMt: mt, currency: purchase.currency, exchangeRate: policy.exchangeRate}, policy);
+      sumOfRates += estimate.entryRatePkrPerKg;
+      purchaseCount++;
+    }
+    if (purchaseCount > 0) pakistanPkeEntryPerMaund = sumOfRates / purchaseCount * 40;
   }
   const positions = (["PAK", "FZCO"] as const).map(entity => {
     const own = rows.filter(t => t.sesameType !== "Impurities" && (t.entity === entity || t.internalEntity === entity));
