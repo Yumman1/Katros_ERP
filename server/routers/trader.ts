@@ -963,6 +963,17 @@ export const traderRouter = router({
       tradeParams = canonical.params as typeof tradeParams;
       const direction = canonical.direction as TradeDirection;
       const internalSale = sesame && canonical.internalPakSale;
+      delete tradeParams.pkeBookingPolicy;
+      delete tradeParams.pkePortCharges;
+      delete tradeParams.pkeBookedBasis;
+      if (c.code === "PKE" && direction === "BUY") {
+        const {getFinancePolicy} = await import("@/server/finance/policy");
+        tradeParams.pkeBookingPolicy = JSON.stringify((await getFinancePolicy()).pkeCosting);
+      }
+      if (c.code === "PKE" && direction === "SELL" && input.paymentType === "CREDIT") {
+        if (!input.creditDays) throw new TRPCError({code:"BAD_REQUEST",message:"Enter the credit period in days"});
+        tradeParams.creditDays = input.creditDays;
+      }
       const pkeImport = c.code === "PKE" && direction === "BUY" && internalEntity(tradeParams) === "FZCO";
       if (pkeImport) {
         const interco = await entityCounterparty(prisma, "FZCO", ctx.session.user.id);

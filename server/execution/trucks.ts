@@ -991,6 +991,7 @@ export async function assignTruckToTrade(
         select: {
           counterpartyId: true,
           paymentType: true,
+          tradeDate: true,
           tradeParams: true,
           counterparty: { select: { taxFilerStatus: true } },
         },
@@ -1025,7 +1026,7 @@ export async function assignTruckToTrade(
         const creditDays = tradeCreditDays(tradeRow);
         const dueDate =
           creditDays != null
-            ? new Date(truck.arrivalDate.getTime() + creditDays * 86_400_000)
+            ? new Date((truckRow.commodityCode === "PKE" ? tradeRow.tradeDate : truck.arrivalDate).getTime() + creditDays * 86_400_000)
             : null;
         await postTruckLedgerDebit(
           {

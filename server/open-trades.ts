@@ -371,6 +371,11 @@ async function applyPatchToTrade(
   }
   if (patch.maxMoisturePct !== undefined) trade.maxMoisturePct = patch.maxMoisturePct;
 
+  if(patch.tradeParams){
+    for(const key of ["pkeBookingPolicy","pkePortCharges","pkeBookedBasis"]) {
+      if(key in patch.tradeParams && patch.tradeParams[key]!==trade.tradeParams?.[key])throw new Error("Saved trade costing cannot be changed here");
+    }
+  }
   let nextParams = { ...(trade.tradeParams ?? {}), ...(patch.tradeParams ?? {}) };
   if (patch.creditDays != null && patch.paymentType === "CREDIT") {
     nextParams.creditDays = patch.creditDays;

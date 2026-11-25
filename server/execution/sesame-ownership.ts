@@ -1,4 +1,4 @@
-import { calculatePkeCost, DEFAULT_PKE_COST_POLICY } from "@/lib/pke-costing";
+import { tradeCostSnapshot, calculatePkeCost, DEFAULT_PKE_COST_POLICY } from "@/lib/pke-costing";
 import { getFinancePolicy } from "@/server/finance/policy";
 import {custodyRows} from './fzco-custody';
 import { sesameGrade } from "@/lib/sesame-processing";
@@ -55,8 +55,15 @@ export async function sesameBook(code: string) {
     for (const purchase of rows) {
       const mt = invoicedMtByTrade.get(purchase.tradeRef);
       if (purchase.entity !== "PAK" || purchase.direction !== "BUY" || !mt || purchase.price <= 0 || (purchase.currency !== "USD" && purchase.currency !== "PKR")) continue;
-      const estimate = calculatePkeCost({invoiceAmount: purchase.price * mt, quantityMt: mt, currency: purchase.currency, exchangeRate: policy.exchangeRate}, policy);
-      sumOfRates += estimate.entryRatePkrPerKg;
+      const booked=tradeCostSnapshot(trades.find(t=>t.tradeRef===purchase.tradeRef)?.tradeParams);
+      let weightedRate=0;
+      for(const shipment of ports.filter(p=>p.saleTradeRef===purchase.tradeRef && p.invoicedMt>0)){
+        const supplier=tradeCostSnapshot(trades.find(t=>t.tradeRef===shipment.purchaseTradeRef)?.tradeParams);
+        const applied={...(booked.policy??supplier.policy??policy),...(booked.charges??supplier.charges)};
+        const estimate=calculatePkeCost({invoiceAmount:(booked.basis?.pricePerMt??purchase.price)*shipment.invoicedMt,quantityMt:shipment.invoicedMt,currency:purchase.currency,exchangeRate:applied.exchangeRate},applied);
+        weightedRate+=estimate.entryRatePkrPerKg*shipment.invoicedMt;
+      }
+      sumOfRates+=weightedRate/mt;
       purchaseCount++;
     }
     if (purchaseCount > 0) pakistanPkeEntryPerMaund = sumOfRates / purchaseCount * 40;
@@ -89,7 +96,28 @@ export async function sesameBook(code: string) {
     const processingReservedMt = await processingReservedKg(prisma, code, name) / 1000;
     return { name, quantityMt, bookedMt, processingReservedMt, freeToSellMt: freeToSellQty(quantityMt, bookedMt, processingReservedMt) };
   }));
-  return { custody:await custodyRows(prisma,code), trades: rows, positions, warehouses, unassignedBookedMt, entries: entries.map(e => ({ ...e, quantityMt: n(e.quantityMt) })) };
+  let importPosition=null;
+  if(code==="PKE"){
+    const pak=positions.find(p=>p.entity==="PAK")!;
+    const localSales=rows.filter(t=>t.entity==="PAK" && !t.internalEntity && t.direction==="SELL" && t.submitted && t.contractStatus!=="Close");
+    const sales=localSales.reduce((sum,t)=>sum+(t.portSale?ports.flatMap(p=>p.sales).find(s=>s.tradeRef===t.tradeRef)?.remainingMt??t.openMt:t.openMt),0);
+    const portMt=ports.reduce((sum,p)=>sum+p.remainingMt,0);
+    const localNet=pak.ownedMt-sales;
+    const imports=rows.filter(t=>t.entity==="PAK" && t.direction==="BUY" && t.internalEntity==="FZCO" && t.submitted && t.contractStatus!=="Close")
+      .map(t=>({...t,remaining:Math.max(0,t.quantityMt-ports.filter(p=>p.saleTradeRef===t.tradeRef).reduce((s,p)=>s+p.invoicedMt,0))})).filter(t=>t.remaining>0);
+    const importMt=imports.reduce((sum,t)=>sum+t.remaining,0);
+    const fx=market?.fxRate??null;
+    const cnf=(await (await import("@/server/market-prices")).getDeskMarketPrice(code))?.cnf;
+    const {deskLegToPricePerCanonicalQty}=await import("@/lib/desk-mark-price");
+    const importMarket=cnf?.currency==="USD"?deskLegToPricePerCanonicalQty(cnf,1000):null;
+    const importEntry=imports.length&&imports.every(t=>t.currency==="USD")?imports.reduce((sum,t)=>sum+t.price,0)/imports.length:null;
+    const localDiff=pak.inOutPkrPerMaund==null?null:pak.inOutPkrPerMaund/40;
+    const localValue=localDiff==null?null:localDiff*1000*localNet;
+    const importDiff=importEntry!=null&&importMarket!=null?importMarket-importEntry:null;
+    const importUsd=importDiff==null?null:importMt*importDiff;
+    importPosition={localNet,importMt,warehouseMt:pak.ownedMt-portMt,portMt,sales,fx,localEntry:pak.entryRatePkrPerMaund==null?null:pak.entryRatePkrPerMaund/40,localMarket:pak.marketRatePkrPerMaund==null?null:pak.marketRatePkrPerMaund/40,importMarket,importEntry,localDiff,importDiff,localValue,localUsd:localValue!=null&&fx?localValue/fx:null,importUsd,importPkr:importUsd!=null&&fx?importUsd*fx:null};
+  }
+  return { importPosition, custody:await custodyRows(prisma,code), trades: rows, positions, warehouses, unassignedBookedMt, entries: entries.map(e => ({ ...e, quantityMt: n(e.quantityMt) })) };
 }
 
 /** FZCO does not load trucks from Pakistan warehouses. Use triparty or a third-party movement. */

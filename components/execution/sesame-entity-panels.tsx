@@ -33,14 +33,24 @@ export function SesamePositionView({ commodityCode, canEdit = true }: { commodit
   const [rate, setRate] = useState("");
   const utils = trpc.useUtils();
   const save = trpc.trader.setPositionMarketInput.useMutation({ onSuccess: () => { void utils.trader.seasonNetPositions.invalidate(); void utils.sesameExecution.book.invalidate(); void utils.sesameExecution.positionSnapshot.invalidate(); } });
+  const position=data?.importPosition;
   if (isLoading) return <p>Loading {commodityCode} positions…</p>;
   if (error) return <p role="alert">{error.message}</p>;
-  return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">{commodityCode} positions — Pakistan and Dubai FZCO</h2>
+  return <section className="kastros-card p-5 space-y-4"><h2 className="text-xl font-semibold">{commodityCode} positions {commodityCode==="PKE"?"":"— Pakistan and Dubai FZCO"}</h2>
     {commodityCode !== "PKE" && <p className="text-sm text-muted-foreground">Pakistan holds physical inventory. Dubai FZCO is a book of open purchases and sales: a sale closes when the buyer pays FZCO; a purchase closes when FZCO pays Kastros Pakistan or the supplier.</p>}
-    <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>Position (MT)</th>{data?.positions.map(p => <th className={cell} key={p.entity}>{ENTITY_NAMES[p.entity]}</th>)}</tr></thead><tbody>
+    {position?<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{["Position","Inventory in hand","Imports"].map(h=><th key={h} className={cell}>{h}</th>)}</tr></thead><tbody>
+    {([
+      ["Net position (MT)",position.localNet,position.importMt],["Open purchases (MT)",null,position.importMt],
+      ["Inventory at warehouse (MT)",position.warehouseMt,null],["Inventory at port (MT)",position.portMt,null],["Open sales (MT)",-position.sales,null],
+      ["Market rate / CNF (PKR/kg · USD/MT)",position.localMarket,position.importMarket],
+      ["Trade entry rate / CNF (PKR/kg · USD/MT)",position.localEntry,position.importEntry],
+      ["In / out per unit",position.localDiff,position.importDiff],["In / out value (PKR)",position.localValue,position.importPkr],
+      ["In / out value (USD)",position.localUsd,position.importUsd],["FX (PKR/USD)",position.fx,null],
+    ] as const).map(([label,local,imports])=><tr key={label}><td className={cell}>{label}</td>{[local,imports].map((v,i)=><td key={i} className={cell}>{v==null?"—":v.toLocaleString("en-PK",{maximumFractionDigits:label.startsWith("FX")?4:2})}</td>)}</tr>)}
+    </tbody></table></div>:    <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>Position (MT)</th>{data?.positions.map(p => <th className={cell} key={p.entity}>{ENTITY_NAMES[p.entity]}</th>)}</tr></thead><tbody>
       {([['Physical inventory (Pakistan)','ownedMt'],['Open purchases','openBuyMt'],['Open sales','openSellMt'],['Net position','netPositionMt']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{key==='ownedMt'&&p.entity==='FZCO'?'—':qty(p[key])}{key==='netPositionMt'&&p.entity==='FZCO'?(p[key]>0?' Long':p[key]<0?' Short':' Balanced'):''}</td>)}</tr>)}
       {([[commodityCode === "PKE" ? "Entry rate (PKR / kg)" : "Entry rate (PKR / maund)",'entryRatePkrPerMaund'],['Market rate (PKR / maund)','marketRatePkrPerMaund'],['In / out (PKR / maund)','inOutPkrPerMaund'],['In / out value (PKR)','inOutValuePkr'],['In / out value (USD)','inOutValueUsd']] as const).map(([label,key]) => <tr key={key}><td className={cell}>{label}</td>{data?.positions.map(p => <td key={p.entity} className={cell}>{p[key] == null ? "—" : qty(commodityCode === "PKE" && key === "entryRatePkrPerMaund" ? p[key] / 40 : p[key])}</td>)}</tr>)}
-    </tbody></table></div>
+    </tbody></table></div>}
 
     {canEdit && <form className="flex flex-wrap gap-3 items-end" onSubmit={e => { e.preventDefault(); save.mutate({ commodityCode, season: "SUMMER", fxRate: Number(fx), ...(rate ? { marketRatePkrPerMaund: Number(rate) } : {}) }); }}>
       <label className="text-sm">Shared USD / PKR rate<input aria-label="Shared USD / PKR rate" className={input} type="number" step="0.01" min="0.01" required value={fx} placeholder={String(market?.find(m => m.commodityCode === commodityCode)?.fxRate ?? "")} onChange={e => setFx(e.target.value)} /></label>

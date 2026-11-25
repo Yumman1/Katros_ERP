@@ -22,7 +22,8 @@ export const sesameExecutionRouter = router({
     const code=codeOf(ctx.session.user.role === "TRADER" ? input.commodityCode : ctx.executionCommodityCode);
     const user=await prisma.user.findUnique({where:{id:ctx.session.user.id},select:{disabled:true}});
     if (!user || user.disabled) throw new TRPCError({code:"FORBIDDEN"});
-    return {positions:(await sesameBook(code)).positions};
+    const {positions,importPosition}=await sesameBook(code);
+    return {positions,importPosition};
   }),
   warehouseProcessing: roleProcedure(["EXECUTION","FINANCE"]).query(({ctx}) => warehouseProcessing(codeOf(ctx.executionCommodityCode))),
   createProcessingPlan: roleProcedure(["EXECUTION"]).input(processingPlanInput).mutation(({ctx,input}) => {

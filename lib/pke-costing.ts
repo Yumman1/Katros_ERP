@@ -52,3 +52,13 @@ export function validatePkeCostPatch(value:Record<string,number>,owner:'FINANCE'
  validatePkeCostPolicy({...DEFAULT_PKE_COST_POLICY,...value});
  return value as Partial<PkeCostPolicy>;
 }
+
+export const portChargeKeys = ['cessPct','wharfagePerMt','surveyorPerMt','clearancePerMt','terminalPerMt','bagsPerMt'] as const;
+export function tradeCostSnapshot(params: unknown) {
+ const {pkeBookingPolicy,pkePortCharges,pkeBookedBasis}=(params??{}) as Record<string,unknown>;
+ return {
+  basis:typeof pkeBookedBasis==="string"?JSON.parse(pkeBookedBasis) as {quantity:number;pricePerMt:number;currency:string}:null,
+  policy:typeof pkeBookingPolicy==='string'?pkeCostPolicy(JSON.parse(pkeBookingPolicy)):null,
+  charges:typeof pkePortCharges==='string'?JSON.parse(pkePortCharges) as Partial<PkeCostPolicy>:null,
+ };
+}

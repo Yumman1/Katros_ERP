@@ -1,5 +1,6 @@
 "use client";
 
+import {useState} from "react";
 import { AlertTriangle } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,7 @@ const MAX_ROWS = 6;
  * overdue entries.
  */
 export function OverdueAlertsCard({ title }: { title?: string }): JSX.Element | null {
+  const [expanded,setExpanded]=useState(false);
   const { data: alerts } = trpc.policy.overdueLedgerAlerts.useQuery(undefined, {
     refetchInterval: 60_000,
     retry: false,
@@ -22,8 +24,8 @@ export function OverdueAlertsCard({ title }: { title?: string }): JSX.Element | 
   if (!alerts?.length) return null;
 
   const severe = alerts.some((a) => a.agingBucket === "90+");
-  const visible = alerts.slice(0, MAX_ROWS);
-  const hidden = alerts.length - visible.length;
+  const visible = expanded?alerts:alerts.slice(0, MAX_ROWS);
+  const hidden = alerts.length - MAX_ROWS;
 
   return (
     <section
@@ -74,7 +76,7 @@ export function OverdueAlertsCard({ title }: { title?: string }): JSX.Element | 
           </li>
         ))}
       </ul>
-      {hidden > 0 && <p className="mt-1.5 text-xs text-subtle">+{hidden} more</p>}
+      {hidden > 0 && <button className="mt-1.5 text-xs underline" onClick={()=>setExpanded(!expanded)}>{expanded?"Show fewer":`Show ${hidden} more`}</button>}
     </section>
   );
 }

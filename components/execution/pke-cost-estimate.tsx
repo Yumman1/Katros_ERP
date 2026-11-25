@@ -3,13 +3,13 @@ import {useState} from 'react';
 import {trpc} from '@/lib/trpc/client';
 import {calculatePkeCost,DEFAULT_PKE_COST_POLICY,PKE_EXECUTION_COST_FIELDS,PKE_TAX_KEYS,validatePkeCostPatch,type PkeCostKey} from '@/lib/pke-costing';
 const money=(n:number)=>n.toLocaleString('en-PK',{minimumFractionDigits:2,maximumFractionDigits:2});
-export function PkeCostEstimate({invoiceAmount,quantityMt,currency='USD',compact=false,editable=false}:{invoiceAmount:number;quantityMt:number;currency?:'USD'|'PKR';compact?:boolean;editable?:boolean}){
+export function PkeCostEstimate({invoiceAmount,quantityMt,currency='USD',compact=false,editable=false,lockedPolicy}:{invoiceAmount:number;quantityMt:number;currency?:'USD'|'PKR';compact?:boolean;editable?:boolean;lockedPolicy?:typeof DEFAULT_PKE_COST_POLICY}){
  const utils=trpc.useUtils();
  const query=trpc.policy.get.useQuery(undefined,{refetchOnWindowFocus:true,staleTime:0});
  const [overrides,setOverrides]=useState<Partial<Record<PkeCostKey,string>>>({});
  const [fx,setFx]=useState(''),[saveError,setSaveError]=useState('');
  const save=trpc.policy.updatePkeExecutionCosts.useMutation({onSuccess:async()=>{await utils.policy.get.invalidate();setOverrides({});}});
- const basePolicy=query.data?.pkeCosting??DEFAULT_PKE_COST_POLICY;
+ const basePolicy=lockedPolicy??query.data?.pkeCosting??DEFAULT_PKE_COST_POLICY;
  const policy={...basePolicy,...Object.fromEntries(Object.entries(overrides).map(([key,value])=>[key,value?.trim()===''?NaN:Number(value)]))};
  const exchangeRate=editable?policy.exchangeRate:fx===''?policy.exchangeRate:Number(fx);
  function edit(key:PkeCostKey,value:string){setOverrides(v=>({...v,[key]:value}));setSaveError('');save.reset();}
@@ -18,7 +18,7 @@ export function PkeCostEstimate({invoiceAmount,quantityMt,currency='USD',compact
  let estimate:ReturnType<typeof calculatePkeCost>|null=null,error='';
  if(invoiceAmount>0&&quantityMt>0)try{estimate=calculatePkeCost({invoiceAmount,quantityMt,currency,exchangeRate},policy);}catch(e){error=e instanceof Error?e.message:'Invalid estimate';}
  return <section className="space-y-5">
-  <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Pakistan landed cost estimate</h2>{!editable&&<label className="text-sm">Estimate USD/PKR<input className="kastros-input ml-2 w-32" aria-label="Estimate USD/PKR" type="number" min="0.000001" step="any" value={fx===''?policy.exchangeRate:fx} onChange={e=>setFx(e.target.value)}/></label>}</div>
+  <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Pakistan landed cost estimate</h2>{!editable&&!lockedPolicy&&<label className="text-sm">Estimate USD/PKR<input className="kastros-input ml-2 w-32" aria-label="Estimate USD/PKR" type="number" min="0.000001" step="any" value={fx===''?policy.exchangeRate:fx} onChange={e=>setFx(e.target.value)}/></label>}</div>
   {editable&&<div className="space-y-4"><div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">{PKE_EXECUTION_COST_FIELDS.map(([key,label,unit])=><label key={key} className="text-sm">{label} <span className="text-muted-foreground">({unit})</span><input aria-label={label} className="kastros-input mt-1 w-full" type="number" min={key==='exchangeRate'?0.000001:0} max={unit==='%'?100:undefined} step="any" value={overrides[key]??basePolicy[key]} onChange={e=>edit(key,e.target.value)}/></label>)}</div><div className="flex flex-wrap items-center gap-3"><button type="button" className="kastros-btn-primary" disabled={save.isPending||!Object.keys(overrides).length} onClick={()=>{try{const patch=validatePkeCostPatch(Object.fromEntries(Object.entries(overrides).map(([key,value])=>[key,value?.trim()===''?NaN:Number(value)])),'EXECUTION');save.mutate(patch as Record<string,number>);}catch(e){setSaveError(e instanceof Error?e.message:'Invalid costs');}}}>Save execution defaults</button><button type="button" className="kastros-btn-secondary" disabled={!Object.keys(overrides).length||save.isPending} onClick={()=>{setOverrides({});setSaveError('');save.reset();}}>Reset estimate</button>{save.isSuccess&&<span role="status" className="text-sm text-success">Execution defaults saved.</span>}</div></div>}
   {(error||saveError||save.error)&&<p role="alert" className="text-destructive">{error||saveError||save.error?.message}</p>}
   {estimate?<><div className="grid gap-4 sm:grid-cols-3"><div className="rounded-2xl bg-accent-secondary/10 p-5">

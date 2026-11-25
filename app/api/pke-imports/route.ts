@@ -11,6 +11,8 @@ import { randomUUID } from "crypto";
 import { readFile } from "fs/promises";
 import path from "path";
 import { z } from "zod";
+import {tradeCostSnapshot,validatePkeCostPatch} from "@/lib/pke-costing";
+import {getFinancePolicy} from "@/server/finance/policy";
 export const dynamic = "force-dynamic";
 
 async function actor(write = false) {
@@ -56,7 +58,8 @@ export async function GET(request: Request) {
     const sales=trades.filter(t=>pkeImportSale("PKE",t.direction,t.tradeParams));
     const receipts=await prisma.inboundReceipt.findMany({where:{tradeRef:{in:sales.map(t=>t.tradeRef)},status:{not:"DRAFT"},gatepassNo:{not:null},pkeTripartyReceipt:{is:null}},select:{id:true,tradeRef:true,gatepassNo:true,truckNo:true,allocatedQtyMt:true}});
     return NextResponse.json({executionEntity:isDubaiExecution(viewer)?"FZCO":"PAK",canApproveBypasses:canApprovePkeLcBypass(viewer),files:(await prisma.pkeImportFile.findMany({include:{receipts:{include:{receipt:{select:{gatepassNo:true,truckNo:true}}}}},orderBy:{updatedAt:"desc"}})).map(f=>({...f,stage:missingDubaiLc(f.payload as unknown as PkeImportPayload,trades.find(t=>t.tradeRef===f.purchaseTradeRef)?.paymentType)?Math.min(shipmentStage(f.stage,f.payload as unknown as PkeImportPayload),1):shipmentStage(f.stage,f.payload as unknown as PkeImportPayload)})),
-      purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,tradeDate:t.tradeDate,pricePerMt:Number(t.pricePerCanonicalQty??t.price),commission:Number(t.commissionAmount??0)*(t.priceCurrency==="USd"?0.01:1),quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency,paymentType:t.paymentType})),
+      costPurchases:trades.filter(t=>t.direction==="BUY" && (tradeEntity(t.tradeParams)==="FZCO" && !internalEntity(t.tradeParams)||internalEntity(t.tradeParams)==="FZCO")).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,pricePerMt:Number(t.pricePerCanonicalQty??t.price),quantity:Number(t.quantity),currency:t.currency,...tradeCostSnapshot(t.tradeParams),...tradeCostSnapshot(t.tradeParams).basis})),
+      purchases:trades.filter(t=>t.direction==="BUY"&&tradeEntity(t.tradeParams)==="FZCO"&&!internalEntity(t.tradeParams)).map(t=>({tradeRef:t.tradeRef,supplier:t.counterparty.name,tradeDate:t.tradeDate,pricePerMt:Number(t.pricePerCanonicalQty??t.price),commission:Number(t.commissionAmount??0)*(t.priceCurrency==="USd"?0.01:1),quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),currency:t.currency,paymentType:t.paymentType,...tradeCostSnapshot(t.tradeParams)})),
       sales:sales.map(t=>({tradeRef:t.tradeRef,quantity:Number(t.quantity),openQuantity:Number(t.contract?.openQtyMt??t.quantity),paymentType:t.paymentType,currency:t.currency})),receipts});
   } catch(error) { return failure(error); }
 }
@@ -86,6 +89,19 @@ export async function POST(request: Request) {
     }
     let input=await request.json();
     if(isDubaiExecution(user) && !["save-lcs","request-bypass"].includes(input.action)) throw new Error("Dubai can update supplier LCs only");
+    if(input.action==="save-cost"){
+      const supplier=await prisma.trade.findUniqueOrThrow({where:{tradeRef:String(input.tradeRef)},include:{commodity:true}});
+      if(supplier.commodity.code!=="PKE" || supplier.direction!=="BUY" || ["CANCELLED","REJECTED"].includes(supplier.tradeStatus) || !(tradeEntity(supplier.tradeParams)==="FZCO"&&!internalEntity(supplier.tradeParams)||internalEntity(supplier.tradeParams)==="FZCO"))throw new Error("Choose an active import purchase");
+      const rates=z.object({cessPct:z.number(),wharfagePerMt:z.number(),surveyorPerMt:z.number(),clearancePerMt:z.number(),terminalPerMt:z.number(),bagsPerMt:z.number()}).strict().parse(input.rates);
+      validatePkeCostPatch(rates,"EXECUTION");
+      const params=(supplier.tradeParams??{}) as Record<string,string|number|null>;
+      const snapshot=tradeCostSnapshot(params);
+      if(snapshot.charges)throw new Error("These trade costs have already been saved");
+      const policy=snapshot.policy??(await getFinancePolicy()).pkeCosting;
+      const updated=await prisma.trade.updateMany({where:{id:supplier.id,updatedAt:supplier.updatedAt},data:{tradeParams:{...params,pkeBookedBasis:JSON.stringify(snapshot.basis??{quantity:Number(supplier.quantity),pricePerMt:Number(supplier.pricePerCanonicalQty??supplier.price),currency:supplier.currency}),pkeBookingPolicy:JSON.stringify(policy),pkePortCharges:JSON.stringify(rates)}}});
+      if(!updated.count)throw new Error("Trade changed. Reload and retry");
+      return NextResponse.json({ok:true,policy});
+    }
     if(input.action === "save-lcs") {
       const saved=await prisma.pkeImportFile.findUniqueOrThrow({where:{id:String(input.id)}});
       const prior=saved.payload as unknown as PkeImportPayload;
@@ -121,7 +137,9 @@ export async function POST(request: Request) {
     if(input.action==="receipt")return NextResponse.json(await linkPkeTripartyReceipt(z.object({id:z.string(),revision:z.number().int().nonnegative(),receiptId:z.string(),saleTradeRef:z.string()}).parse(input),name));
     if(input.action==="create"||input.action==="open") {
       const data=z.object({tradeRef:z.string().min(1)}).parse(input);
-      await purchase(data.tradeRef);
+      const supplier=await purchase(data.tradeRef);
+      const snapshot=tradeCostSnapshot(supplier.tradeParams);
+      if(snapshot.policy && !snapshot.charges)throw new Error("Complete the six port charges in Costing before opening Import Files for this trade");
       const file=await prisma.$transaction(async tx=>{
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`pke-import:${data.tradeRef}`}))`;
         if(input.action==="open"){

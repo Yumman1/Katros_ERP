@@ -84,7 +84,9 @@ export async function recordPkePortMovement(input:{fileId:string;kind:'WAREHOUSE
    await tx.pkePortMovement.update({where:{receiptId:receipt.id},data:{requestKey:input.requestKey}});
   }else{
    await tx.outboundDispatch.create({data:{gatepassNo,tradeRef:trade.tradeRef,dispatchDate:new Date(),liftedBy:trade.counterparty.name,buyerName:trade.counterparty.name,warehouseName:warehouse,truckNo:input.truckNo,dispatchWeightKg:kg,invoiceWeightKg:kg,allocatedQtyMt:input.quantityMt,amountDue:base+tax,status:'WEIGHED'}});
-   await postTruckLedgerDebit({truckId:truck.id,gatepassNo,tradeRef:trade.tradeRef,counterpartyId:trade.counterpartyId,amountPkr:base+tax,side:'SELL',note:`PKE port sale · BL ${state.blNo} · Vessel ${state.vessel}`},tx);
+   const days=(await import("./trucks")).tradeCreditDays(trade);
+   const dueDate=days==null?null:new Date(trade.tradeDate.getTime()+days*86400000);
+   await postTruckLedgerDebit({dueDate,truckId:truck.id,gatepassNo,tradeRef:trade.tradeRef,counterpartyId:trade.counterpartyId,amountPkr:base+tax,side:'SELL',note:`PKE port sale · BL ${state.blNo} · Vessel ${state.vessel}`},tx);
   }
   if(input.kind==='PORT_SALE')await tx.pkePortMovement.create({data:{requestKey:input.requestKey,importFileId:file.id,kind:input.kind,quantityMt:input.quantityMt,saleTradeRef:input.kind==='PORT_SALE'?trade.tradeRef:null,receiptId,truckId:truck.id,createdBy:actor}});
   return {truckId:truck.id,gatepassNo};

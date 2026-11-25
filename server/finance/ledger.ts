@@ -466,6 +466,7 @@ export async function canFundTruck(
   });
   if (!trade) return { ok: false, kind: "ADVANCE", availablePkr: 0, reason: "Trade not found" };
   const kind = tradeTermsKind(trade.paymentType);
+  if (trade.commodity.code === "PKE" && kind === "CREDIT" && input.excludeTruckId) return {ok:true,kind,availablePkr:0};
   if (trade.commodity.code === "PKE" && (trade.tradeParams as Record<string,unknown>|null)?.pkePortFileId) {
     const [paid,billed] = await Promise.all([
       db.voucher.aggregate({where:{tradeRef:input.tradeRef,side:'SELL',status:'APPROVED',noteRef:null},_sum:{amountPkr:true}}),
@@ -567,6 +568,28 @@ function emptyAging(): Record<AgingBucket, number> {
  * counterparty (voucher targets), plus a BUY account wherever buy-side
  * entries exist. Finance → Counterparty Ledgers, mirrored on execution.
  */
+async function pkeTruckCollections(refs: (string|null)[]) {
+  const tradeRefs=[...new Set(refs.filter((ref): ref is string=>!!ref))];
+  const paid=new Map<string,number>();
+  if(!tradeRefs.length)return paid;
+  const trades=await prisma.trade.findMany({where:{tradeRef:{in:tradeRefs},commodity:{code:"PKE"},direction:"SELL",paymentType:{in:["CREDIT","CREDIT_30"]}},select:{tradeRef:true}});
+  const eligible=trades.map(t=>t.tradeRef);
+  if(!eligible.length)return paid;
+  const [receipts,debits]=await Promise.all([
+    prisma.voucher.groupBy({by:["tradeRef","counterpartyId"],where:{tradeRef:{in:eligible},commodityCode:"PKE",side:"SELL",status:"APPROVED",noteRef:null},_sum:{amountPkr:true}}),
+    prisma.counterpartyLedgerEntry.findMany({where:{tradeRef:{in:eligible},side:"SELL",entryType:"DEBIT",truckId:{not:null}},orderBy:[{entryDate:"asc"},{id:"asc"}]}),
+  ]);
+  const balance=new Map(receipts.map(r=>[r.tradeRef+"/"+r.counterpartyId,num(r._sum.amountPkr)]));
+  for(const debit of debits){
+    const key=debit.tradeRef+"/"+debit.counterpartyId;
+    const remaining=balance.get(key)??0;
+    const applied=Math.min(remaining,num(debit.amountPkr));
+    paid.set(debit.id,applied);
+    balance.set(key,remaining-applied);
+  }
+  return paid;
+}
+
 export async function getCounterpartyLedgers(commodityCode?: string, executionEntity?: "PAK" | "FZCO"): Promise<CounterpartyLedgerView[]> {
   const deskWhere = await deskLedgerWhere(commodityCode, prisma, executionEntity);
   const [counterparties, entries, trucks] = await Promise.all([
@@ -585,6 +608,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
     }),
   ]);
 
+  const truckCollections=await pkeTruckCollections(entries.filter(e=>e.truckId).map(e=>e.tradeRef));
   const truckStage = new Map(trucks.map((t) => [t.id, t.saleStage]));
 
   // Settlement-invoice debits carry their collection status instead of a truck
@@ -675,7 +699,8 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
     // A cancellation note answers to its own status, not to a gatepass or a
     // truck stage — it is settled the moment a voucher pays it.
     const exportPaidKey = e.exportShipmentId ? `${e.exportShipmentId}:${e.side}:${e.executionEntity??''}` : '';
-    const settled = e.exportShipmentId ? (exportPaid.get(exportPaidKey)??0)+.005>=billedPkr :
+    const collected=truckCollections.get(e.id);
+    const settled = collected!=null ? collected+.005>=billedPkr : e.exportShipmentId ? (exportPaid.get(exportPaidKey)??0)+.005>=billedPkr :
       e.noteStatus != null
         ? e.noteStatus === "PAID"
         : e.entryType === "DEBIT" &&
@@ -689,7 +714,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
     // shows its paid share rather than all-or-nothing. Open notes track partial
     // vouchers against the same noteRef sub-ledger.
     const isBuyGateInvoice = e.side === "BUY" && e.sourceType === "GATEPASS";
-    const paidPkr = e.exportShipmentId ? Math.min(billedPkr,exportPaid.get(exportPaidKey)??0) : isOpenNote
+    const paidPkr = collected??(e.exportShipmentId ? Math.min(billedPkr,exportPaid.get(exportPaidKey)??0) : isOpenNote
       ? notePaid
       : e.entryType !== "DEBIT"
         ? 0
@@ -697,7 +722,7 @@ export async function getCounterpartyLedgers(commodityCode?: string, executionEn
           ? Math.min(billedPkr, e.sourceRef ? (paidByGatepass.get(e.sourceRef) ?? 0) : 0)
           : settled
             ? billedPkr
-            : 0;
+            : 0);
     // Every buy debit posts money that has moved, never a claim: a gate invoice
     // grows with each part-payment finance approves. Open notes post only what
     // vouchers have collected so far; the full claim stays on billedPkr.
@@ -849,6 +874,7 @@ export async function getOverdueLedgerAlerts(commodityCode?: string, executionEn
     orderBy: { dueDate: "asc" },
   });
   if (entries.length === 0) return [];
+  const collections=await pkeTruckCollections(entries.filter(e=>e.truckId).map(e=>e.tradeRef));
   const truckIds = entries.map((e) => e.truckId).filter((id): id is string => Boolean(id));
   const stages = truckIds.length
     ? new Map(
@@ -875,6 +901,7 @@ export async function getOverdueLedgerAlerts(commodityCode?: string, executionEn
   const settled = new Set<string>(SETTLED_STAGES);
   return entries
     .filter((e) => {
+      if(collections.has(e.id))return collections.get(e.id)!+.005<num(e.amountPkr);
       if (e.invoiceId) return !paidInvoices.has(e.invoiceId);
       if (!e.truckId) return true;
       const stage = stages.get(e.truckId);
@@ -887,7 +914,7 @@ export async function getOverdueLedgerAlerts(commodityCode?: string, executionEn
       ledgerAccountId: `${e.counterparty.code}-${e.side === "SELL" ? "S" : "B"}`,
       sourceRef: e.sourceRef,
       tradeRef: e.tradeRef,
-      amountPkr: num(e.amountPkr),
+      amountPkr: num(e.amountPkr)-(collections.get(e.id)??0),
       dueDate: e.dueDate!,
       overdueDays: Math.floor((now.getTime() - e.dueDate!.getTime()) / 86_400_000),
       agingBucket: agingBucketFor(e.dueDate, now),

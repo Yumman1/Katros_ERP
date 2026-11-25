@@ -986,7 +986,7 @@ export async function mockBookTrade(input: {
           moisturePct: input.maxMoisturePct ?? DEFAULT_QUALITY_TOLERANCES.moisturePct,
         } satisfies QualityTolerances),
       maxMoisturePct: input.maxMoisturePct ?? null,
-      tradeParams: input.tradeParams ?? undefined,
+      tradeParams: input.tradeParams?.pkeBookingPolicy ? {...input.tradeParams,pkeBookedBasis:JSON.stringify({quantity:quantityMt,pricePerMt:bookUnitPrice,currency:baseCurrency})} : input.tradeParams ?? undefined,
       marketPrice: mktPrice,
       mtmPnl,
       notes: input.notes ?? null,
