@@ -11,7 +11,7 @@ import { randomUUID } from "crypto";
 import { readFile } from "fs/promises";
 import path from "path";
 import { z } from "zod";
-import {tradeCostSnapshot,validatePkeCostPatch} from "@/lib/pke-costing";
+import {calculatePkeCost,DEFAULT_PKE_COST_POLICY,tradeCostSnapshot,validatePkeCostPatch} from "@/lib/pke-costing";
 import {getFinancePolicy} from "@/server/finance/policy";
 export const dynamic = "force-dynamic";
 
@@ -89,18 +89,30 @@ export async function POST(request: Request) {
     }
     let input=await request.json();
     if(isDubaiExecution(user) && !["save-lcs","request-bypass"].includes(input.action)) throw new Error("Dubai can update supplier LCs only");
-    if(input.action==="save-cost"){
-      const supplier=await prisma.trade.findUniqueOrThrow({where:{tradeRef:String(input.tradeRef)},include:{commodity:true}});
-      if(supplier.commodity.code!=="PKE" || supplier.direction!=="BUY" || ["CANCELLED","REJECTED"].includes(supplier.tradeStatus) || !(tradeEntity(supplier.tradeParams)==="FZCO"&&!internalEntity(supplier.tradeParams)||internalEntity(supplier.tradeParams)==="FZCO"))throw new Error("Choose an active import purchase");
-      const rates=z.object({cessPct:z.number(),wharfagePerMt:z.number(),surveyorPerMt:z.number(),clearancePerMt:z.number(),terminalPerMt:z.number(),bagsPerMt:z.number()}).strict().parse(input.rates);
+    if(input.action==="post-arrival-cost"){
+      const {id,revision,rates}=z.object({id:z.string().min(1),revision:z.number().int().nonnegative(),rates:z.object({cessPct:z.number(),wharfagePerMt:z.number(),surveyorPerMt:z.number(),clearancePerMt:z.number(),terminalPerMt:z.number(),bagsPerMt:z.number()}).strict()}).parse(input);
       validatePkeCostPatch(rates,"EXECUTION");
-      const params=(supplier.tradeParams??{}) as Record<string,string|number|null>;
-      const snapshot=tradeCostSnapshot(params);
-      if(snapshot.charges)throw new Error("These trade costs have already been saved");
-      const policy=snapshot.policy??(await getFinancePolicy()).pkeCosting;
-      const updated=await prisma.trade.updateMany({where:{id:supplier.id,updatedAt:supplier.updatedAt},data:{tradeParams:{...params,pkeBookedBasis:JSON.stringify(snapshot.basis??{quantity:Number(supplier.quantity),pricePerMt:Number(supplier.pricePerCanonicalQty??supplier.price),currency:supplier.currency}),pkeBookingPolicy:JSON.stringify(policy),pkePortCharges:JSON.stringify(rates)}}});
-      if(!updated.count)throw new Error("Trade changed. Reload and retry");
-      return NextResponse.json({ok:true,policy});
+      const file=await prisma.pkeImportFile.findUniqueOrThrow({where:{id}});
+      const payload=file.payload as unknown as PkeImportPayload;
+      const refs=payload.references,quantityMt=Number(refs["Vessel received MT"]);
+      const arrival=refs["Vessel arrival date"];
+      const today=new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Karachi"});
+      if(!arrival || arrival>today || !(quantityMt>0))throw new Error("Save the actual arrival date and landed weight before posting costs");
+      if(payload.postedCost || file.revision!==revision)throw new Error("File changed or costs already posted. Refresh the file.");
+      const supplier=await purchase(file.purchaseTradeRef);
+      const pak=await prisma.trade.findUniqueOrThrow({where:{tradeRef:refs["Dubai sale trade reference"]||""},include:{commodity:true}});
+      if(!pkeImportSale(pak.commodity.code,pak.direction,pak.tradeParams)||["CANCELLED","REJECTED"].includes(pak.tradeStatus))throw new Error("Link an active Dubai sale to Pakistan");
+      const booked=tradeCostSnapshot(pak.tradeParams);
+      const policy={...(booked.policy??tradeCostSnapshot(supplier.tradeParams).policy??(await getFinancePolicy()).pkeCosting??DEFAULT_PKE_COST_POLICY),...rates};
+      const pricePerMt=booked.basis?.pricePerMt??Number(pak.pricePerCanonicalQty??pak.price);
+      const currency=booked.basis?.currency??pak.currency;
+      if(currency!=="PKR"&&currency!=="USD")throw new Error("Expected a USD or PKR purchase");
+      const estimate=calculatePkeCost({invoiceAmount:quantityMt*pricePerMt,quantityMt,currency,exchangeRate:policy.exchangeRate},policy);
+      payload.postedCost={purchaseRef:pak.tradeRef,quantityMt,pricePerMt,currency,policy,entryRate:estimate.entryRatePkrPerKg};
+      payload.history.push({actor:name,at:new Date().toISOString(),action:"Posted landed vessel costing"});
+      const updated=await prisma.pkeImportFile.updateMany({where:{id,revision},data:{payload:JSON.parse(JSON.stringify(payload)),revision:{increment:1}}});
+      if(!updated.count)throw new Error("File changed. Refresh and retry.");
+      return NextResponse.json({ok:true});
     }
     if(input.action === "save-lcs") {
       const saved=await prisma.pkeImportFile.findUniqueOrThrow({where:{id:String(input.id)}});
@@ -137,9 +149,7 @@ export async function POST(request: Request) {
     if(input.action==="receipt")return NextResponse.json(await linkPkeTripartyReceipt(z.object({id:z.string(),revision:z.number().int().nonnegative(),receiptId:z.string(),saleTradeRef:z.string()}).parse(input),name));
     if(input.action==="create"||input.action==="open") {
       const data=z.object({tradeRef:z.string().min(1)}).parse(input);
-      const supplier=await purchase(data.tradeRef);
-      const snapshot=tradeCostSnapshot(supplier.tradeParams);
-      if(snapshot.policy && !snapshot.charges)throw new Error("Complete the six port charges in Costing before opening Import Files for this trade");
+      await purchase(data.tradeRef);
       const file=await prisma.$transaction(async tx=>{
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`pke-import:${data.tradeRef}`}))`;
         if(input.action==="open"){
@@ -170,6 +180,7 @@ export async function POST(request: Request) {
       for(const old of payload.lcs??[])if(!data.lcs.some(l=>l.id===old.id)&&payload.documents.some(d=>d.field===`LC:${old.id}`))throw new Error("An LC with uploaded documents cannot be removed");
       payload.lcs=data.lcs;
     }
+    if(payload.postedCost && ["Vessel arrival date","Vessel received MT","Dubai sale trade reference"].some(key=>data.references[key]!==payload.references[key]))throw new Error("Arrival and purchase details are locked after posting costs");
     payload.references=normalizePkeReferences(data.references);
     const previousStage=shipmentStage(row.stage,payload);payload.workflowVersion=2;
     const stage=data.action==="advance"?Math.min(previousStage+1,PKE_IMPORT_STAGES.length):Math.min(previousStage,PKE_IMPORT_STAGES.length);

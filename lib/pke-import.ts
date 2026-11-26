@@ -4,7 +4,7 @@ export const PKE_IMPORT_STAGES=[
  {title:"Post-shipment",fields:["Bill of lading","Phytosanitary certificate","Certificate of origin","Commercial invoice","Packing list"]}
 ] as const;
 export type PkeLc = {id:string;side:"PAK_DUBAI"|"DUBAI_SUPPLIER";reference:string;bank:string;currency:string;amount:string};
-export type PkeImportPayload = {workflowVersion?:2;shipmentReviews?:import("./pke-shipment-review").PkeShipmentReview[];references:Record<string,string>;bypasses?:PkeLcBypass[];lcs?:PkeLc[];documents:{id:string;field:string;name:string;path:string;uploadedAt:string;uploadedBy:string}[];history:{at:string;actor:string;action:string}[]};
+export type PkeImportPayload = {postedCost?:{purchaseRef:string;quantityMt:number;pricePerMt:number;currency:"USD"|"PKR";policy:import("./pke-costing").PkeCostPolicy;entryRate:number};workflowVersion?:2;shipmentReviews?:import("./pke-shipment-review").PkeShipmentReview[];references:Record<string,string>;bypasses?:PkeLcBypass[];lcs?:PkeLc[];documents:{id:string;field:string;name:string;path:string;uploadedAt:string;uploadedBy:string}[];history:{at:string;actor:string;action:string}[]};
 export const PKE_IMPORT_FIELDS = PKE_IMPORT_STAGES.flatMap(s=>[...s.fields]);
 export const PKE_UPLOAD_FIELDS:string[]=["Supplier sales contract","Cover note","Proforma invoice","Bill of lading","Phytosanitary certificate","Certificate of origin","Commercial invoice","Packing list"];
 export const emptyPkeImport = ():PkeImportPayload=>({references:{},lcs:[],documents:[],history:[]});

@@ -1,5 +1,3 @@
-import { tradeCostSnapshot, calculatePkeCost, DEFAULT_PKE_COST_POLICY } from "@/lib/pke-costing";
-import { getFinancePolicy } from "@/server/finance/policy";
 import {custodyRows} from './fzco-custody';
 import { sesameGrade } from "@/lib/sesame-processing";
 import { Prisma } from "@prisma/client";
@@ -42,31 +40,17 @@ export async function sesameBook(code: string) {
   const ports=code==='PKE'?await (await import('./pke-port')).pkePortRows():[];
   let pakistanPkeEntryPerMaund: number | null = null;
   if (code === "PKE") {
-    const policy = (await getFinancePolicy()).pkeCosting ?? DEFAULT_PKE_COST_POLICY;
-    const invoicedMtByTrade = new Map<string, number>();
-    for (const shipment of ports) {
-      if (shipment.invoicedMt > 0) {
-        const ref = shipment.saleTradeRef;
-        invoicedMtByTrade.set(ref, (invoicedMtByTrade.get(ref) ?? 0) + shipment.invoicedMt);
-      }
+    const rates=new Map<string,{value:number;mt:number}>();
+    const active=new Set(rows.map(t=>t.tradeRef));
+    for(const shipment of ports){
+      const cost=shipment.postedCost;
+      if(!cost || !active.has(cost.purchaseRef) || !active.has(shipment.purchaseTradeRef))continue;
+      const total=rates.get(cost.purchaseRef)??{value:0,mt:0};
+      total.value+=cost.entryRate*cost.quantityMt;
+      total.mt+=cost.quantityMt;
+      rates.set(cost.purchaseRef,total);
     }
-    let sumOfRates = 0;
-    let purchaseCount = 0;
-    for (const purchase of rows) {
-      const mt = invoicedMtByTrade.get(purchase.tradeRef);
-      if (purchase.entity !== "PAK" || purchase.direction !== "BUY" || !mt || purchase.price <= 0 || (purchase.currency !== "USD" && purchase.currency !== "PKR")) continue;
-      const booked=tradeCostSnapshot(trades.find(t=>t.tradeRef===purchase.tradeRef)?.tradeParams);
-      let weightedRate=0;
-      for(const shipment of ports.filter(p=>p.saleTradeRef===purchase.tradeRef && p.invoicedMt>0)){
-        const supplier=tradeCostSnapshot(trades.find(t=>t.tradeRef===shipment.purchaseTradeRef)?.tradeParams);
-        const applied={...(booked.policy??supplier.policy??policy),...(booked.charges??supplier.charges)};
-        const estimate=calculatePkeCost({invoiceAmount:(booked.basis?.pricePerMt??purchase.price)*shipment.invoicedMt,quantityMt:shipment.invoicedMt,currency:purchase.currency,exchangeRate:applied.exchangeRate},applied);
-        weightedRate+=estimate.entryRatePkrPerKg*shipment.invoicedMt;
-      }
-      sumOfRates+=weightedRate/mt;
-      purchaseCount++;
-    }
-    if (purchaseCount > 0) pakistanPkeEntryPerMaund = sumOfRates / purchaseCount * 40;
+    if(rates.size)pakistanPkeEntryPerMaund=40*[...rates.values()].reduce((sum,t)=>sum+t.value/t.mt,0)/rates.size;
   }
   const positions = (["PAK", "FZCO"] as const).map(entity => {
     const own = rows.filter(t => t.sesameType !== "Impurities" && (t.entity === entity || t.internalEntity === entity));
